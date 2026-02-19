@@ -18,6 +18,7 @@ import {
   getDashboardData,
   ShowToPage,
   SetPriority,
+  saveReview,
 } from "../controllers/TherapistController.js";
 import { upload } from "../services/fileUpload.js";
 const router = Router();
@@ -62,5 +63,7 @@ router.get("/get-fee-details", isTherapist, getFeeDetails);
 router.get("/check-profile-set", isTherapist, checkProfileSet);
 
 router.get("/get-dashabord-data", isTherapist, getDashboardData);
+
+router.post("/save-review", saveReview);
 
 export default router;

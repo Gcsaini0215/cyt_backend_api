@@ -6,6 +6,7 @@ import Fees from "../models/Fees.js";
 import Availbility from "../models/Availbility.js";
 import mongoose from "mongoose";
 import Workshop from "../models/Workshop.js";
+import Review from "../models/Review.js";
 export const updateprofile = expressAsyncHandler(async (req, res, next) => {
   const {
     phone,
@@ -360,8 +361,10 @@ export const getProfile = expressAsyncHandler(async (req, res, next) => {
      const today = new Date().toISOString().split("T")[0]; 
     const workshop = await Workshop.find({ post_by: therapist._id, is_active: 1,event_date: { $gte: today } })
 
+    const reviews = await Review.find({ therapist_id: therapist._id }).sort({ createdAt: -1 });
 
      therapist.workshops = workshop;
+     therapist.reviews = reviews;
 
     res.status(200).json({
       message: "Fetched successfully",
@@ -577,6 +580,33 @@ export const SetPriority = expressAsyncHandler(async (req, res, next) => {
   } catch (error) {
     res.status(400);
     return next(new Error(error));
+  }
+});
+
+export const saveReview = expressAsyncHandler(async (req, res, next) => {
+  const { therapistId, name, email, rating, description } = req.body;
+
+  if (!therapistId || !name || !email || !rating || !description) {
+    res.status(400);
+    return next(new Error("Please provide all required fields"));
+  }
+
+  try {
+    const review = await Review.create({
+      therapist_id: therapistId,
+      name,
+      email,
+      rating,
+      description,
+    });
+
+    res.status(201).json({
+      status: true,
+      message: "Review submitted successfully.",
+      data: review,
+    });
+  } catch (err) {
+    return next(new Error(err.message));
   }
 });
 

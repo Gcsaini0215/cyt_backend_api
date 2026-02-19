@@ -652,12 +652,8 @@ export const registrationOtpEmail = ( name = "User", otp = "123456" ) => `
 `;
 
 
-export const leadNotificationEmail = ({
-  name,
-  phone,
-  email,
-  concern,
-}) => {
+export const leadNotificationEmail = (data) => {
+  const { name, phone, email, concern } = data;
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -699,10 +695,10 @@ export const leadNotificationEmail = ({
 
     <h3>Lead Information:</h3>
     <ul>
-      <li><strong>Full Name:</strong> ${name}</li>
-      <li><strong>Phone:</strong> ${phone}</li>
-      <li><strong>Email:</strong> ${email}</li>
-      <li><strong>Concern:</strong> ${concern}</li>
+      <li><strong>Full Name:</strong> ${name || "N/A"}</li>
+      <li><strong>Phone:</strong> ${phone || "N/A"}</li>
+      <li><strong>Email:</strong> ${email || "N/A"}</li>
+      <li><strong>Concern:</strong> ${concern || "N/A"}</li>
     </ul>
 
     <div class="footer">

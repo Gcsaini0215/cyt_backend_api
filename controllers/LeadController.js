@@ -18,6 +18,7 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
       "string.email": "Please provide a valid email address",
       "any.required": "Email is required",
     }),
+    concern: Joi.string().allow("").optional(),
   }).unknown(true);
 
   const { error } = validateSchema.validate(req.body);
@@ -29,6 +30,7 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
 
   try {
     const { name, phone, email, concern } = req.body;
+    console.log("Lead Form Data received:", { name, phone, email, concern });
 
     const lead = await Lead.create({
       name,
@@ -38,9 +40,21 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
     });
 
     const sendMailid = "chooseyourtherapist@gmail.com"
-    const subject = "Welcome to CYT";
-    const text = `Hello Thank you hae new lead`;
-    const html = leadNotificationEmail(name, phone, email, concern);
+    const subject = "New Lead Received from Consultation Form";
+    const text = `A new lead has been submitted: ${name}`;
+    
+    const leadData = {
+      name: name,
+      phone: phone,
+      email: email,
+      concern: concern || "Not provided"
+    };
+
+    console.log("Final leadData being passed to template:", leadData);
+
+    const html = leadNotificationEmail(leadData);
+    
+    console.log("Lead Email HTML generated successfully. Length:", html.length);
     await sendMail(sendMailid, subject, text, html);
 
     return res.status(201).json({

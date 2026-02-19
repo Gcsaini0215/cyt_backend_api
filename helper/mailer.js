@@ -23,15 +23,17 @@ const transporter = nodemailer.createTransport({
 // Function to send an email
 export const sendMail = async (to, subject, text, html) => {
   try {
-    await transporter.sendMail({
-      from: '"ChooseYourTherapist" no-reply@chooseyourtherapist.in', // Sender address
+    const info = await transporter.sendMail({
+      from: '"ChooseYourTherapist" <chooseyourtherapist@gmail.com>', // Sender address
       to: to, // List of receivers
       subject: subject, // Subject line
       text: text, // Plain text body
       html: html, // HTML body
     });
+    console.log("Email sent: %s", info.messageId);
     return true;
   } catch (error) {
+    console.error("Error sending email:", error);
     return false;
   }
 };
