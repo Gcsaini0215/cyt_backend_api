@@ -3,7 +3,8 @@ name: Deploy Node.js Backend
 on:
   push:
     branches:
-      - main  # adjust if your main backend branch is different
+      - main
+  workflow_dispatch: {}
 
 jobs:
   deploy:
@@ -11,10 +12,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Copy code to VPS
-        uses: appleboy/scp-action@v0.1.3
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -24,7 +25,7 @@ jobs:
           strip_components: 0             # ✅ do NOT strip anything
 
       - name: Install & restart backend on VPS
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
