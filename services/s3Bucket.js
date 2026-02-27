@@ -44,7 +44,7 @@ export async function getObjectUrl(key, type = "pdf") {
     },
   });
   const command = new GetObjectCommand({
-    Bucket: process.env.BUCKET_NAME,
+    Bucket: process.env.AWS_BUCKET_NAME,
     Key: key,
     ContentType: type == "image" ? "image/jpg" : "application/pdf",
   });
