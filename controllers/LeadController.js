@@ -19,6 +19,8 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
       "any.required": "Email is required",
     }),
     concern: Joi.string().allow("").optional(),
+    service: Joi.string().allow("").optional(),
+    reason: Joi.string().allow("").optional(),
   }).unknown(true);
 
   const { error } = validateSchema.validate(req.body);
@@ -29,14 +31,16 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
   }
 
   try {
-    const { name, phone, email, concern } = req.body;
-    console.log("Lead Form Data received:", { name, phone, email, concern });
+    const { name, phone, email, concern, service, reason } = req.body;
+    console.log("Lead Form Data received:", { name, phone, email, concern, service, reason });
 
     const lead = await Lead.create({
       name,
       phone,
       email,
       concern,
+      service,
+      reason,
     });
 
     const sendMailid = "chooseyourtherapist@gmail.com"
@@ -47,7 +51,9 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
       name: name,
       phone: phone,
       email: email,
-      concern: concern || "Not provided"
+      concern: concern || "Not provided",
+      service: service || "Not provided",
+      reason: reason || "Not provided"
     };
 
     console.log("Final leadData being passed to template:", leadData);

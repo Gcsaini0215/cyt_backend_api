@@ -382,6 +382,12 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
     const clientAge = isBookingDetail.client.age;
     const paymentAmount = isBookingDetail.amount;
     const pin = isBookingDetail.otp;
+    const service = isBookingDetail.service;
+    const format = isBookingDetail.format;
+    const whom = isBookingDetail.whom;
+    const cname = isBookingDetail.cname;
+    const relation_with_client = isBookingDetail.relation_with_client;
+    const notes = isBookingDetail.notes;
 
 
     //Client Mail
@@ -392,6 +398,12 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       therapistName,
       clientAge,
       transactionId: transactionId,
+      service,
+      format,
+      whom,
+      cname,
+      relation_with_client,
+      notes,
       pin
 
     });
@@ -405,7 +417,13 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       clientName,
       clientAge,
       paymentAmount,
-      transactionId
+      transactionId,
+      service,
+      format,
+      whom,
+      cname,
+      relation_with_client,
+      notes
     })
     await sendMail(isBookingDetail.therapist.user.email, subjectTherapist, textTherapist, therapistHtml);
 
@@ -418,7 +436,13 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       clientAge,
       paymentAmount,
       transactionId,
-      therapistId
+      therapistId,
+      service,
+      format,
+      whom,
+      cname,
+      relation_with_client,
+      notes
     });
     await sendMail("Appointment.cyt@gmail.com", subjectAdmin, textAdmin, htmlAdmin);
 

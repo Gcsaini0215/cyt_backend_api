@@ -4,6 +4,12 @@ export const therapistSessionMail = ({
     clientAge,
     paymentAmount,
     transactionId,
+    service,
+    format,
+    whom,
+    cname,
+    relation_with_client,
+    notes,
 }) => {
     return `
   <!DOCTYPE html>
@@ -48,6 +54,12 @@ export const therapistSessionMail = ({
       <ul>
         <li><strong>Full Name:</strong> ${clientName}</li>
         <li><strong>Age:</strong> ${clientAge}</li>
+        <li><strong>Service:</strong> ${service || "N/A"}</li>
+        <li><strong>Format:</strong> ${format || "N/A"}</li>
+        <li><strong>Whom:</strong> ${whom || "N/A"}</li>
+        <li><strong>Booking for (Name):</strong> ${cname || clientName}</li>
+        <li><strong>Relation:</strong> ${relation_with_client || "Self"}</li>
+        <li><strong>Notes:</strong> ${notes || "None"}</li>
         <li><strong>Payment:</strong> ₹${paymentAmount}</li>
         <li><strong>Transaction ID:</strong> ${transactionId}</li>
       </ul>
@@ -79,6 +91,12 @@ export const bookingConfirmationMail = ({
     therapistName,
     clientAge,
     transactionId,
+    service,
+    format,
+    whom,
+    cname,
+    relation_with_client,
+    notes,
     pin
 }) => {
     return `
@@ -128,6 +146,12 @@ export const bookingConfirmationMail = ({
         <li><strong>Therapist:</strong> ${therapistName}</li>
         <li><strong>Your Full Name:</strong> ${clientName}</li>
         <li><strong>Age:</strong> ${clientAge || "-"}</li>
+        <li><strong>Service:</strong> ${service || "N/A"}</li>
+        <li><strong>Format:</strong> ${format || "N/A"}</li>
+        <li><strong>Whom:</strong> ${whom || "N/A"}</li>
+        <li><strong>Booking for (Name):</strong> ${cname || clientName}</li>
+        <li><strong>Relation:</strong> ${relation_with_client || "Self"}</li>
+        <li><strong>Notes:</strong> ${notes || "None"}</li>
         <li><strong>Transaction ID:</strong> ${transactionId}</li>
       </ul>
       <p>Share this PIN with your therapist when you start the session.</p>
@@ -164,6 +188,12 @@ export const newSessionAdminMail = ({
     transactionId,
     therapistName,
     therapistId,
+    service,
+    format,
+    whom,
+    cname,
+    relation_with_client,
+    notes,
 }) => {
     return `
   <!DOCTYPE html>
@@ -208,6 +238,12 @@ export const newSessionAdminMail = ({
       <ul>
         <li><strong>Full Name:</strong> ${clientName}</li>
         <li><strong>Age:</strong> ${clientAge}</li>
+        <li><strong>Service:</strong> ${service || "N/A"}</li>
+        <li><strong>Format:</strong> ${format || "N/A"}</li>
+        <li><strong>Whom:</strong> ${whom || "N/A"}</li>
+        <li><strong>Booking for (Name):</strong> ${cname || clientName}</li>
+        <li><strong>Relation:</strong> ${relation_with_client || "Self"}</li>
+        <li><strong>Notes:</strong> ${notes || "None"}</li>
         <li><strong>Payment Status:</strong> ₹${paymentAmount}</li>
         <li><strong>Transaction ID:</strong> ${transactionId}</li>
       </ul>
@@ -653,7 +689,7 @@ export const registrationOtpEmail = ( name = "User", otp = "123456" ) => `
 
 
 export const leadNotificationEmail = (data) => {
-  const { name, phone, email, concern } = data;
+  const { name, phone, email, concern, service, reason } = data;
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -698,7 +734,8 @@ export const leadNotificationEmail = (data) => {
       <li><strong>Full Name:</strong> ${name || "N/A"}</li>
       <li><strong>Phone:</strong> ${phone || "N/A"}</li>
       <li><strong>Email:</strong> ${email || "N/A"}</li>
-      <li><strong>Concern:</strong> ${concern || "N/A"}</li>
+      <li><strong>Service:</strong> ${service || "N/A"}</li>
+      <li><strong>Reason/Concern:</strong> ${reason || concern || "N/A"}</li>
     </ul>
 
     <div class="footer">

@@ -18,6 +18,14 @@ const leadSchema = new Schema({
     type: String,
     required: false,
   },
+  service: {
+    type: String,
+    required: false,
+  },
+  reason: {
+    type: String,
+    required: false,
+  },
   followup_status: {
     type: String,
     default: null,
