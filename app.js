@@ -36,7 +36,9 @@ app.use(cors({
     "https://chooseyourtherapist.in",
     "https://cyt.chooseyourtherapist.in",
     "https://www.chooseyourtherapist.in",
-    "https://www.cyt.chooseyourtherapist.in"
+    "https://www.cyt.chooseyourtherapist.in",
+    "https://api.chooseyourtherapist.in",
+    "http://api.chooseyourtherapist.in"
   ],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
