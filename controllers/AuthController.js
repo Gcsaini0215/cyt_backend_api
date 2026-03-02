@@ -94,7 +94,7 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
       await session.commitTransaction();
       session.endSession();
 
-      const html = therapistVerificationEmail(user.email, otp);
+      const html = therapistVerificationEmail(email, otp);
 
       await sendMail(email, subject, text, html);
 

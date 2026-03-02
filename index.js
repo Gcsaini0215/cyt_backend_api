@@ -1,18 +1,15 @@
-import app from "./app.js";
+import mongoose from "mongoose";
 import dotenv from "dotenv";
-import { mongoose } from "mongoose";
-const env = dotenv;
-const { connect } = mongoose;
+import app from "./app.js";
 
-env.config({ path: "./.env" });
+dotenv.config({ path: "./.env" });
 mongoose.set("strictQuery", true);
 
-
-connect(process.env.MONGODB_URI)
+mongoose.connect(process.env.MONGODB_URI)
   .then(() => {
     const PORT = process.env.PORT || 4000;
     app.listen(PORT, () => {
-      console.log(`✅ Server running on port new ${PORT}`);
+      console.log(`✅ Server running on port ${PORT}`);
     });
   })
   .catch((err) => console.log(err));

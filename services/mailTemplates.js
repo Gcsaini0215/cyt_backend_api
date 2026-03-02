@@ -369,11 +369,12 @@ export const newSessionAdminMail = ({
 export const leadNotificationEmail = (data) => {
   const { name, phone, email, concern, source, ...others } = data;
   
-  // Custom display logic for common dropdown values
-  const displayConcern = concern && concern !== "Not provided" ? concern : (others.reason || others.message || others.interest || others.type || "N/A");
+  // Custom display logic for common dropdown values (reason, service, interest, etc.)
+  const getVal = (v) => (v && v !== "Not provided") ? v : null;
+  const displayConcern = getVal(concern) || getVal(others.reason) || getVal(others.service) || getVal(others.message) || getVal(others.interest) || getVal(others.type) || getVal(others.dropdown) || "N/A";
 
   // Build HTML for any additional form fields
-  const filteredKeys = ["name", "phone", "email", "concern", "source", "service", "reason", "message", "interest", "type"];
+  const filteredKeys = ["name", "phone", "email", "concern", "source", "service", "reason", "message", "interest", "type", "dropdown"];
   let additionalFieldsHtml = "";
   if (others && Object.keys(others).length > 0) {
     additionalFieldsHtml = Object.entries(others)
@@ -528,3 +529,60 @@ export const leadNotificationEmail = (data) => {
 </html>
 `;
 };
+
+// --- OTP & AUTH TEMPLATES ---
+
+const baseOtpTemplate = (title, greeting, message, otp) => `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    .container { max-width: 500px; margin: 20px auto; font-family: sans-serif; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; }
+    .header { background: #2563eb; color: #fff; padding: 25px; text-align: center; }
+    .content { padding: 30px; line-height: 1.6; color: #334155; }
+    .otp-box { background: #f8fafc; border: 2px dashed #cbd5e1; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px; }
+    .otp-code { font-size: 32px; font-weight: 800; letter-spacing: 5px; color: #1e293b; }
+    .footer { background: #f1f5f9; padding: 15px; text-align: center; font-size: 12px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header"><h2>${title}</h2></div>
+    <div class="content">
+      <p>Hello <strong>${greeting}</strong>,</p>
+      <p>${message}</p>
+      <div class="otp-box">
+        <div style="font-size: 12px; color: #64748b; margin-bottom: 8px; text-transform: uppercase; font-weight: 700;">Verification Code</div>
+        <div class="otp-code">${otp}</div>
+      </div>
+      <p>This code is valid for a limited time. Please do not share this OTP with anyone.</p>
+    </div>
+    <div class="footer">Choose Your Therapist (CYT) &bull; Mental Wellness Platform</div>
+  </div>
+</body>
+</html>
+`;
+
+export const loginOtpEmail = (name, otp) => 
+  baseOtpTemplate("Login Verification", name, "Use the following code to complete your login to CYT.", otp);
+
+export const registrationOtpEmail = (name, otp) => 
+  baseOtpTemplate("Welcome to CYT", name, "Thank you for joining us! Please verify your email with the code below.", otp);
+
+export const therapistVerificationEmail = (email, otp) => 
+  baseOtpTemplate("Therapist Onboarding", email, "Your application is under review. Please verify your email to proceed with the registration process.", otp);
+
+export const otpVerificationEmail = (otp) => 
+  baseOtpTemplate("Verification Code", "User", "Your one-time verification code is provided below.", otp);
+
+// --- PLAIN TEXT HELPERS ---
+
+export const clientText = (booking, txId) => 
+  `Session Confirmed! Transaction: ${txId}. Your unique session PIN is ${booking.otp}. Please share this with your therapist at the start of the session.`;
+
+export const therapistText = (booking, txId) => 
+  `NEW SESSION assigned. Transaction: ${txId}. Client: ${booking.client.name}. Please log in to your dashboard for details.`;
+
+export const adminText = (booking, txId) => 
+  `CONFIRMED BOOKING: ${booking.client.name} with ${booking.therapist.user.name}. Amount: ₹${booking.amount}. Transaction: ${txId}.`;
+

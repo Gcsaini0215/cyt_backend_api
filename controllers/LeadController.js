@@ -32,9 +32,12 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
   try {
     const { name, phone, email, concern, source } = req.body;
     
-    // Capture potential alternative field names from frontend for concern
-    const finalConcern = concern || req.body.reason || req.body.message || req.body.interest || "Not provided";
-    const finalSource = source || req.body.source || "Direct Search";
+    // Capture potential alternative field names from frontend for concern (dropdown values)
+    // Filter out "Not provided" or empty strings to find a real value
+    const getVal = (v) => (v && v !== "Not provided") ? v : null;
+    
+    const finalConcern = getVal(concern) || getVal(req.body.reason) || getVal(req.body.message) || getVal(req.body.interest) || getVal(req.body.service) || getVal(req.body.dropdown) || getVal(req.body.type) || "Not provided";
+    const finalSource = getVal(source) || getVal(req.body.source) || "Direct Search";
 
     console.log("Lead Form Data received:", req.body);
 
