@@ -19,8 +19,7 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
       "any.required": "Email is required",
     }),
     concern: Joi.string().allow("").optional(),
-    service: Joi.string().allow("").optional(),
-    reason: Joi.string().allow("").optional(),
+    source: Joi.string().allow("").optional(),
   }).unknown(true);
 
   const { error } = validateSchema.validate(req.body);
@@ -31,12 +30,11 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
   }
 
   try {
-    const { name, phone, email, concern, service, reason } = req.body;
+    const { name, phone, email, concern, source } = req.body;
     
-    // Capture potential alternative field names from frontend
-    const finalConcern = concern || req.body.message || req.body.interest || "Not provided";
-    const finalService = service || req.body.services || req.body.service_type || req.body.dropdown || "Not provided";
-    const finalReason = reason || req.body.type || "Not provided";
+    // Capture potential alternative field names from frontend for concern
+    const finalConcern = concern || req.body.reason || req.body.message || req.body.interest || "Not provided";
+    const finalSource = source || req.body.source || "Direct Search";
 
     console.log("Lead Form Data received:", req.body);
 
@@ -45,13 +43,12 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
       phone,
       email,
       concern: finalConcern,
-      service: finalService,
-      reason: finalReason,
+      source: finalSource,
     });
 
     const sendMailid = "chooseyourtherapist@gmail.com"
-    const subject = "New Lead Received from Consultation Form";
-    const text = `A new lead has been submitted: ${name}`;
+    const subject = `New Lead: ${name} - Consultation Request`;
+    const text = `A new lead has been submitted: ${name}. Phone: ${phone}. Source: ${finalSource}`;
     
     const leadData = {
       ...req.body,
@@ -59,8 +56,7 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
       phone: phone,
       email: email,
       concern: finalConcern,
-      service: finalService,
-      reason: finalReason
+      source: finalSource
     };
 
     console.log("Final leadData being passed to template:", leadData);

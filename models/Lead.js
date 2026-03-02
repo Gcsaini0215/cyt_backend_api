@@ -18,11 +18,7 @@ const leadSchema = new Schema({
     type: String,
     required: false,
   },
-  service: {
-    type: String,
-    required: false,
-  },
-  reason: {
+  source: {
     type: String,
     required: false,
   },

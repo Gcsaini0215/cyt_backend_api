@@ -17,73 +17,57 @@ export const therapistSessionMail = ({
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Session Assigned</title>
+    <title>New Session Assigned | CYT</title>
     <style>
-      body {
-        font-family: Arial, sans-serif;
-        color: #333;
-        line-height: 1.6;
-      }
-      .container {
-        max-width: 600px;
-        margin: auto;
-        padding: 20px;
-        border: 1px solid #eee;
-        border-radius: 8px;
-        background: #fafafa;
-      }
-      h2 {
-        color: #4CAF50;
-      }
-      ul {
-        padding-left: 20px;
-      }
-      .footer {
-        margin-top: 20px;
-        font-size: 14px;
-        color: #555;
-      }
+      body { font-family: 'Segoe UI', Arial, sans-serif; color: #333; line-height: 1.6; background-color: #f4f7f6; margin: 0; }
+      .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+      .header { background: #2c3e50; color: #ffffff; padding: 30px; text-align: center; }
+      .content { padding: 35px; }
+      .client-card { background: #e8f4fd; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 5px solid #3498db; }
+      .info-row { margin-bottom: 10px; display: flex; }
+      .info-label { font-weight: 700; width: 130px; color: #555; }
+      .info-value { color: #222; flex: 1; }
+      .instructions { background: #fff9db; padding: 20px; border-radius: 8px; border: 1px solid #ffe066; margin-top: 25px; }
+      .footer { background: #f8f9fa; padding: 20px; text-align: center; font-size: 13px; color: #777; }
     </style>
   </head>
   <body>
     <div class="container">
-      <p>Dear <strong>${therapistName}</strong>,</p>
-      <p>A session has been assigned to you. Kindly review the details below:</p>
+      <div class="header">
+        <h2 style="margin:0">New Session Assigned</h2>
+      </div>
+      <div class="content">
+        <p>Dear <strong>${therapistName}</strong>,</p>
+        <p>A new therapy session has been assigned to you. Please review the client details below:</p>
 
-      <h2>Client Information:</h2>
-      <ul>
-        <li><strong>Full Name:</strong> ${clientName}</li>
-        <li><strong>Age:</strong> ${clientAge}</li>
-        <li><strong>Service:</strong> ${service || "N/A"}</li>
-        <li><strong>Format:</strong> ${format || "N/A"}</li>
-        <li><strong>Whom:</strong> ${whom || "N/A"}</li>
-        <li><strong>Booking for (Name):</strong> ${cname || clientName}</li>
-        <li><strong>Relation:</strong> ${relation_with_client || "Self"}</li>
-        <li><strong>Notes:</strong> ${notes || "None"}</li>
-        <li><strong>Payment:</strong> ₹${paymentAmount}</li>
-        <li><strong>Transaction ID:</strong> ${transactionId}</li>
-      </ul>
+        <div class="client-card">
+          <div class="info-row"><div class="info-label">Client Name:</div><div class="info-value">${clientName}</div></div>
+          <div class="info-row"><div class="info-label">Patient (Age):</div><div class="info-value">${cname || clientName} ${clientAge ? '('+clientAge+'y)' : ''}</div></div>
+          <div class="info-row"><div class="info-label">Service:</div><div class="info-value">${service || "N/A"}</div></div>
+          <div class="info-row"><div class="info-label">Format:</div><div class="info-value" style="text-transform: capitalize;">${format || "N/A"}</div></div>
+          <div class="info-row"><div class="info-label">Relation:</div><div class="info-value">${relation_with_client || "Self"}</div></div>
+          <div class="info-row"><div class="info-label">Transaction:</div><div class="info-value">${transactionId}</div></div>
+          ${notes ? `<div class="info-row"><div class="info-label">Notes:</div><div class="info-value">${notes}</div></div>` : ''}
+        </div>
 
-      <h2>Important Instructions:</h2>
-      <ul>
-        <li>Log in to your dashboard and verify the transaction.</li>
-        <li>View client details directly from the dashboard before the session.</li>
-        <li>At the start, collect the client’s PIN and update it in your dashboard.</li>
-        <li>After completing the session, please click on the “End” button to submit it.</li>
-      </ul>
-
-      <p>Thank you for your continued support and professionalism.</p>
-
+        <div class="instructions">
+          <h4 style="margin-top:0; color:#856404;">Action Required:</h4>
+          <ul style="margin-bottom:0; padding-left:20px;">
+            <li>Log in to your <strong>Therapist Dashboard</strong> to verify the session.</li>
+            <li><strong>Collect PIN:</strong> At the start of the session, collect the client's unique PIN and update it in your dashboard.</li>
+            <li><strong>Completion:</strong> After the session, mark it as "Completed" to process the records.</li>
+          </ul>
+        </div>
+      </div>
       <div class="footer">
-        <p>Warm regards,<br/>
-        <strong>Choose Your Therapist LLP</strong><br/>
-        Support Team</p>
+        <p>Choose Your Therapist LLP &bull; Support Team</p>
       </div>
     </div>
   </body>
   </html>
   `;
 };
+
 
 
 export const bookingConfirmationMail = ({
@@ -105,73 +89,198 @@ export const bookingConfirmationMail = ({
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Booking Confirmation</title>
+    <title>Booking Confirmation | CYT</title>
     <style>
       body {
-        font-family: Arial, sans-serif;
+        font-family: 'Segoe UI', Arial, sans-serif;
         color: #333;
         line-height: 1.6;
+        background-color: #f0f4f8;
+        margin: 0;
+        padding: 0;
       }
       .container {
         max-width: 600px;
-        margin: auto;
-        padding: 20px;
-        border: 1px solid #eee;
-        border-radius: 8px;
-        background: #fafafa;
+        margin: 30px auto;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+        background: #ffffff;
       }
-      h2 {
-        color: #4CAF50;
+      .header {
+        background: linear-gradient(135deg, #4CAF50 0%, #2e7d32 100%);
+        color: white;
+        padding: 40px 20px;
+        text-align: center;
       }
-      ul {
-        padding-left: 20px;
+      .header h1 {
+        margin: 0;
+        font-size: 26px;
+        letter-spacing: 1px;
       }
-      ol {
-        padding-left: 20px;
+      .content {
+        padding: 35px;
+      }
+      .welcome-text {
+        font-size: 18px;
+        color: #1a1a1a;
+        margin-bottom: 25px;
+      }
+      .details-card {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 25px;
+        margin-bottom: 30px;
+      }
+      .details-card h2 {
+        margin-top: 0;
+        font-size: 16px;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        border-bottom: 1px solid #e2e8f0;
+        padding-bottom: 10px;
+        margin-bottom: 20px;
+      }
+      .detail-row {
+        display: flex;
+        margin-bottom: 12px;
+      }
+      .detail-label {
+        flex: 0 0 140px;
+        font-weight: 700;
+        color: #475569;
+      }
+      .detail-value {
+        flex: 1;
+        color: #1e293b;
+      }
+      .pin-container {
+        text-align: center;
+        margin: 30px 0;
+        padding: 25px;
+        background: #fffbeb;
+        border: 2px dashed #fcd34d;
+        border-radius: 12px;
+      }
+      .pin-label {
+        font-size: 14px;
+        color: #92400e;
+        margin-bottom: 10px;
+        font-weight: 600;
+      }
+      .pin-value {
+        font-family: 'Courier New', monospace;
+        font-size: 32px;
+        font-weight: 800;
+        color: #1e293b;
+        letter-spacing: 5px;
+      }
+      .instructions {
+        margin-top: 30px;
+      }
+      .instructions h3 {
+        color: #2e7d32;
+        font-size: 18px;
+        margin-bottom: 15px;
+      }
+      .instruction-item {
+        margin-bottom: 12px;
+        display: flex;
+        align-items: flex-start;
+      }
+      .instruction-num {
+        background: #e8f5e9;
+        color: #2e7d32;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        text-align: center;
+        line-height: 24px;
+        font-size: 12px;
+        font-weight: 700;
+        margin-right: 12px;
+        flex-shrink: 0;
       }
       .footer {
-        margin-top: 20px;
+        background: #f1f5f9;
+        padding: 25px;
+        text-align: center;
+        color: #64748b;
         font-size: 14px;
-        color: #555;
+      }
+      .social-links {
+        margin-top: 15px;
       }
     </style>
   </head>
   <body>
     <div class="container">
-      <p>Dear <strong>${clientName}</strong>,</p>
-      <p>Your therapy session has been successfully booked. Please find your session details below:</p>
-
-      <h2>Booking Details:</h2>
-      <ul>
-        <li><strong>Therapist:</strong> ${therapistName}</li>
-        <li><strong>Your Full Name:</strong> ${clientName}</li>
-        <li><strong>Age:</strong> ${clientAge || "-"}</li>
-        <li><strong>Service:</strong> ${service || "N/A"}</li>
-        <li><strong>Format:</strong> ${format || "N/A"}</li>
-        <li><strong>Whom:</strong> ${whom || "N/A"}</li>
-        <li><strong>Booking for (Name):</strong> ${cname || clientName}</li>
-        <li><strong>Relation:</strong> ${relation_with_client || "Self"}</li>
-        <li><strong>Notes:</strong> ${notes || "None"}</li>
-        <li><strong>Transaction ID:</strong> ${transactionId}</li>
-      </ul>
-      <p>Share this PIN with your therapist when you start the session.</p>
-      <div style="margin:8px 0 16px 0; display:inline-block; padding:14px 18px; border:1px dashed #94a3b8; border-radius:10px; font-family:Consolas, Menlo, Monaco, monospace; font-size:20px; letter-spacing:3px; font-weight:700; color:#111827; background:#f8fafc;">
-        ${pin}
+      <div class="header">
+        <h1>Booking Confirmed</h1>
       </div>
+      <div class="content">
+        <p class="welcome-text">Dear <strong>${clientName}</strong>,</p>
+        <p>Your therapy session has been successfully booked. We're committed to supporting you on your wellness journey.</p>
 
-      <h2>Important Instructions for You:</h2>
-      <ol>
-        <li>Log in to your dashboard to check the booking and verify your payment status.</li>
-        <li>You will find a unique PIN number in your dashboard. Please share this PIN with your therapist at the beginning of your session.</li>
-        <li>Your therapist will update the session details once it is completed.</li>
-      </ol>
+        <div class="details-card">
+          <h2>Session Details</h2>
+          <div class="detail-row">
+            <div class="detail-label">Therapist</div>
+            <div class="detail-value">${therapistName}</div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Service</div>
+            <div class="detail-value">${service || "Counseling"}</div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Format</div>
+            <div class="detail-value" style="text-transform: capitalize;">${format || "Video Session"}</div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Patient Name</div>
+            <div class="detail-value">${cname || clientName} ${clientAge ? '(' + clientAge + 'y)' : ''}</div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Relationship</div>
+            <div class="detail-value">${relation_with_client || "Self"}</div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Transaction ID</div>
+            <div class="detail-value">${transactionId}</div>
+          </div>
+          ${notes ? `<div class="detail-row"><div class="detail-label">Notes</div><div class="detail-value">${notes}</div></div>` : ''}
+        </div>
 
-      <p>If you face any issues with your booking or dashboard, feel free to reach out to our support team.</p>
+        <div class="pin-container">
+          <div class="pin-label">YOUR UNIQUE SESSION PIN</div>
+          <div class="pin-value">${pin}</div>
+          <p style="margin-top:15px; font-size:13px; color: #b45309;">Share this PIN with your therapist <strong>only</strong> when the session starts.</p>
+        </div>
 
+        <div class="instructions">
+          <h3>Next Steps:</h3>
+          <div class="instruction-item">
+            <div class="instruction-num">1</div>
+            <div>Access your personal <strong>Dashboard</strong> to manage your booking and check payment status.</div>
+          </div>
+          <div class="instruction-item">
+            <div class="instruction-num">2</div>
+            <div>Be ready at the scheduled time. Your therapist will initiate the session based on the chosen format.</div>
+          </div>
+          <div class="instruction-item">
+            <div class="instruction-num">3</div>
+            <div>Provide the PIN above to your therapist at the beginning of the call to verify the session.</div>
+          </div>
+        </div>
+
+        <p style="margin-top: 30px;">If you have any questions, our support team is always here to help.</p>
+      </div>
       <div class="footer">
-        <p>Warm regards,<br/>
-        <strong>Choose Your Therapist LLP</strong><br/>
-        Support Team</p>
+        <p><strong>Choose Your Therapist LLP</strong><br/>
+        Professional Mental Health Support Platform</p>
+        <p>&copy; ${new Date().getFullYear()} CYT. All rights reserved.</p>
       </div>
     </div>
   </body>
@@ -201,64 +310,53 @@ export const newSessionAdminMail = ({
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>New Session Booked</title>
+    <title>New Session Notification</title>
     <style>
-      body {
-        font-family: Arial, sans-serif;
-        color: #333;
-        line-height: 1.6;
-      }
-      .container {
-        max-width: 600px;
-        margin: auto;
-        padding: 20px;
-        border: 1px solid #eee;
-        border-radius: 8px;
-        background: #fafafa;
-      }
-      h2 {
-        color: #4CAF50;
-      }
-      ul {
-        padding-left: 20px;
-      }
-      .footer {
-        margin-top: 20px;
-        font-size: 14px;
-        color: #555;
-      }
+      body { font-family: 'Segoe UI', Arial, sans-serif; color: #333; line-height: 1.5; background-color: #f8fafc; margin: 0; }
+      .container { max-width: 650px; margin: 20px auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+      .header { background: #1e293b; color: #ffffff; padding: 25px; text-align: center; }
+      .content { padding: 30px; }
+      .status-badge { display: inline-block; padding: 4px 12px; background: #dcfce7; color: #166534; border-radius: 99px; font-size: 12px; font-weight: 700; margin-bottom: 20px; }
+      table { width: 100%; border-collapse: collapse; margin-bottom: 25px; }
+      th { text-align: left; padding: 12px; background: #f1f5f9; color: #475569; font-size: 13px; text-transform: uppercase; border-bottom: 2px solid #e2e8f0; }
+      td { padding: 12px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+      .label { font-weight: 600; color: #64748b; width: 160px; font-size: 14px; }
+      .value { color: #1e293b; font-size: 15px; }
+      .section-head { font-size: 16px; font-weight: 700; color: #1e293b; margin: 25px 0 15px 0; display: flex; align-items: center; }
+      .footer { background: #f8fafc; padding: 20px; text-align: center; color: #94a3b8; font-size: 12px; border-top: 1px solid #e2e8f0; }
     </style>
   </head>
   <body>
     <div class="container">
-      <p>Dear <strong>Choose Your Therapist Team</strong>,</p>
-      <p>A new session has been booked on the platform. Below are the details for your reference:</p>
+      <div class="header">
+        <h2 style="margin:0">New Session Booked</h2>
+      </div>
+      <div class="content">
+        <div class="status-badge">PAYMENT RECEIVED</div>
+        <p>A new therapy session has been confirmed and recorded in the system.</p>
 
-      <h2>Client Information:</h2>
-      <ul>
-        <li><strong>Full Name:</strong> ${clientName}</li>
-        <li><strong>Age:</strong> ${clientAge}</li>
-        <li><strong>Service:</strong> ${service || "N/A"}</li>
-        <li><strong>Format:</strong> ${format || "N/A"}</li>
-        <li><strong>Whom:</strong> ${whom || "N/A"}</li>
-        <li><strong>Booking for (Name):</strong> ${cname || clientName}</li>
-        <li><strong>Relation:</strong> ${relation_with_client || "Self"}</li>
-        <li><strong>Notes:</strong> ${notes || "None"}</li>
-        <li><strong>Payment Status:</strong> ₹${paymentAmount}</li>
-        <li><strong>Transaction ID:</strong> ${transactionId}</li>
-      </ul>
+        <div class="section-head">Client & Session Details</div>
+        <table>
+          <tr><td class="label">Client Name</td><td class="value">${clientName}</td></tr>
+          <tr><td class="label">Patient (Age)</td><td class="value">${cname || clientName} ${clientAge ? '('+clientAge+')' : ''}</td></tr>
+          <tr><td class="label">Service</td><td class="value">${service || "N/A"}</td></tr>
+          <tr><td class="label">Format</td><td class="value">${format || "N/A"}</td></tr>
+          <tr><td class="label">Whom / Relation</td><td class="value">${whom} / ${relation_with_client || "Self"}</td></tr>
+          <tr><td class="label">Amount Paid</td><td class="value"><strong>₹${paymentAmount}</strong></td></tr>
+          <tr><td class="label">Transaction ID</td><td class="value"><code>${transactionId}</code></td></tr>
+          ${notes ? `<tr><td class="label">Notes</td><td class="value">${notes}</td></tr>` : ''}
+        </table>
 
-      <h2>Therapist Information:</h2>
-      <ul>
-        <li><strong>Name:</strong> ${therapistName}</li>
-        <li><strong>Therapist ID Code:</strong> ${therapistId}</li>
-      </ul>
+        <div class="section-head">Assigned Therapist</div>
+        <table>
+          <tr><td class="label">Therapist Name</td><td class="value">${therapistName}</td></tr>
+          <tr><td class="label">Profile Code</td><td class="value">${therapistId}</td></tr>
+        </table>
 
-      <p>Thank you,</p>
-
+        <p style="color: #64748b; font-size: 14px;">Please ensure the therapist is notified and the session proceeds as scheduled.</p>
+      </div>
       <div class="footer">
-        <p><strong>Choose Your Therapist LLP</strong><br/>
-        Support Team</p>
+        <p>CYT Management System &bull; Confidential Internal Notification</p>
       </div>
     </div>
   </body>
@@ -267,434 +365,25 @@ export const newSessionAdminMail = ({
 };
 
 
-export const therapistText = (isBookingDetail,transactionId) => `
-Dear ${isBookingDetail.therapist.user.name},
-
-A session has been assigned to you.
-Client: ${isBookingDetail.client.name}, Age: ${isBookingDetail.client.age || "N/A"}
-Payment: ₹${isBookingDetail.amount}, Transaction ID: ${transactionId}
-
-Check your dashboard for details and update session status after completion.
-
-Choose Your Therapist LLP
-Support Team
-`;
-
-export const clientText = (isBookingDetail,transactionId) => `
-Dear ${isBookingDetail.client.name},
-
-Your session with ${isBookingDetail.therapist.user.name} has been booked.
-Payment: ₹${isBookingDetail.amount}, Transaction ID: ${transactionId}
-
-Check your dashboard for your PIN and session details.
-
-Choose Your Therapist LLP
-Support Team
-`;
-
-export const adminText = (isBookingDetail,transactionId) => `
-New session booked:
-
-Client: ${isBookingDetail.client.name}, Age: ${isBookingDetail.client.age || "N/A"}
-Payment: ₹${isBookingDetail.amount}, Transaction ID: ${transactionId}
-
-Therapist: ${isBookingDetail.therapist.user.name}, ID: ${isBookingDetail.therapist._id}
-
-Choose Your Therapist LLP
-Support Team
-`;
-
-
-export const therapistVerificationEmail = (name = "Therapist", otp = "123456") => `
-<!doctype html>
-<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width">
-  <meta http-equiv="x-ua-compatible" content="ie=edge">
-  <title>Therapist Registration OTP</title>
-  <style>
-    @media (prefers-color-scheme: dark) {
-      body, table, .bg-body { background-color:#0b0f14 !important; color:#e6eaef !important; }
-      .card { background-color:#111827 !important; border-color:#1f2937 !important; }
-      .muted { color:#9aa4b2 !important; }
-      .btn { background:#2563eb !important; color:#ffffff !important; }
-    }
-    @media only screen and (max-width: 600px) {
-      .container { width:100% !important; padding:0 16px !important; }
-      .card { padding:20px !important; }
-      h1 { font-size:22px !important; }
-    }
-  </style>
-</head>
-<body style="margin:0; padding:0; background:#f4f6f8;" class="bg-body">
-  <div style="display:none; overflow:hidden; line-height:1px; opacity:0; max-height:0; max-width:0;">
-    Your OTP for verification is ${otp}. Complete your registration with Choose Your Therapist.
-  </div>
-
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f4f6f8; padding:24px 0;">
-    <tr>
-      <td align="center">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="600" class="container" style="width:600px; max-width:600px;">
-          <tr>
-            <td align="left" style="padding:0 24px 16px 24px; font-family:Arial, Helvetica, sans-serif;">
-              <div style="font-size:14px; color:#64748b;">Choose Your Therapist LLP</div>
-              <div style="font-size:24px; font-weight:700; color:#0f172a;">Support Team</div>
-            </td>
-          </tr>
-
-          <tr>
-            <td style="padding:0 24px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="card" style="background:#ffffff; border:1px solid #e5e7eb; border-radius:12px; padding:28px;">
-                <tr>
-                  <td style="font-family:Arial, Helvetica, sans-serif; color:#0f172a;">
-                    <h1 style="margin:0 0 12px 0; font-size:20px; line-height:1.3;">Dear ${name},</h1>
-
-                    <p style="margin:0 0 16px 0; font-size:15px; line-height:1.6;">
-                      Thank you for registering with us as a therapist.
-                    </p>
-
-                    <p style="margin:0 0 8px 0; font-size:14px; color:#64748b;">Your One-Time Password (OTP) for verification is:</p>
-
-                    <div style="margin:8px 0 16px 0; display:inline-block; padding:14px 18px; border:1px dashed #94a3b8; border-radius:10px; font-family:Consolas, Menlo, Monaco, monospace; font-size:20px; letter-spacing:3px; font-weight:700; color:#111827; background:#f8fafc;">
-                      ${otp}
-                    </div>
-
-                    <p style="margin:0 0 16px 0; font-size:15px; line-height:1.6;">
-                      Please use this OTP to complete your registration process.
-                    </p>
-
-                    <ul style="margin:0 0 16px 24px; padding:0; font-size:14px; line-height:1.6; color:#0f172a;">
-                      <li style="margin:0 0 6px 0;">✅ <strong>Note:</strong> Your resume has been successfully submitted.</li>
-                      <li style="margin:0;">⏳ Our team will review your profile, and within <strong>7 days</strong> your account will be approved. Once approved, you will receive a confirmation email with further instructions.</li>
-                    </ul>
-
-                    <p style="margin:0 0 18px 0; font-size:15px; line-height:1.6;">
-                      We appreciate your patience and look forward to having you on our platform.
-                    </p>
-                    <div style="margin:22px 0;">
-                      <a href="#" class="btn"
-                         style="display:inline-block; text-decoration:none; background:#1e40af; color:#ffffff; padding:12px 18px; border-radius:8px; font-size:14px; font-weight:600;">
-                        Complete Verification
-                      </a>
-                    </div>
-
-                    <p style="margin:0 0 6px 0; font-size:15px; line-height:1.6;">Warm regards,</p>
-                    <p style="margin:0; font-size:15px; line-height:1.6;">
-                      <strong>Choose Your Therapist LLP</strong><br>
-                      Support Team
-                    </p>
-
-                    <hr style="border:none; border-top:1px solid #e5e7eb; margin:20px 0;">
-
-                    <p class="muted" style="margin:0; font-size:12px; color:#94a3b8; line-height:1.5;">
-                      If you didn’t request this, you can safely ignore this email. The OTP will expire automatically.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <tr>
-            <td style="padding:16px 24px; font-family:Arial, Helvetica, sans-serif; font-size:12px; color:#94a3b8;" align="left">
-              © ${new Date().getFullYear()} Choose Your Therapist LLP. All rights reserved.
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-`;
-
-
-export const loginOtpEmail = (name = "User", otp = "123456") => `
-<!doctype html>
-<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width">
-  <meta http-equiv="x-ua-compatible" content="ie=edge">
-  <title>CYT Login OTP</title>
-  <style>
-    @media (prefers-color-scheme: dark) {
-      body, table, .bg-body { background-color:#0b0f14 !important; color:#e6eaef !important; }
-      .card { background-color:#111827 !important; border-color:#1f2937 !important; }
-      .muted { color:#9aa4b2 !important; }
-      .btn { background:#2563eb !important; color:#ffffff !important; }
-    }
-    @media only screen and (max-width: 600px) {
-      .container { width:100% !important; padding:0 16px !important; }
-      .card { padding:20px !important; }
-      h1 { font-size:22px !important; }
-    }
-  </style>
-</head>
-<body style="margin:0; padding:0; background:#f4f6f8;" class="bg-body">
-
-  <div style="display:none; overflow:hidden; line-height:1px; opacity:0; max-height:0; max-width:0;">
-    Your CYT login OTP is ${otp}. It’s valid for 10 minutes.
-  </div>
-
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f4f6f8; padding:24px 0;">
-    <tr>
-      <td align="center">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="600" class="container" style="width:600px; max-width:600px;">
-          <!-- Header -->
-          <tr>
-            <td align="left" style="padding:0 24px 16px 24px; font-family:Arial, Helvetica, sans-serif;">
-              <div style="font-size:14px; color:#64748b;">Choose Your Therapist (CYT)</div>
-              <div style="font-size:24px; font-weight:700; color:#0f172a;">Secure Login</div>
-            </td>
-          </tr>
-
-          <tr>
-            <td style="padding:0 24px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="card" style="background:#ffffff; border:1px solid #e5e7eb; border-radius:12px; padding:28px;">
-                <tr>
-                  <td style="font-family:Arial, Helvetica, sans-serif; color:#0f172a;">
-                    <h1 style="margin:0 0 12px 0; font-size:20px; line-height:1.3;">Dear ${name},</h1>
-
-                    <p style="margin:0 0 16px 0; font-size:15px; line-height:1.6;">
-                      You are trying to log in to your account on <strong>Choose Your Therapist (CYT)</strong>.
-                    </p>
-
-                    <p style="margin:0 0 8px 0; font-size:14px; color:#64748b;">Your One-Time Password (OTP) is:</p>
-
-                    <!-- OTP Box -->
-                    <div style="margin:8px 0 16px 0; display:inline-block; padding:14px 18px; border:1px dashed #94a3b8; border-radius:10px; font-family:Consolas, Menlo, Monaco, monospace; font-size:20px; letter-spacing:3px; font-weight:700; color:#111827; background:#f8fafc;">
-                      ${otp}
-                    </div>
-
-                    <p style="margin:0 0 16px 0; font-size:15px; line-height:1.6;">
-                      This OTP is valid for the next <strong>10 minutes</strong>.  
-                      Please <strong>do not share this code</strong> with anyone for security reasons.
-                    </p>
-
-                    <p style="margin:0 0 18px 0; font-size:15px; line-height:1.6;">
-                      Thank you,<br>
-                      <strong>Team CYT</strong>
-                    </p>
-
-                    <hr style="border:none; border-top:1px solid #e5e7eb; margin:20px 0;">
-
-                    <p class="muted" style="margin:0; font-size:12px; color:#94a3b8; line-height:1.5;">
-                      Didn’t request a login? Please ignore this email or reset your password immediately.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:16px 24px; font-family:Arial, Helvetica, sans-serif; font-size:12px; color:#94a3b8;" align="left">
-              © ${new Date().getFullYear()} Choose Your Therapist LLP. All rights reserved.
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-`;
-
-export const otpVerificationEmail = (otp = "123456") => `
-<!doctype html>
-<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width">
-  <meta http-equiv="x-ua-compatible" content="ie=edge">
-  <title>CYT OTP Verification</title>
-  <style>
-    @media (prefers-color-scheme: dark) {
-      body, table, .bg-body { background-color:#0b0f14 !important; color:#e6eaef !important; }
-      .card { background-color:#111827 !important; border-color:#1f2937 !important; }
-      .muted { color:#9aa4b2 !important; }
-    }
-    @media only screen and (max-width: 600px) {
-      .container { width:100% !important; padding:0 16px !important; }
-      .card { padding:20px !important; }
-      h1 { font-size:22px !important; }
-    }
-  </style>
-</head>
-<body style="margin:0; padding:0; background:#f4f6f8;" class="bg-body">
-  <!-- Preheader -->
-  <div style="display:none; overflow:hidden; line-height:1px; opacity:0; max-height:0; max-width:0;">
-    Your OTP for verification is ${otp}. Valid for 10 minutes.
-  </div>
-
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f4f6f8; padding:24px 0;">
-    <tr>
-      <td align="center">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="600" class="container" style="width:600px; max-width:600px;">
-          <tr>
-            <td align="left" style="padding:0 24px 16px 24px; font-family:Arial, Helvetica, sans-serif;">
-              <div style="font-size:14px; color:#64748b;">Choose Your Therapist (CYT)</div>
-              <div style="font-size:24px; font-weight:700; color:#0f172a;">OTP Verification</div>
-            </td>
-          </tr>
-
-          <tr>
-            <td style="padding:0 24px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="card" style="background:#ffffff; border:1px solid #e5e7eb; border-radius:12px; padding:28px;">
-                <tr>
-                  <td style="font-family:Arial, Helvetica, sans-serif; color:#0f172a;">
-                    <h1 style="margin:0 0 12px 0; font-size:20px; line-height:1.3;">Dear User,</h1>
-
-                    <p style="margin:0 0 8px 0; font-size:15px; line-height:1.6;">
-                      Your One-Time Password (OTP) is:
-                    </p>
-
-                    <div style="margin:8px 0 16px 0; display:inline-block; padding:14px 18px; border:1px dashed #94a3b8; border-radius:10px; font-family:Consolas, Menlo, Monaco, monospace; font-size:20px; letter-spacing:3px; font-weight:700; color:#111827; background:#f8fafc;">
-                      ${otp}
-                    </div>
-
-                    <p style="margin:0 0 16px 0; font-size:15px; line-height:1.6;">
-                      It is valid for the next <strong>10 minutes</strong>.  
-                      Please <strong>do not share</strong> this code with anyone.
-                    </p>
-
-                    <p style="margin:0; font-size:15px; line-height:1.6;">
-                      — Team CYT
-                    </p>
-
-                    <hr style="border:none; border-top:1px solid #e5e7eb; margin:20px 0;">
-
-                    <p class="muted" style="margin:0; font-size:12px; color:#94a3b8; line-height:1.5;">
-                      If you didn’t request this OTP, please ignore this email.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <!-- Footer -->
-          <tr>
-            <td style="padding:16px 24px; font-family:Arial, Helvetica, sans-serif; font-size:12px; color:#94a3b8;" align="left">
-              © ${new Date().getFullYear()} Choose Your Therapist LLP. All rights reserved.
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-`;
-
-export const registrationOtpEmail = ( name = "User", otp = "123456" ) => `
-<!doctype html>
-<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width">
-  <meta http-equiv="x-ua-compatible" content="ie=edge">
-  <title>CYT Registration OTP</title>
-  <style>
-    @media (prefers-color-scheme: dark) {
-      body, table, .bg-body { background-color:#0b0f14 !important; color:#e6eaef !important; }
-      .card { background-color:#111827 !important; border-color:#1f2937 !important; }
-      .muted { color:#9aa4b2 !important; }
-    }
-    @media only screen and (max-width: 600px) {
-      .container { width:100% !important; padding:0 16px !important; }
-      .card { padding:20px !important; }
-      h1 { font-size:22px !important; }
-    }
-  </style>
-</head>
-<body style="margin:0; padding:0; background:#f4f6f8;" class="bg-body">
-  <!-- Preheader -->
-  <div style="display:none; overflow:hidden; line-height:1px; opacity:0; max-height:0; max-width:0;">
-    Use the OTP below to complete your CYT registration. Valid for 10 minutes.
-  </div>
-
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f4f6f8; padding:24px 0;">
-    <tr>
-      <td align="center">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="600" class="container" style="width:600px; max-width:600px;">
-          <!-- Header -->
-          <tr>
-            <td align="left" style="padding:0 24px 16px 24px; font-family:Arial, Helvetica, sans-serif;">
-              <div style="font-size:14px; color:#64748b;">Choose Your Therapist (CYT)</div>
-              <div style="font-size:24px; font-weight:700; color:#0f172a;">Registration OTP</div>
-            </td>
-          </tr>
-
-          <!-- Card -->
-          <tr>
-            <td style="padding:0 24px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="card" style="background:#ffffff; border:1px solid #e5e7eb; border-radius:12px; padding:28px;">
-                <tr>
-                  <td style="font-family:Arial, Helvetica, sans-serif; color:#0f172a;">
-                    <h1 style="margin:0 0 12px 0; font-size:20px; line-height:1.3;">Dear ${name},</h1>
-
-                    <p style="margin:0 0 16px 0; font-size:15px; line-height:1.6;">
-                      Welcome to <strong>Choose Your Therapist (CYT)</strong>!
-                    </p>
-
-                    <p style="margin:0 0 12px 0; font-size:15px; line-height:1.6;">
-                      To complete your registration, please use the One-Time Password (OTP) below:
-                    </p>
-
-                    <!-- OTP Box -->
-                    <div style="margin:8px 0 16px 0; display:inline-block; padding:14px 18px; border:1px dashed #94a3b8; border-radius:10px; font-family:Consolas, Menlo, Monaco, monospace; font-size:20px; letter-spacing:3px; font-weight:700; color:#111827; background:#f8fafc;">
-                      ${otp}
-                    </div>
-
-                    <p style="margin:0 0 16px 0; font-size:15px; line-height:1.6;">
-                      This OTP is valid for the next <strong>10 minutes</strong>.  
-                      Please do not share this code with anyone for security reasons.
-                    </p>
-
-                    <p style="margin:0 0 16px 0; font-size:15px; line-height:1.6;">
-                      We’re glad to have you with us and look forward to supporting you on your wellness journey.
-                    </p>
-
-                    <p style="margin:0; font-size:15px; line-height:1.6;">
-                      Warm regards,<br>
-                      <strong>Team CYT</strong>
-                    </p>
-
-                    <hr style="border:none; border-top:1px solid #e5e7eb; margin:20px 0;">
-
-                    <p class="muted" style="margin:0; font-size:12px; color:#94a3b8; line-height:1.5;">
-                      If you didn’t sign up for CYT, you can safely ignore this email.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <!-- Footer -->
-          <tr>
-            <td style="padding:16px 24px; font-family:Arial, Helvetica, sans-serif; font-size:12px; color:#94a3b8;" align="left">
-              © ${new Date().getFullYear()} Choose Your Therapist LLP. All rights reserved.
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-`;
-
 
 export const leadNotificationEmail = (data) => {
-  const { name, phone, email, concern, service, reason, ...others } = data;
+  const { name, phone, email, concern, source, ...others } = data;
   
+  // Custom display logic for common dropdown values
+  const displayConcern = concern && concern !== "Not provided" ? concern : (others.reason || others.message || others.interest || others.type || "N/A");
+
+  // Build HTML for any additional form fields
+  const filteredKeys = ["name", "phone", "email", "concern", "source", "service", "reason", "message", "interest", "type"];
   let additionalFieldsHtml = "";
   if (others && Object.keys(others).length > 0) {
     additionalFieldsHtml = Object.entries(others)
-      .map(([key, value]) => `<li><strong>${key}:</strong> ${value}</li>`)
+      .filter(([key]) => !filteredKeys.includes(key))
+      .map(([key, value]) => `
+        <div class="field">
+          <div class="label">${key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')}</div>
+          <div class="value">${value}</div>
+        </div>
+      `)
       .join("");
   }
 
@@ -704,56 +393,138 @@ export const leadNotificationEmail = (data) => {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>New Lead Received</title>
+  <title>New Lead Notification</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       color: #333;
-      line-height: 1.6;
+      margin: 0;
+      padding: 0;
+      background-color: #f4f7f9;
     }
     .container {
       max-width: 600px;
-      margin: auto;
-      padding: 20px;
-      border: 1px solid #eee;
+      margin: 20px auto;
+      padding: 0;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      background-color: #ffffff;
+    }
+    .header {
+      background-color: #4CAF50;
+      color: #ffffff;
+      padding: 30px 20px;
+      text-align: center;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 600;
+    }
+    .content {
+      padding: 30px;
+    }
+    .intro {
+      margin-bottom: 25px;
+      color: #555;
+      font-size: 16px;
+    }
+    .section-title {
+      font-size: 18px;
+      color: #2e7d32;
+      border-bottom: 2px solid #e8f5e9;
+      padding-bottom: 8px;
+      margin: 25px 0 15px 0;
+      font-weight: 600;
+    }
+    .info-grid {
+      display: flex;
+      flex-wrap: wrap;
+    }
+    .field {
+      width: 100%;
+      margin-bottom: 15px;
+      padding: 12px;
+      background-color: #f9f9f9;
       border-radius: 8px;
-      background: #fafafa;
+      border-left: 4px solid #4CAF50;
     }
-    h2 {
-      color: #4CAF50;
+    .label {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: #888;
+      font-weight: 700;
+      margin-bottom: 4px;
+      letter-spacing: 0.5px;
     }
-    ul {
-      padding-left: 20px;
+    .value {
+      font-size: 16px;
+      color: #222;
+      font-weight: 500;
     }
     .footer {
-      margin-top: 20px;
+      background-color: #f1f1f1;
+      padding: 20px;
+      text-align: center;
       font-size: 14px;
-      color: #555;
+      color: #777;
+    }
+    .cta-button {
+      display: inline-block;
+      padding: 12px 24px;
+      background-color: #4CAF50;
+      color: #ffffff !important;
+      text-decoration: none;
+      border-radius: 6px;
+      font-weight: 600;
+      margin-top: 20px;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <h2>New Lead Received</h2>
-    <p>A new lead has been submitted through the website. Here are the details:</p>
-
-    <h3>Lead Information:</h3>
-    <ul>
-      <li><strong>Full Name:</strong> ${name || "N/A"}</li>
-      <li><strong>Phone:</strong> ${phone || "N/A"}</li>
-      <li><strong>Email:</strong> ${email || "N/A"}</li>
-      <li><strong>Service:</strong> ${service || "N/A"}</li>
-      <li><strong>Reason/Concern:</strong> ${reason || concern || "N/A"}</li>
-      ${additionalFieldsHtml}
-    </ul>
-
+    <div class="header">
+      <h1>New Lead Received</h1>
+    </div>
+    <div class="content">
+      <p class="intro">A new consultation request has been submitted through the website. Here are the details for your follow-up.</p>
+      
+      <div class="section-title">Lead Information</div>
+      <div class="info-grid">
+        <div class="field">
+          <div class="label">Full Name</div>
+          <div class="value">${name || "N/A"}</div>
+        </div>
+        <div class="field">
+          <div class="label">Phone Number</div>
+          <div class="value">${phone || "N/A"}</div>
+        </div>
+        <div class="field">
+          <div class="label">Email Address</div>
+          <div class="value">${email || "N/A"}</div>
+        </div>
+        <div class="field">
+          <div class="label">Source</div>
+          <div class="value">${source || "N/A"}</div>
+        </div>
+        <div class="field">
+          <div class="label">Reason / Concern</div>
+          <div class="value">${displayConcern}</div>
+        </div>
+        ${additionalFieldsHtml}
+      </div>
+      
+      <center>
+        <a href="mailto:${email}" class="cta-button">Reply to Client</a>
+      </center>
+    </div>
     <div class="footer">
-      <p>Please follow up with this lead as soon as possible.</p>
-      <p>Best regards,<br>ChooseYourTherapist Team</p>
+      <p>This is an automated notification from Choose Your Therapist (CYT) System.</p>
+      <p>&copy; ${new Date().getFullYear()} Choose Your Therapist LLP. All rights reserved.</p>
     </div>
   </div>
 </body>
 </html>
 `;
 };
-

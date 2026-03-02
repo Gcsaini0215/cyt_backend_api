@@ -391,7 +391,7 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
 
 
     //Client Mail
-    const subjectClient = `Your Session Has Been Booked with ${isBookingDetail.therapist.user.name} | ${pin}`;
+    const subjectClient = `Session Confirmed! Your appointment with ${isBookingDetail.therapist.user.name} is scheduled. | PIN: ${pin}`;
     const textClient = clientText(isBookingDetail, transactionId);
     const clientHtml = bookingConfirmationMail({
       clientName,
@@ -410,7 +410,7 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
     await sendMail(isBookingDetail.client.email, subjectClient, textClient, clientHtml);
 
     //Therapist Mail
-    const subjectTherapist = "Session Assigned – Please Review and Confirm | CYT";
+    const subjectTherapist = `NEW SESSION: ${clientName} - ${service || 'General'} Session assigned to you | PIN: ${pin}`;
     const textTherapist = therapistText(isBookingDetail, transactionId);
     const therapistHtml = therapistSessionMail({
       therapistName,
@@ -428,7 +428,7 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
     await sendMail(isBookingDetail.therapist.user.email, subjectTherapist, textTherapist, therapistHtml);
 
     //Admin Mail
-    const subjectAdmin = `New Session Booking Recorded for ${isBookingDetail.therapist.user.name} to ${isBookingDetail.client.name}`;
+    const subjectAdmin = `CONFIRMED BOOKING: ${clientName} booked ${isBookingDetail.therapist.user.name} | ₹${paymentAmount}`;
     const textAdmin = adminText(isBookingDetail, transactionId);
     const htmlAdmin = newSessionAdminMail({
       therapistName,
