@@ -617,6 +617,9 @@ export const loginOtpEmail = (name, otp) =>
 export const registrationOtpEmail = (name, otp) => 
   baseOtpTemplate("Welcome to CYT", name, "Thank you for joining us! Please verify your email with the code below.", otp);
 
+export const newsletterSubscriptionOtpEmail = (email, otp) => 
+  baseOtpTemplate("Newsletter Subscription", email, "Thank you for subscribing to our newsletter! Please use the following code to verify your email address.", otp);
+
 export const therapistVerificationEmail = (email, otp) => 
   baseOtpTemplate("Therapist Onboarding", email, "Your application is under review. Please verify your email to proceed with the registration process.", otp);
 

@@ -4,6 +4,7 @@ import Joi from "joi";
 import { generate6DigitOTP } from "../helper/generate.js";
 import { sendMail } from "../helper/mailer.js";
 import { getTimeDifferenceInSeconds } from "../helper/time.js";
+import { newsletterSubscriptionOtpEmail } from "../services/mailTemplates.js";
 
 export const subscribeNewsletter = expressAsyncHandler(
   async (req, res, next) => {
@@ -24,10 +25,10 @@ export const subscribeNewsletter = expressAsyncHandler(
 
       const isExists = await NewsLetter.findOne({ email });
       let otp = generate6DigitOTP();
-      const subject = "Welcome to CYT";
-      const text = `Hello Thank you for subscribing us.Best regards,CYT`;
+      const subject = "Newsletter Subscription | CYT";
+      const text = `Thank you for subscribing to CYT. Your verification code is ${otp}.`;
 
-      const html = `<p>Hello,</p><p>Thank you for subscribing.</p><p>Use the below otp to verify email id</p><p>Otp:${otp}</p>`;
+      const html = newsletterSubscriptionOtpEmail(email, otp);
 
       if (isExists && isExists.is_verified === 1) {
         res.status(400);
