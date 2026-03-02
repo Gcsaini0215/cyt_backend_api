@@ -32,15 +32,21 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
 
   try {
     const { name, phone, email, concern, service, reason } = req.body;
-    console.log("Lead Form Data received:", { name, phone, email, concern, service, reason });
+    
+    // Capture potential alternative field names from frontend
+    const finalConcern = concern || req.body.message || req.body.interest || "Not provided";
+    const finalService = service || req.body.services || req.body.service_type || req.body.dropdown || "Not provided";
+    const finalReason = reason || req.body.type || "Not provided";
+
+    console.log("Lead Form Data received:", req.body);
 
     const lead = await Lead.create({
       name,
       phone,
       email,
-      concern,
-      service,
-      reason,
+      concern: finalConcern,
+      service: finalService,
+      reason: finalReason,
     });
 
     const sendMailid = "chooseyourtherapist@gmail.com"
@@ -48,12 +54,13 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
     const text = `A new lead has been submitted: ${name}`;
     
     const leadData = {
+      ...req.body,
       name: name,
       phone: phone,
       email: email,
-      concern: concern || "Not provided",
-      service: service || "Not provided",
-      reason: reason || "Not provided"
+      concern: finalConcern,
+      service: finalService,
+      reason: finalReason
     };
 
     console.log("Final leadData being passed to template:", leadData);

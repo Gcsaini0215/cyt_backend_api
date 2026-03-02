@@ -689,7 +689,15 @@ export const registrationOtpEmail = ( name = "User", otp = "123456" ) => `
 
 
 export const leadNotificationEmail = (data) => {
-  const { name, phone, email, concern, service, reason } = data;
+  const { name, phone, email, concern, service, reason, ...others } = data;
+  
+  let additionalFieldsHtml = "";
+  if (others && Object.keys(others).length > 0) {
+    additionalFieldsHtml = Object.entries(others)
+      .map(([key, value]) => `<li><strong>${key}:</strong> ${value}</li>`)
+      .join("");
+  }
+
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -736,6 +744,7 @@ export const leadNotificationEmail = (data) => {
       <li><strong>Email:</strong> ${email || "N/A"}</li>
       <li><strong>Service:</strong> ${service || "N/A"}</li>
       <li><strong>Reason/Concern:</strong> ${reason || concern || "N/A"}</li>
+      ${additionalFieldsHtml}
     </ul>
 
     <div class="footer">
