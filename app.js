@@ -13,6 +13,7 @@ import transactionRouter from "./routes/transaction.js";
 import dashboardRouter from "./routes/dashboard.js";
 import shareRouter from "./routes/share.js";
 import leadRouter from "./routes/lead.js";
+import clinicLogRouter from "./routes/clinicLog.js";
 import { notFound, errorHandler } from "./middlewares/errorMiddleware.js";
 import path, { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -38,7 +39,12 @@ app.use(cors({
     "https://www.chooseyourtherapist.in",
     "https://www.cyt.chooseyourtherapist.in",
     "https://api.chooseyourtherapist.in",
-    "http://api.chooseyourtherapist.in"
+    "http://api.chooseyourtherapist.in",
+    "http://195.35.21.126:3000",
+    "http://195.35.21.126:4000",
+    "http://195.35.21.126",
+    "http://192.168.1.1:3000",
+    "http://192.168.1.1:4000"
   ],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
@@ -59,6 +65,7 @@ app.use("/api", bookingRouter);
 app.use("/api", dashboardRouter);
 app.use("/api", transactionRouter);
 app.use("/api", leadRouter);
+app.use("/api", clinicLogRouter);
 app.use("/share", shareRouter);
 app.use("/", testRouter);
 app.use(notFound);

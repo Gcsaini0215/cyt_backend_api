@@ -28,7 +28,7 @@ export const therapistSessionMail = ({
       .content { padding: 32px 24px; }
       .welcome-text { font-size: 18px; font-weight: 600; margin-bottom: 20px; color: #1c1e21; }
       .info-card { background-color: #f7f8fa; border-radius: 12px; padding: 8px; margin-bottom: 24px; border-left: 4px solid #1e293b; }
-      .info-item { padding: 12px 16px; border-bottom: 1px solid #ebedf0; }
+      .info-item { padding: 12px 16px; border-bottom: 2px solid #2e7d32; width: 90%; margin: 0 auto; }
       .info-item:last-child { border-bottom: none; }
       .info-label { font-size: 12px; color: #65676b; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; }
       .info-value { font-size: 16px; color: #050505; font-weight: 500; }
@@ -130,7 +130,7 @@ export const bookingConfirmationMail = ({
       .welcome-text { font-size: 18px; font-weight: 600; margin-bottom: 12px; color: #1c1e21; }
       .status-banner { background-color: #e8f5e9; border-left: 4px solid #2e7d32; padding: 12px 16px; margin-bottom: 24px; border-radius: 4px; color: #2e7d32; font-weight: 600; }
       .info-card { background-color: #f7f8fa; border-radius: 12px; padding: 8px; margin-bottom: 24px; }
-      .info-item { padding: 12px 16px; border-bottom: 1px solid #ebedf0; }
+      .info-item { padding: 12px 16px; border-bottom: 2px solid #2e7d32; width: 90%; margin: 0 auto; }
       .info-item:last-child { border-bottom: none; }
       .info-label { font-size: 11px; color: #65676b; font-weight: 700; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
       .info-value { font-size: 15px; color: #050505; font-weight: 500; }
@@ -245,9 +245,9 @@ export const newSessionAdminMail = ({
       .header-tagline { font-size: 14px; opacity: 0.9; text-transform: uppercase; letter-spacing: 2px; }
       .content { padding: 32px 24px; }
       .status-badge { display: inline-block; padding: 6px 16px; background: #dcfce7; color: #166534; border-radius: 99px; font-size: 12px; font-weight: 700; margin-bottom: 24px; text-transform: uppercase; }
-      .section-head { font-size: 13px; font-weight: 700; color: #65676b; text-transform: uppercase; letter-spacing: 1px; margin: 24px 0 12px 0; border-bottom: 1px solid #ebedf0; padding-bottom: 8px; }
+      .section-head { font-size: 13px; font-weight: 700; color: #65676b; text-transform: uppercase; letter-spacing: 1px; margin: 24px auto 12px auto; border-bottom: 2px solid #2e7d32; padding-bottom: 8px; text-align: center; width: 60%; }
       .info-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; background: #f7f8fa; border-radius: 12px; overflow: hidden; }
-      .info-table td { padding: 14px 16px; border-bottom: 1px solid #ebedf0; font-size: 14px; }
+      .info-table td { padding: 14px 16px; border-bottom: 1px solid #2e7d32; font-size: 14px; }
       .info-table tr:last-child td { border-bottom: none; }
       .label { font-weight: 600; color: #65676b; width: 140px; }
       .value { color: #050505; font-weight: 500; }
@@ -406,7 +406,12 @@ export const leadNotificationEmail = (data) => {
       letter-spacing: 1px;
       margin-bottom: 16px;
       padding-bottom: 8px;
-      border-bottom: 1px solid #ebedf0;
+      border-bottom: 2px solid #2e7d32;
+      display: block;
+      margin-left: auto;
+      margin-right: auto;
+      text-align: center;
+      width: 50%;
     }
 
     .info-card {
@@ -418,7 +423,7 @@ export const leadNotificationEmail = (data) => {
 
     .info-item {
       padding: 12px 16px;
-      border-bottom: 1px solid #ebedf0;
+      border-bottom: 1px solid #2e7d32;
     }
 
     .info-item:last-child {

@@ -5,7 +5,7 @@ export function initServer(httpServer) {
     io = new  Server(httpServer, {
         pingTimeout:60000,
         cors: {
-            origin: 'http://localhost:4000',
+            origin: "*",
             methods: ['GET', 'POST'],
             credentials: true,
         }
