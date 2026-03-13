@@ -41,6 +41,7 @@
         "qrcode": "^1.5.4",
         "request": "^2.88.2",
         "semver": "^7.7.2",
-        "socket.io": "^4.5.2"
+        "socket.io": "^4.5.2",
+        "web-push": "^3.6.7"
     }
 }
