@@ -9,6 +9,7 @@ import {
   verifyOtp,
   sendAproveMail,
   adminLogin,
+  adminRegister,
   sendOtpToMail,
   verifyOtpAndResetPassword,
 } from "../controllers/AuthController.js";
@@ -45,6 +46,8 @@ router.get("/send-aprove-mail/:userId", sendAproveMail);
 router.post("/login", login);
 
 router.post("/admin-login", adminLogin);
+
+router.post("/admin-register", adminRegister);
 
 router.post("/send-forgot-password-otp", sendForgotPasswordOtp);
 

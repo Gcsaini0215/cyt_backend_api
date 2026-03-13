@@ -1,5 +1,6 @@
 import Jwt from "jsonwebtoken";
 import Users from "../models/Users.js";
+import Admin from "../models/Admin.js";
 import expressAsyncHandler from "express-async-handler";
 
 export const isAuth = expressAsyncHandler(async (req, res, next) => {
@@ -115,9 +116,19 @@ export const isAdmin = expressAsyncHandler(async (req, res, next) => {
       const decoded = Jwt.verify(token, process.env.JWT_SECRET);
 
       // Find the user and check the role
-      const user = await Users.findById(decoded.userId).select(
+      let user = await Users.findById(decoded.userId).select(
         "name email phone profile bio role age gender dob"
       );
+
+      // If not in Users, check in Admin collection
+      if (!user) {
+        user = await Admin.findById(decoded.userId).select(
+          "name email profile designation"
+        );
+        if (user) {
+          user.role = 2; // Treat Admin model users as role 2
+        }
+      }
 
       if (user && decoded.role === 2) {
         req.user = user;

@@ -446,7 +446,14 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
   let email = req.body.email.toLowerCase();
   let otp = req.body.otp;
   try {
-    const user = await Users.findOne({ email });
+    let user = await Users.findOne({ email });
+    let isAdminUser = false;
+
+    if (!user) {
+      user = await Admin.findOne({ email });
+      if (user) isAdminUser = true;
+    }
+
     if (user) {
       if (user.otp === otp) {
         user.otp = "";
@@ -454,9 +461,12 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
         await user.save();
         res.status(201).json({
           message: "Otp verified successfully",
-          data: user,
+          data: {
+            ...user.toObject(),
+            role: isAdminUser ? 2 : user.role,
+          },
           status: true,
-          token: generateToken(user._id, user.role),
+          token: generateToken(user._id, isAdminUser ? 2 : user.role),
         });
       } else {
         res.status(400);
@@ -552,7 +562,11 @@ export const login = expressAsyncHandler(async (req, res, next) => {
     }
 
     email = email.toLowerCase();
-    const user = await Users.findOne({ email });
+    let user = await Users.findOne({ email });
+
+    if (!user) {
+      user = await Admin.findOne({ email });
+    }
 
     if (!user) {
       return res.status(404).json({ message: "User does not exist", status: false });
@@ -597,6 +611,40 @@ export const login = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
+export const adminRegister = expressAsyncHandler(async (req, res, next) => {
+  const { name, email, password, designation } = req.body;
+  try {
+    const adminExists = await Admin.findOne({ email: email.toLowerCase() });
+    if (adminExists) {
+      res.status(400);
+      return next(new Error("Admin already exists"));
+    }
+    const admin = await Admin.create({
+      name,
+      email: email.toLowerCase(),
+      password,
+      designation,
+    });
+
+    if (admin) {
+      res.status(201).json({
+        status: true,
+        message: "Admin created successfully",
+        data: {
+          _id: admin._id,
+          name: admin.name,
+          email: admin.email,
+        },
+      });
+    } else {
+      res.status(400);
+      throw new Error("Failed to create admin");
+    }
+  } catch (err) {
+    return next(err);
+  }
+});
+
 export const adminLogin = expressAsyncHandler(async (req, res) => {
   const { password } = req.body;
   let email = req.body.email.toLowerCase();
@@ -614,7 +662,8 @@ export const adminLogin = expressAsyncHandler(async (req, res) => {
             email: admin.email,
             profile: admin.profile,
             designation: admin.designation,
-            token: generateToken(admin._id),
+            role: 2,
+            token: generateToken(admin._id, 2),
           },
         });
       } else {
