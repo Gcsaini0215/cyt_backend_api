@@ -47,7 +47,7 @@ export const isAuthCommon = expressAsyncHandler(async (req, res, next) => {
       const decoded = Jwt.verify(token, process.env.JWT_SECRET);
 
       const user = await Users.findById(decoded.userId).select(
-        "name email phone profile bio role age gender dob"
+        "_id name email phone profile bio role age gender dob"
       );
 
       if (user) {

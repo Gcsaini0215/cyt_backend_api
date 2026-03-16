@@ -5,7 +5,7 @@ import { isAdmin, isAuth } from "../middlewares/authMiddleware.js";
 const router = Router();
 
 // Route to save subscription
-router.post("/subscribe", isAuth, subscribe);
+router.post("/subscribe", subscribe);
 
 // Route to send notification (Admin only)
 router.post("/send-notification", isAdmin, sendNotification);

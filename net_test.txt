@@ -1,0 +1,1 @@
+Test-NetConnection -ComputerName 195.35.21.126 -Port 22

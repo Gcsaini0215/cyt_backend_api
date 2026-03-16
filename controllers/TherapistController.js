@@ -7,6 +7,8 @@ import Availbility from "../models/Availbility.js";
 import mongoose from "mongoose";
 import Workshop from "../models/Workshop.js";
 import Review from "../models/Review.js";
+import Booking from "../models/Booking.js";
+import WorkshopBooking from "../models/WorkshopBooking.js";
 export const updateprofile = expressAsyncHandler(async (req, res, next) => {
   const {
     phone,
@@ -488,23 +490,67 @@ export const getDashboardData = expressAsyncHandler(async (req, res, next) => {
   const user = req.user;
 
   try {
+    const therapistProfile = await Therapists.findOne({ user: user._id });
+    
+    if (!therapistProfile) {
+      return res.status(201).json({
+        message: "Fetched successfully",
+        data: {
+          workshops: 0,
+          appointments: 0,
+          revenue: 0,
+          client: 0,
+        },
+        status: true,
+      });
+    }
+
     const workshopCount = await Workshop.countDocuments({
-      post_by: user._id,
+      post_by: therapistProfile._id,
       is_active: 1,
     });
+
+    const bookings = await Booking.find({ therapist: therapistProfile._id, transaction: { $exists: true, $ne: null } })
+      .populate("client", "name email phone profile")
+      .sort({ _id: -1 });
+
+    const appointmentRevenue = bookings.reduce((sum, booking) => {
+      return sum + (booking.amount ? parseFloat(booking.amount.toString()) : 0);
+    }, 0);
+
+    const workshops = await Workshop.find({ post_by: therapistProfile._id });
+    const workshopIds = workshops.map(w => w._id);
+    const workshopBookings = await WorkshopBooking.find({ workshop: { $in: workshopIds }, is_payment_success: true })
+      .populate("user", "name email phone profile")
+      .populate("workshop", "title category event_date")
+      .sort({ _id: -1 });
+
+    const workshopRevenue = workshopBookings.reduce((sum, booking) => {
+      return sum + (booking.amount ? parseFloat(booking.amount.toString()) : 0);
+    }, 0);
+
+    const totalRevenue = appointmentRevenue + workshopRevenue;
+
+    const uniqueClients = new Set([
+      ...bookings.map(b => b.client?._id?.toString()),
+      ...workshopBookings.map(wb => wb.user?._id?.toString())
+    ].filter(id => id)).size;
+
     res.status(201).json({
       message: "Fetched successfully",
       data: {
         workshops: workshopCount,
-        appointments: [],
-        revenue: [],
-        client: [],
+        appointments: bookings.length,
+        revenue: totalRevenue.toFixed(2),
+        client: uniqueClients,
+        recentAppointments: bookings.slice(0, 5),
+        recentWorkshops: workshopBookings.slice(0, 5),
       },
       status: true,
     });
   } catch (error) {
     res.status(400);
-    throw new Error("Unknow error");
+    throw new Error(error.message || "Unknown error");
   }
 });
 
@@ -611,3 +657,40 @@ export const saveReview = expressAsyncHandler(async (req, res, next) => {
 });
 
 
+  
+export const getReviews = expressAsyncHandler(async (req, res, next) => { 
+  try {  
+    const reviews = await Review.find({})  
+      .populate({  
+        path: 'therapist_id',  
+        populate: { path: 'user', select: 'name' }  
+      })  
+      .sort({ createdAt: -1 });  
+    res.status(200).json({  
+      status: true,  
+      message: 'Fetched successfully',  
+      data: reviews,  
+    });  
+  } catch (error) {  
+    res.status(400);  
+    throw new Error(error.message);  
+  }  
+}); 
+
+export const deleteReview = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  try {
+    const review = await Review.findByIdAndDelete(id);
+    if (!review) {
+      res.status(404);
+      return next(new Error('Review not found'));
+    }
+    res.status(200).json({
+      status: true,
+      message: 'Review deleted successfully',
+    });
+  } catch (error) {
+    res.status(400);
+    throw new Error(error.message);
+  }
+});

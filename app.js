@@ -26,6 +26,8 @@ const __dirname = dirname(__filename);
 
 const app = express();
 
+app.set('trust proxy', 1);
+
 global.appRoot = path.resolve(__dirname);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -56,6 +58,7 @@ app.use(cors({
 app.options("*", cors());
 
 app.use("/api", userRoutes);
+app.use("/api", dashboardRouter);
 app.use("/api", authRouter);
 app.use("/api", therapistRouter);
 app.use("/api", newsletterRouter);
@@ -64,7 +67,6 @@ app.use("/api/coupon", coupanRouter);
 app.use("/api", smsRouter);
 app.use("/api", favriouteRouter);
 app.use("/api", bookingRouter);
-app.use("/api", dashboardRouter);
 app.use("/api", transactionRouter);
 app.use("/api", leadRouter);
 app.use("/api", clinicLogRouter);
