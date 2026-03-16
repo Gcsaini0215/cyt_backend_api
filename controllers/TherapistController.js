@@ -321,11 +321,39 @@ export const getFilteredTherapists = expressAsyncHandler(
       }
 
       const [data, totalCount] = await Promise.all([
-        Therapists.find(matchConditions)
-          .skip(skip)
-          .limit(pageSize)
-          .select("-resume -__v -is_mail_sent -is_aproved")
-          .populate("user", "name phone email bio profile gender age dob"),
+        Therapists.aggregate([
+          { $match: matchConditions },
+          { $sort: { createdAt: -1 } },
+          { $skip: skip },
+          { $limit: pageSize },
+          {
+            $lookup: {
+              from: "users",
+              localField: "user",
+              foreignField: "_id",
+              as: "user"
+            }
+          },
+          { $unwind: "$user" },
+          {
+            $lookup: {
+              from: "reviews",
+              localField: "_id",
+              foreignField: "therapist_id",
+              as: "reviews"
+            }
+          },
+          {
+            $project: {
+              resume: 0,
+              __v: 0,
+              is_mail_sent: 0,
+              is_aproved: 0,
+              "user.password": 0,
+              "user.__v": 0
+            }
+          }
+        ]),
         Therapists.countDocuments(matchConditions),
       ]);
 
