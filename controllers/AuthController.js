@@ -467,7 +467,7 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
             role: isAdminUser ? 2 : user.role,
           },
           status: true,
-          token: generateToken(user._id, isAdminUser ? 2 : user.role),
+          token: generateToken(user._id, isAdminUser ? 2 : user.role, isAdminUser ? (user.roleId || null) : null),
         });
       } else {
         res.status(400);

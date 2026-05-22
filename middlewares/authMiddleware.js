@@ -1,6 +1,7 @@
 import Jwt from "jsonwebtoken";
 import Users from "../models/Users.js";
 import Admin from "../models/Admin.js";
+import Role from "../models/Role.js";
 import expressAsyncHandler from "express-async-handler";
 
 export const isAuth = expressAsyncHandler(async (req, res, next) => {
@@ -98,6 +99,71 @@ export const isTherapist = expressAsyncHandler(async (req, res, next) => {
     }
   }
 
+  if (!token) {
+    res.status(401);
+    throw new Error("Not authorized, No token found");
+  }
+});
+
+export const isSuperAdmin = expressAsyncHandler(async (req, res, next) => {
+  let token;
+  if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
+    try {
+      token = req.headers.authorization.split(" ")[1];
+      const decoded = Jwt.verify(token, process.env.JWT_SECRET);
+      if (decoded.role !== 2) {
+        res.status(403);
+        throw new Error("Super admin access required");
+      }
+      const admin = await Admin.findById(decoded.userId).select("name email roleId");
+      if (!admin || admin.roleId) {
+        res.status(403);
+        throw new Error("Super admin access required");
+      }
+      req.user = admin;
+      next();
+    } catch (error) {
+      if (!res.statusCode || res.statusCode < 400) res.status(401);
+      throw new Error(error.message || "Not authorized");
+    }
+  }
+  if (!token) {
+    res.status(401);
+    throw new Error("Not authorized, No token found");
+  }
+});
+
+export const hasPermission = (permKey) => expressAsyncHandler(async (req, res, next) => {
+  let token;
+  if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
+    try {
+      token = req.headers.authorization.split(" ")[1];
+      const decoded = Jwt.verify(token, process.env.JWT_SECRET);
+      if (decoded.role !== 2) {
+        res.status(403);
+        throw new Error("Admin access required");
+      }
+      const admin = await Admin.findById(decoded.userId).select("name email roleId");
+      if (!admin) {
+        res.status(403);
+        throw new Error("Admin not found");
+      }
+      if (!admin.roleId) {
+        req.user = admin;
+        return next();
+      }
+      const role = await Role.findById(admin.roleId).select("permissions");
+      if (!role || !role.permissions.includes(permKey)) {
+        res.status(403);
+        throw new Error(`Access denied: missing permission '${permKey}'`);
+      }
+      req.user = admin;
+      next();
+    } catch (error) {
+      if (!res.statusCode || res.statusCode < 400) res.status(401);
+      throw new Error(error.message || "Not authorized");
+    }
+  }
   if (!token) {
     res.status(401);
     throw new Error("Not authorized, No token found");

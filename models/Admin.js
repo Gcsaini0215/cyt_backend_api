@@ -40,6 +40,11 @@ const AdminSchema = new Schema(
       type: Number,
       default: 2,
     },
+    roleId: {
+      type: Schema.Types.ObjectId,
+      ref: "Role",
+      default: null,
+    },
   },
   { timestamps: true }
 );
