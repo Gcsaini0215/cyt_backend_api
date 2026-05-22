@@ -26,18 +26,18 @@ const __dirname = dirname(__filename);
 
 const app = express();
 
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url}`);
+  next();
+});
+
 app.set('trust proxy', 1);
-
-global.appRoot = path.resolve(__dirname);
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.use(cors({
   origin: [
     "http://localhost:3000",
     "http://localhost:3001",
+    "http://localhost:3002",
     "https://chooseyourtherapist.in",
     "https://cyt.chooseyourtherapist.in",
     "https://www.chooseyourtherapist.in",
@@ -51,11 +51,17 @@ app.use(cors({
     "http://192.168.1.1:4000"
   ],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
   credentials: true,
 }));
 
 app.options("*", cors());
+
+global.appRoot = path.resolve(__dirname);
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.use("/api", userRoutes);
 app.use("/api", dashboardRouter);
