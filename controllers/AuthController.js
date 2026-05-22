@@ -563,10 +563,10 @@ export const login = expressAsyncHandler(async (req, res, next) => {
     }
 
     email = email.toLowerCase();
-    let user = await Users.findOne({ email });
+    let user = await Admin.findOne({ email });
 
     if (!user) {
-      user = await Admin.findOne({ email });
+      user = await Users.findOne({ email });
     }
 
     if (!user) {
