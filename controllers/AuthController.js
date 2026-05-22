@@ -446,12 +446,13 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
   let email = req.body.email.toLowerCase();
   let otp = req.body.otp;
   try {
-    let user = await Users.findOne({ email });
     let isAdminUser = false;
+    let user = await Admin.findOne({ email });
 
-    if (!user) {
-      user = await Admin.findOne({ email });
-      if (user) isAdminUser = true;
+    if (user) {
+      isAdminUser = true;
+    } else {
+      user = await Users.findOne({ email });
     }
 
     if (user) {
