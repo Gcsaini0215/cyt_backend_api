@@ -48,7 +48,7 @@ router.post("/login", leadRateLimit, login);
 
 router.post("/admin-login", adminLogin);
 
-router.post("/admin-register", adminRegister);
+router.post("/admin-register", isAdmin, adminRegister);
 
 router.post("/send-forgot-password-otp", sendForgotPasswordOtp);
 
