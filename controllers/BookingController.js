@@ -11,6 +11,15 @@ import Transaction from "../models/Transaction.js";
 import { PAYMENT_STATUS, SESSION_STATUS } from "../helper/status.js";
 import generateToken from "../config/generateToken.js";
 import PaymentStatus from "../models/PaymentStatus.js";
+import Razorpay from "razorpay";
+import crypto from "crypto";
+
+const getRazorpayInstance = () => {
+  return new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET,
+  });
+};
 import { adminText, bookingConfirmationMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
 
 export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
@@ -455,6 +464,189 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
     });
   } catch (err) {
 
+    return next(new Error(err.message));
+  }
+});
+
+export const createRazorpayOrder = expressAsyncHandler(async (req, res, next) => {
+  const { amount, booking_id } = req.body;
+  
+  console.log("Creating Razorpay Order - Amount:", amount, "Booking ID:", booking_id);
+  console.log("Razorpay Key ID:", process.env.RAZORPAY_KEY_ID ? "Found" : "Missing");
+
+  if (!amount || !booking_id) {
+    res.status(400);
+    return next(new Error("Amount and Booking ID are required"));
+  }
+
+  try {
+    const options = {
+      amount: Math.round(amount * 100), // amount in the smallest currency unit
+      currency: "INR",
+      receipt: `rcpt_${booking_id}`,
+    };
+
+    const razorpay = getRazorpayInstance();
+    console.log("Creating Razorpay order with options:", JSON.stringify(options));
+    const order = await razorpay.orders.create(options);
+    console.log("Razorpay order created successfully:", order.id);
+
+    if (!order) {
+      res.status(500);
+      return next(new Error("Failed to create Razorpay order"));
+    }
+
+    res.status(200).json({
+      status: true,
+      message: "Razorpay order created successfully",
+      data: order,
+    });
+  } catch (err) {
+    console.error("Razorpay Order Error:", err);
+    return next(new Error(err.message || "Error creating Razorpay order"));
+  }
+});
+
+export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) => {
+  const {
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
+    booking_id
+  } = req.body;
+
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !booking_id) {
+    res.status(400);
+    return next(new Error("Missing required payment verification details"));
+  }
+
+  const sign = razorpay_order_id + "|" + razorpay_payment_id;
+  const expectedSign = crypto
+    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+    .update(sign.toString())
+    .digest("hex");
+
+  console.log("Verifying Razorpay Payment:", { razorpay_order_id, razorpay_payment_id });
+
+  if (razorpay_signature !== expectedSign) {
+    console.error("Payment verification failed. Signatures do not match.");
+    res.status(400);
+    return next(new Error("Invalid payment signature"));
+  }
+
+  try {
+    const isBookingDetail = await Booking.findById(booking_id).populate("client", "_id name email age role").populate({
+      path: "therapist",
+      select: "_id user profile_code",
+      populate: {
+        path: "user",
+        select: "name profile email"
+      }
+    });
+
+    if (!isBookingDetail) {
+      res.status(400);
+      return next(new Error("Booking not found with this id"));
+    }
+
+    const data = {
+      booking: isBookingDetail._id,
+      bookingModel: "Booking",
+      user: isBookingDetail.client._id,
+      amount: isBookingDetail.amount,
+      payment_method: "Razorpay",
+      status: PAYMENT_STATUS.SUCCESS,
+      is_payment_success: true,
+      transaction_id: razorpay_payment_id,
+    };
+
+    const savedTransaction = await Transaction.create(data);
+    if (!savedTransaction) {
+      res.status(400);
+      return next(new Error("Failed to save transaction."));
+    }
+
+    isBookingDetail.transaction = savedTransaction._id;
+    await isBookingDetail.save();
+
+    // Send emails (Reuse the logic from saveTransactionId)
+    const therapistName = isBookingDetail.therapist.user.name;
+    const therapistId = isBookingDetail.therapist.profile_code;
+    const clientName = isBookingDetail.client.name;
+    const clientAge = isBookingDetail.client.age;
+    const paymentAmount = isBookingDetail.amount;
+    const pin = isBookingDetail.otp;
+    const service = isBookingDetail.service;
+    const format = isBookingDetail.format;
+    const whom = isBookingDetail.whom;
+    const cname = isBookingDetail.cname;
+    const relation_with_client = isBookingDetail.relation_with_client;
+    const notes = isBookingDetail.notes;
+    const transactionId = razorpay_payment_id;
+
+    //Client Mail
+    const subjectClient = `Session Confirmed! Your appointment with ${isBookingDetail.therapist.user.name} is scheduled. | PIN: ${pin}`;
+    const textClient = clientText(isBookingDetail, transactionId);
+    const clientHtml = bookingConfirmationMail({
+      clientName,
+      therapistName,
+      clientAge,
+      transactionId: transactionId,
+      service,
+      format,
+      whom,
+      cname,
+      relation_with_client,
+      notes,
+      pin
+    });
+    await sendMail(isBookingDetail.client.email, subjectClient, textClient, clientHtml);
+
+    //Therapist Mail
+    const subjectTherapist = `NEW SESSION: ${clientName} - ${service || 'General'} Session assigned to you | PIN: ${pin}`;
+    const textTherapist = therapistText(isBookingDetail, transactionId);
+    const therapistHtml = therapistSessionMail({
+      therapistName,
+      clientName,
+      clientAge,
+      paymentAmount,
+      transactionId,
+      service,
+      format,
+      whom,
+      cname,
+      relation_with_client,
+      notes
+    });
+    await sendMail(isBookingDetail.therapist.user.email, subjectTherapist, textTherapist, therapistHtml);
+
+    //Admin Mail
+    const subjectAdmin = `CONFIRMED BOOKING: ${clientName} booked ${isBookingDetail.therapist.user.name} | ₹${paymentAmount}`;
+    const textAdmin = adminText(isBookingDetail, transactionId);
+    const htmlAdmin = newSessionAdminMail({
+      therapistName,
+      clientName,
+      clientAge,
+      paymentAmount,
+      transactionId,
+      therapistId,
+      service,
+      format,
+      whom,
+      cname,
+      relation_with_client,
+      notes
+    });
+    await sendMail("Appointment.cyt@gmail.com", subjectAdmin, textAdmin, htmlAdmin);
+
+    res.status(200).json({
+      status: true,
+      message: "Payment verified and booking confirmed.",
+      data: isBookingDetail,
+      token: generateToken(isBookingDetail.client._id, isBookingDetail.client.role)
+    });
+
+  } catch (err) {
     return next(new Error(err.message));
   }
 });

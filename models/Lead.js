@@ -18,8 +18,20 @@ const leadSchema = new Schema({
     type: String,
     required: false,
   },
+  location: {
+    type: String,
+    required: false,
+  },
+  message: {
+    type: String,
+    required: false,
+  },
   source: {
     type: String,
+    required: false,
+  },
+  data: {
+    type: Object,
     required: false,
   },
   followup_status: {

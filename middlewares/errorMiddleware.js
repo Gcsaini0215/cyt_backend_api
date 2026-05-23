@@ -7,6 +7,14 @@ export const notFound = (req, res, next) => {
 export const errorHandler = (err, req, res, next) => {
   const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
   res.status(statusCode);
+  
+  // Ensure CORS headers are present even in error responses
+  const origin = req.get('origin');
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+  }
+
   res.json({
     message: err.message,
     status: false,

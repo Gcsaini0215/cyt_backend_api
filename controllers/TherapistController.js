@@ -323,7 +323,7 @@ export const getFilteredTherapists = expressAsyncHandler(
       const [data, totalCount] = await Promise.all([
         Therapists.aggregate([
           { $match: matchConditions },
-          { $sort: { createdAt: -1 } },
+          { $sort: { createdAt: 1 } },
           { $skip: skip },
           { $limit: pageSize },
           {
