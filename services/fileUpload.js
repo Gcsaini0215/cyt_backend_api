@@ -6,12 +6,14 @@ import { v4 as uuidv4 } from "uuid";
 const appRoot = path.resolve(); // If not globally defined, define it here
 
 // Define upload paths
-const imagesPath = path.join(appRoot, "uploads/images");
-const resumesPath = path.join(appRoot, "uploads/resumes");
+const imagesPath    = path.join(appRoot, "uploads/images");
+const resumesPath   = path.join(appRoot, "uploads/resumes");
+const resourcesPath = path.join(appRoot, "uploads/resources");
 
 // Ensure folders exist
-if (!fs.existsSync(imagesPath)) fs.mkdirSync(imagesPath, { recursive: true });
-if (!fs.existsSync(resumesPath)) fs.mkdirSync(resumesPath, { recursive: true });
+if (!fs.existsSync(imagesPath))    fs.mkdirSync(imagesPath,    { recursive: true });
+if (!fs.existsSync(resumesPath))   fs.mkdirSync(resumesPath,   { recursive: true });
+if (!fs.existsSync(resourcesPath)) fs.mkdirSync(resourcesPath, { recursive: true });
 
 // Storage for image files
 const storage = multer.diskStorage({
@@ -57,10 +59,23 @@ export const upload = multer({
   fileFilter: fileFilter,
 });
 
-// Exported single PDF upload
+// Exported single PDF upload (resumes)
 export const uploadFile = multer({
   storage: storageFile,
   fileFilter: fileFilterPdf,
+});
+
+// Storage for resource PDFs
+const storageResource = multer.diskStorage({
+  destination: (req, file, cb) => { cb(null, resourcesPath); },
+  filename:    (req, file, cb) => { cb(null, `${uuidv4()}_${file.originalname}`); },
+});
+
+// Exported resource PDF upload (20 MB limit)
+export const uploadResource = multer({
+  storage: storageResource,
+  fileFilter: fileFilterPdf,
+  limits: { fileSize: 20 * 1024 * 1024 },
 });
 
 // Exported multi-upload (images + PDFs)
