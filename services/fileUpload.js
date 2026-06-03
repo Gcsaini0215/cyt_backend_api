@@ -1,9 +1,12 @@
 import multer from "multer";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { v4 as uuidv4 } from "uuid";
-// Get root directory
-const appRoot = path.resolve(); // If not globally defined, define it here
+// Always resolve relative to this file's location (../  = project root)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
+const appRoot    = path.resolve(__dirname, "..");
 
 // Define upload paths
 const imagesPath    = path.join(appRoot, "uploads/images");
