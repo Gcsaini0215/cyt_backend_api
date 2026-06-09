@@ -1,26 +1,27 @@
 import { Router } from "express";  
 import { isAdmin, isTherapist } from "../middlewares/authMiddleware.js";  
   
-import {  
-  getTherapist,  
-  getTherapists,  
-  updateAccountDetails,  
-  updateServiceExperties,  
-  updateprofile,  
-  getAccountDetails,  
-  getFeeDetails,  
-  updateFeeDetails,  
-  updateAvailabilityDetails,  
-  getAvailabilityDetails,  
-  getFilteredTherapists,  
-  getProfile,  
-  checkProfileSet,  
-  getDashboardData,  
-  ShowToPage,  
-  SetPriority,  
-  saveReview,  
+import {
+  getTherapist,
+  getTherapists,
+  updateAccountDetails,
+  updateServiceExperties,
+  updateprofile,
+  getAccountDetails,
+  getFeeDetails,
+  updateFeeDetails,
+  updateAvailabilityDetails,
+  getAvailabilityDetails,
+  getFilteredTherapists,
+  getProfile,
+  checkProfileSet,
+  getDashboardData,
+  ShowToPage,
+  SetPriority,
+  saveReview,
   getReviews,
-  deleteReview,  
+  deleteReview,
+  deleteUser,
 } from "../controllers/TherapistController.js";  
 import { upload } from "../services/fileUpload.js";  
 const router = Router();  
@@ -68,6 +69,8 @@ router.post("/save-review", saveReview);
   
 router.get("/get-reviews", isAdmin, getReviews);  
   
-router.delete("/delete-review/:id", isAdmin, deleteReview);  
-  
-export default router; 
+router.delete("/delete-review/:id", isAdmin, deleteReview);
+
+router.delete("/delete-user", isAdmin, deleteUser);
+
+export default router;

@@ -705,6 +705,22 @@ export const getReviews = expressAsyncHandler(async (req, res, next) => {
   }  
 }); 
 
+export const deleteUser = expressAsyncHandler(async (req, res, next) => {
+  const { ids } = req.body;
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    res.status(400);
+    throw new Error("ids array is required");
+  }
+  try {
+    await Therapists.deleteMany({ user: { $in: ids } });
+    await Users.deleteMany({ _id: { $in: ids } });
+    res.status(200).json({ status: true, message: "User(s) deleted successfully" });
+  } catch (error) {
+    res.status(400);
+    throw new Error(error.message);
+  }
+});
+
 export const deleteReview = expressAsyncHandler(async (req, res, next) => {
   const { id } = req.params;
   try {
