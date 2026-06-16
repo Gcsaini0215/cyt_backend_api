@@ -653,9 +653,24 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
 
 export const getBookings = expressAsyncHandler(async (req, res, next) => {
   try {
-    let findKey = req.user.role === 1 ? "therapist" : "client";
-    let select = req.user.role === 1 ? "-otp" : "";
-    let result = await Booking.find({ [findKey]: req.user._id, transaction: { $exists: true, $ne: null } }).select(select)
+    let findKey, queryId, select;
+
+    if (req.user.role === 1) {
+      // Therapist: booking.therapist is Therapists._id, not Users._id
+      const therapistProfile = await Therapists.findOne({ user: req.user._id }).select("_id");
+      if (!therapistProfile) {
+        return res.status(201).json({ status: true, message: "Fetched successfully.", data: [] });
+      }
+      findKey = "therapist";
+      queryId  = therapistProfile._id;
+      select   = "-otp";
+    } else {
+      findKey = "client";
+      queryId  = req.user._id;
+      select   = "";
+    }
+
+    let result = await Booking.find({ [findKey]: queryId, transaction: { $exists: true, $ne: null } }).select(select)
       .populate({
         path: "client",
         select: "name email phone profile age gender",
