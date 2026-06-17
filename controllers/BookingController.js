@@ -856,3 +856,24 @@ export const checkRazorpayStatus = expressAsyncHandler(async (req, res, next) =>
     });
   }
 });
+
+export const deleteBooking = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const booking = await Booking.findById(id);
+    if (!booking) return res.status(404).json({ status: false, message: "Booking not found." });
+
+    // Therapist can only delete their own bookings; admin can delete any
+    if (req.user.role === 1) {
+      const therapistProfile = await Therapists.findOne({ user: req.user._id }).select("_id");
+      if (!therapistProfile || booking.therapist.toString() !== therapistProfile._id.toString()) {
+        return res.status(403).json({ status: false, message: "Not authorized to delete this booking." });
+      }
+    }
+
+    await Booking.findByIdAndDelete(id);
+    res.status(200).json({ status: true, message: "Booking deleted successfully." });
+  } catch (err) {
+    return next(new Error(err.message));
+  }
+});

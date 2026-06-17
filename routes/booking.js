@@ -3,6 +3,7 @@ import {
   bookTherapist,
   checkRazorpayStatus,
   createRazorpayOrder,
+  deleteBooking,
   EndSession,
   generatePaymentQR,
   getBookings,
@@ -33,5 +34,7 @@ router.post("/start-session",isTherapist, startSession);
 router.post("/end-session",isTherapist, EndSession);
 
 router.get("/check-razorpay-status", checkRazorpayStatus);
+
+router.delete("/delete-booking/:id", isAuthCommon, deleteBooking);
 
 export default router;
