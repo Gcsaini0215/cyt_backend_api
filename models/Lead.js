@@ -12,7 +12,8 @@ const leadSchema = new Schema({
   },
   email: {
     type: String,
-    required: true,
+    required: false,
+    default: "",
   },
   concern: {
     type: String,

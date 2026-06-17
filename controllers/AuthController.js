@@ -5,6 +5,7 @@ import passwordComplexity from "joi-password-complexity";
 import generateToken from "../config/generateToken.js";
 import Users from "../models/Users.js";
 import Admin from "../models/Admin.js";
+import Role from "../models/Role.js";
 import Therapists from "../models/Therapists.js";
 import { sendMail } from "../helper/mailer.js";
 import { getTimeDifferenceInSeconds } from "../helper/time.js";
@@ -460,11 +461,18 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
         user.otp = "";
         user.otp_count = 0;
         await user.save();
+        let permissions = null;
+        if (isAdminUser && user.roleId) {
+          const role = await Role.findById(user.roleId).select("permissions");
+          if (role) permissions = role.permissions;
+        }
+
         res.status(201).json({
           message: "Otp verified successfully",
           data: {
             ...user.toObject(),
             role: isAdminUser ? 2 : user.role,
+            permissions,
           },
           status: true,
           token: generateToken(user._id, isAdminUser ? 2 : user.role, isAdminUser ? (user.roleId || null) : null),

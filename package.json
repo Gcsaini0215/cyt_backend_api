@@ -39,6 +39,7 @@
         "nodemailer": "^6.9.13",
         "nodemon": "^2.0.19",
         "qrcode": "^1.5.4",
+        "razorpay": "^2.9.6",
         "request": "^2.88.2",
         "semver": "^7.7.2",
         "socket.io": "^4.5.2",

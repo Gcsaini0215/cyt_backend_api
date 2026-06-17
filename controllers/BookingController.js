@@ -833,5 +833,26 @@ export const getBookingsForAdmin = expressAsyncHandler(async (req, res, next) =>
   }
 });
 
-
-
+export const checkRazorpayStatus = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const razorpay = getRazorpayInstance();
+    // Try to fetch a dummy order list — if account is blocked/inactive this will throw
+    const result = await razorpay.orders.all({ count: 1 });
+    res.status(200).json({
+      status: true,
+      message: "Razorpay account is active and keys are valid",
+      key_id: process.env.RAZORPAY_KEY_ID,
+      mode: process.env.RAZORPAY_KEY_ID?.startsWith("rzp_live_") ? "LIVE" : "TEST",
+      orders_fetched: result?.count ?? 0,
+    });
+  } catch (err) {
+    res.status(200).json({
+      status: false,
+      message: "Razorpay account check failed",
+      error: err?.error?.description || err?.message || "Unknown error",
+      error_code: err?.error?.code || null,
+      key_id: process.env.RAZORPAY_KEY_ID,
+      mode: process.env.RAZORPAY_KEY_ID?.startsWith("rzp_live_") ? "LIVE" : "TEST",
+    });
+  }
+});

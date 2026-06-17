@@ -15,9 +15,8 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
       "string.pattern.base": "Phone number must be exactly 10 digits",
       "any.required": "Phone number is required",
     }),
-    email: Joi.string().email().required().messages({
+    email: Joi.string().email().allow("", null).optional().messages({
       "string.email": "Please provide a valid email address",
-      "any.required": "Email is required",
     }),
     concern: Joi.string().allow("").optional(),
     source: Joi.string().allow("").optional(),
@@ -75,8 +74,12 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
 
     const html = leadNotificationEmail(leadData);
     
-    console.log("Lead Email HTML generated successfully. Length:", html.length);
-    await sendMail(sendMailid, subject, text, html);
+    try {
+      console.log("Lead Email HTML generated successfully. Length:", html.length);
+      await sendMail(sendMailid, subject, text, html);
+    } catch (mailErr) {
+      console.error("Lead notification email failed (non-fatal):", mailErr.message);
+    }
 
     return res.status(201).json({
       status: true,
