@@ -1,5 +1,5 @@
 import { Router } from "express";  
-import { isAdmin, isTherapist } from "../middlewares/authMiddleware.js";  
+import { isAdmin, isTherapist, isAuthCommon } from "../middlewares/authMiddleware.js";  
   
 import {
   getTherapist,
@@ -74,6 +74,6 @@ router.delete("/delete-review/:id", isAdmin, deleteReview);
 
 router.delete("/delete-user", isAdmin, deleteUser);
 
-router.get("/get-my-reviews", isTherapist, getMyReviews);
+router.get("/get-my-reviews", isAuthCommon, getMyReviews);
 
 export default router;
