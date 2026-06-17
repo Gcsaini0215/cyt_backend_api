@@ -705,6 +705,18 @@ export const getReviews = expressAsyncHandler(async (req, res, next) => {
   }  
 }); 
 
+export const getMyReviews = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const therapist = await Therapists.findOne({ user: req.user._id }).select("_id");
+    if (!therapist) return res.status(404).json({ status: false, message: "Therapist profile not found" });
+    const reviews = await Review.find({ therapist_id: therapist._id }).sort({ createdAt: -1 }).limit(10);
+    res.status(200).json({ status: true, message: "Fetched successfully", data: reviews });
+  } catch (error) {
+    res.status(400);
+    throw new Error(error.message);
+  }
+});
+
 export const deleteUser = expressAsyncHandler(async (req, res, next) => {
   const { ids } = req.body;
   if (!ids || !Array.isArray(ids) || ids.length === 0) {

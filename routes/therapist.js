@@ -22,6 +22,7 @@ import {
   getReviews,
   deleteReview,
   deleteUser,
+  getMyReviews,
 } from "../controllers/TherapistController.js";  
 import { upload } from "../services/fileUpload.js";  
 const router = Router();  
@@ -72,5 +73,7 @@ router.get("/get-reviews", isAdmin, getReviews);
 router.delete("/delete-review/:id", isAdmin, deleteReview);
 
 router.delete("/delete-user", isAdmin, deleteUser);
+
+router.get("/get-my-reviews", isTherapist, getMyReviews);
 
 export default router;
