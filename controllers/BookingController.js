@@ -131,18 +131,9 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       "number.min": "Amount must be greater than or equal to 0",
       "any.required": "Amount is required",
     }),
-    age: Joi.number()
-      .integer()
-      .min(12)
-      .max(100)
-      .optional()
-      .allow(null, "")
-      .messages({
-        "number.base": "Age must be a number",
-        "number.integer": "Age must be an integer",
-        "number.min": "Age must be at least 12",
-        "number.max": "Age must be at most 100",
-      }),
+    age: Joi.alternatives()
+      .try(Joi.number().integer().min(1).max(120), Joi.string().allow("", null))
+      .optional(),
 
   }).unknown(true);
 
