@@ -301,271 +301,188 @@ export const newSessionAdminMail = ({
 
 
 export const leadNotificationEmail = (data) => {
-  const { name, phone, email, concern, source, ...others } = data;
-  
-  // Custom display logic for common dropdown values (reason, service, interest, etc.)
-  const getVal = (v) => (v && v !== "Not provided") ? v : null;
-  const displayConcern = getVal(concern) || getVal(others.reason) || getVal(others.service) || getVal(others.message) || getVal(others.interest) || getVal(others.type) || getVal(others.dropdown) || "N/A";
+  const { name, phone, email, concern, source, age, ...others } = data;
 
-  // Build HTML for any additional form fields
-  const filteredKeys = ["name", "phone", "email", "concern", "source", "service", "reason", "message", "interest", "type", "dropdown"];
-  let additionalFieldsHtml = "";
-  if (others && Object.keys(others).length > 0) {
-    additionalFieldsHtml = Object.entries(others)
-      .filter(([key]) => !filteredKeys.includes(key))
-      .map(([key, value]) => `
-        <div class="info-item">
-          <div class="info-label">${key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')}</div>
-          <div class="info-value">${value}</div>
-        </div>
-      `)
-      .join("");
+  const getVal = (v) => (v && v !== "Not provided") ? v : null;
+
+  let displayAge = age || "";
+  let displayConcern = getVal(concern) || getVal(others.reason) || getVal(others.service) || getVal(others.message) || "N/A";
+
+  if (!displayAge && displayConcern.includes("Age:")) {
+    const ageMatch = displayConcern.match(/Age:\s*(.+)/);
+    const concernMatch = displayConcern.match(/Concern:\s*([\s\S]+)/);
+    if (ageMatch) displayAge = ageMatch[1].trim();
+    if (concernMatch) displayConcern = concernMatch[1].trim();
   }
 
-  return `
-<!DOCTYPE html>
+  const whatsappLink = phone ? `https://wa.me/91${phone.replace(/\D/g,"")}` : "#";
+  const callLink = phone ? `tel:+91${phone.replace(/\D/g,"")}` : "#";
+  const now = new Date();
+  const timeStr = now.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>New Lead Notification | CYT</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>New Lead | Choose Your Therapist</title>
   <style>
-    /* Reset styles for email clients */
-    body, p, h1, h2, h3 { margin: 0; padding: 0; }
-    img { max-width: 100%; height: auto; display: block; }
-    
-    body {
-      font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      background-color: #f0f2f5;
-      color: #1c1e21;
-      line-height: 1.5;
-      -webkit-font-smoothing: antialiased;
-    }
-
-    .wrapper {
-      width: 100%;
-      table-layout: fixed;
-      background-color: #f0f2f5;
-      padding-bottom: 40px;
-    }
-
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      background-color: #ffffff;
-      border-radius: 16px;
-      overflow: hidden;
-      margin-top: 20px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-    }
-
-    .header {
-      background: linear-gradient(135deg, #2e7d32 0%, #43a047 100%);
-      padding: 40px 20px;
-      text-align: center;
-      color: #ffffff;
-    }
-
-    .logo-text {
-      font-size: 28px;
-      font-weight: 800;
-      letter-spacing: -0.5px;
-      margin-bottom: 8px;
-    }
-
-    .header-tagline {
-      font-size: 14px;
-      opacity: 0.9;
-      text-transform: uppercase;
-      letter-spacing: 2px;
-    }
-
-    .content {
-      padding: 32px 24px;
-    }
-
-    .alert-banner {
-      background-color: #e8f5e9;
-      border-left: 4px solid #2e7d32;
-      padding: 16px;
-      margin-bottom: 32px;
-      border-radius: 4px;
-    }
-
-    .alert-text {
-      color: #2e7d32;
-      font-weight: 600;
-      font-size: 15px;
-    }
-
-    .section-title {
-      font-size: 13px;
-      font-weight: 700;
-      color: #65676b;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 16px;
-      padding-bottom: 8px;
-      border-bottom: 2px solid #2e7d32;
-      display: block;
-      margin-left: auto;
-      margin-right: auto;
-      text-align: center;
-      width: 50%;
-    }
-
-    .info-card {
-      background-color: #f7f8fa;
-      border-radius: 12px;
-      padding: 8px;
-      margin-bottom: 24px;
-    }
-
-    .info-item {
-      padding: 12px 16px;
-      border-bottom: 1px solid #2e7d32;
-    }
-
-    .info-item:last-child {
-      border-bottom: none;
-    }
-
-    .info-label {
-      font-size: 12px;
-      color: #65676b;
-      font-weight: 600;
-      margin-bottom: 4px;
-    }
-
-    .info-value {
-      font-size: 16px;
-      color: #050505;
-      font-weight: 500;
-      word-break: break-all;
-    }
-
-    .concern-box {
-      background-color: #ffffff;
-      border: 1px solid #ebedf0;
-      border-radius: 8px;
-      padding: 16px;
-      margin-top: 8px;
-      font-style: italic;
-      color: #4b4b4b;
-    }
-
-    .actions {
-      text-align: center;
-      margin-top: 32px;
-    }
-
-    .btn {
-      display: inline-block;
-      background-color: #2e7d32;
-      color: #ffffff !important;
-      text-decoration: none;
-      padding: 14px 32px;
-      border-radius: 8px;
-      font-weight: 700;
-      font-size: 16px;
-      transition: background-color 0.3s ease;
-    }
-
-    .footer {
-      text-align: center;
-      padding: 32px 20px;
-      color: #65676b;
-      font-size: 13px;
-    }
-
-    .footer-links {
-      margin-bottom: 16px;
-    }
-
-    .footer-links a {
-      color: #2e7d32;
-      text-decoration: none;
-      margin: 0 8px;
-    }
-
-    /* Mobile Responsive */
-    @media only screen and (max-width: 480px) {
-      .container {
-        width: 95% !important;
-        margin-top: 10px !important;
-      }
-      .header {
-        padding: 30px 15px !important;
-      }
-      .content {
-        padding: 24px 16px !important;
-      }
-      .btn {
-        width: 100%;
-        box-sizing: border-box;
-      }
+    body,p,h1,h2,h3,h4,td,div{margin:0;padding:0;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}
+    @media only screen and (max-width:600px){
+      .container{width:100%!important;}
+      .two-col td{display:block!important;width:100%!important;border-left:none!important;border-top:1px solid #e2e8f0!important;}
+      .btn-td{display:block!important;width:100%!important;padding:4px 0!important;}
     }
   </style>
 </head>
-<body>
-  <div class="wrapper">
-    <div class="container">
-      <div class="header">
-        <div class="logo-text">CYT</div>
-        <div class="header-tagline">Choose Your Therapist</div>
-      </div>
-      
-      <div class="content">
-        <div class="alert-banner">
-          <p class="alert-text">✨ New Consultation Request Received</p>
-        </div>
+<body style="background:#eef2f7;padding:24px 0;">
 
-        <h3 class="section-title">Client Details</h3>
-        <div class="info-card">
-          <div class="info-item">
-            <div class="info-label">Full Name</div>
-            <div class="info-value">${name || "N/A"}</div>
-          </div>
-          <div class="info-item">
-            <div class="info-label">Phone Number</div>
-            <div class="info-value">${phone || "N/A"}</div>
-          </div>
-          <div class="info-item">
-            <div class="info-label">Email Address</div>
-            <div class="info-value">${email || "N/A"}</div>
-          </div>
-          <div class="info-item">
-            <div class="info-label">Source</div>
-            <div class="info-value">${source || "Direct Website"}</div>
-          </div>
-        </div>
+<table width="100%" cellpadding="0" cellspacing="0" border="0">
+<tr><td align="center">
 
-        <h3 class="section-title">Requirement / Concern</h3>
-        <div class="info-card">
-          <div class="info-item">
-            <div class="info-value">${displayConcern}</div>
-          </div>
-          ${additionalFieldsHtml ? additionalFieldsHtml : ""}
-        </div>
+  <table class="container" width="600" cellpadding="0" cellspacing="0" border="0"
+    style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10);">
 
-        <div class="actions">
-          <a href="mailto:${email}" class="btn">Reply to Lead</a>
-        </div>
-      </div>
+    <!-- ═══ HEADER ═══ -->
+    <tr>
+      <td style="background:#0d3d25;padding:0;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="padding:24px 32px 20px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td>
+                    <div style="font-size:22px;font-weight:900;color:#ffffff;letter-spacing:-0.5px;">#ChooseYourTherapist</div>
+                  </td>
+                  <td></td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Green bar -->
+          <tr><td style="background:#166534;padding:10px 32px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="font-size:12px;color:#bbf7d0;font-weight:600;">📋 Consultation Request</td>
+                <td align="right" style="font-size:11px;color:rgba(255,255,255,0.6);">${timeStr} IST</td>
+              </tr>
+            </table>
+          </td></tr>
+        </table>
+      </td>
+    </tr>
 
-      <div class="footer">
-        <div class="footer-links">
-          <a href="https://chooseyourtherapist.in">Website</a> | 
-          <a href="https://chooseyourtherapist.in/contact">Contact Support</a>
-        </div>
-        <p>This is an automated notification from the CYT Management System.</p>
-        <p>&copy; ${new Date().getFullYear()} Choose Your Therapist LLP. All rights reserved.</p>
-      </div>
-    </div>
-  </div>
+    <!-- ═══ PATIENT INFO SECTION ═══ -->
+    <tr>
+      <td style="padding:28px 32px 0;">
+        <div style="font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #0d3d25;">Client Information</div>
+      </td>
+    </tr>
+
+    <!-- Row: Name + Age -->
+    <tr>
+      <td style="padding:0 32px;">
+        <table class="two-col" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;margin-bottom:8px;">
+          <tr>
+            <td width="50%" style="padding:14px 18px;background:#f8fafc;vertical-align:top;">
+              <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">Full Name</div>
+              <div style="font-size:16px;font-weight:700;color:#0f172a;">${name || "—"}</div>
+            </td>
+            <td width="50%" style="padding:14px 18px;background:#f8fafc;vertical-align:top;border-left:1px solid #e2e8f0;">
+              <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">Age</div>
+              <div style="font-size:16px;font-weight:700;color:#0f172a;">${displayAge || "—"}</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Row: Phone + Email -->
+    <tr>
+      <td style="padding:0 32px;">
+        <table class="two-col" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;margin-bottom:8px;">
+          <tr>
+            <td width="50%" style="padding:14px 18px;background:#f8fafc;vertical-align:top;">
+              <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">Phone Number</div>
+              <div style="font-size:16px;font-weight:700;color:#0f172a;">${phone || "—"}</div>
+            </td>
+            <td width="50%" style="padding:14px 18px;background:#f8fafc;vertical-align:top;border-left:1px solid #e2e8f0;">
+              <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">Email Address</div>
+              <div style="font-size:14px;font-weight:600;color:#0f172a;word-break:break-all;">${email || "—"}</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Row: Source -->
+    <tr>
+      <td style="padding:0 32px 24px;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+          <tr>
+            <td style="padding:14px 18px;background:#f8fafc;">
+              <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">Source / Referred Via</div>
+              <div style="font-size:15px;font-weight:600;color:#0f172a;">${source || "Direct Website"}</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- ═══ CONCERN SECTION ═══ -->
+    <tr>
+      <td style="padding:0 32px 24px;">
+        <div style="font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #0d3d25;">Concern / Requirement</div>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;border-radius:8px;">
+          <tr>
+            <td style="padding:16px 20px;">
+              <div style="font-size:14px;color:#1e293b;line-height:1.8;">${displayConcern}</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- ═══ ACTION BUTTONS ═══ -->
+    <tr>
+      <td style="padding:0 32px 32px;">
+        <div style="font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #0d3d25;">Quick Actions</div>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td class="btn-td" width="50%" style="padding-right:6px;">
+              <a href="${whatsappLink}" style="display:block;background:#25d366;color:#ffffff;text-decoration:none;padding:14px;border-radius:8px;font-weight:700;font-size:14px;text-align:center;">
+                💬 WhatsApp Client
+              </a>
+            </td>
+            <td class="btn-td" width="50%" style="padding-left:6px;">
+              <a href="${callLink}" style="display:block;background:#0d3d25;color:#ffffff;text-decoration:none;padding:14px;border-radius:8px;font-weight:700;font-size:14px;text-align:center;">
+                📞 Call Client
+              </a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- ═══ FOOTER ═══ -->
+    <tr>
+      <td style="background:#0d3d25;padding:18px 32px;text-align:center;">
+        <p style="font-size:12px;color:rgba(255,255,255,0.6);margin:0 0 4px;">
+          +91-8077757951 &nbsp;·&nbsp; hello@chooseyourtherapist.in &nbsp;·&nbsp; chooseyourtherapist.in
+        </p>
+        <p style="font-size:11px;color:rgba(255,255,255,0.35);margin:0;">
+          © ${new Date().getFullYear()} Choose Your Therapist LLP · Automated CRM Notification
+        </p>
+      </td>
+    </tr>
+
+  </table>
+
+</td></tr>
+</table>
+
 </body>
-</html>
-`;
+</html>`;
 };
 
 // --- OTP & AUTH TEMPLATES ---
