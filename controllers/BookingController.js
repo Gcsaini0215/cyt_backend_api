@@ -131,29 +131,18 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       "number.min": "Amount must be greater than or equal to 0",
       "any.required": "Amount is required",
     }),
-    age: Joi.alternatives().conditional(Joi.object({
-      whom: Joi.valid("For Other").required(),
-      is_logged_in: Joi.valid(false).required(),
-    }).unknown(), {
-      then: Joi.number()
-        .integer()
-        .min(12)
-        .max(100)
-        .required()
-        .messages({
-          "number.base": "Age must be a number",
-          "number.integer": "Age must be an integer",
-          "number.min": "Age must be at least 12",
-          "number.max": "Age must be less than or equal to 100",
-          "any.required": "Age is required when booking for others as a guest user",
-        }),
-      otherwise: Joi.number()
-        .integer()
-        .min(12)
-        .max(100)
-        .optional()
-        .allow(null, ""),
-    }),
+    age: Joi.number()
+      .integer()
+      .min(12)
+      .max(100)
+      .optional()
+      .allow(null, "")
+      .messages({
+        "number.base": "Age must be a number",
+        "number.integer": "Age must be an integer",
+        "number.min": "Age must be at least 12",
+        "number.max": "Age must be at most 100",
+      }),
 
   }).unknown(true);
 
