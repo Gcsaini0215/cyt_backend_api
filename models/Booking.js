@@ -54,7 +54,7 @@ const bookingSchema = new Schema({
   },
   age: {
     type: Number,
-    required: true
+    default: null,
   },
   booking_date: {
     type: Date,
