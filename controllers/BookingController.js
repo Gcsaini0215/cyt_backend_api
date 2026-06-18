@@ -28,42 +28,9 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       "boolean.base": "is_logged_in must be true or false",
       "any.required": "is_logged_in flag is required",
     }),
-    name: Joi.string()
-      .min(2)
-      .when("is_logged_in", {
-        is: false,
-        then: Joi.required(),
-        otherwise: Joi.optional().allow(""),
-      })
-      .messages({
-        "string.base": "Name must be a text",
-        "string.min": "Name must be at least 2 characters long",
-        "any.required": "Name is required for guest users",
-      }),
-
-    email: Joi.string()
-      .email()
-      .when("is_logged_in", {
-        is: false,
-        then: Joi.required(),
-        otherwise: Joi.optional().allow(""),
-      })
-      .messages({
-        "string.email": "Please provide a valid email address",
-        "any.required": "Email is required for guest users",
-      }),
-
-    phone: Joi.string()
-      .pattern(/^[0-9]{10}$/)
-      .when("is_logged_in", {
-        is: false,
-        then: Joi.required(),
-        otherwise: Joi.optional().allow(""),
-      })
-      .messages({
-        "string.pattern.base": "Phone number must be exactly 10 digits",
-        "any.required": "Phone number is required for guest users",
-      }),
+    name: Joi.string().min(2).optional().allow("", null),
+    email: Joi.string().email().optional().allow("", null),
+    phone: Joi.string().pattern(/^[0-9]{10}$/).optional().allow("", null),
 
 
     user_id: Joi.string()
@@ -198,23 +165,29 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       user.otp_count = otp_count;
       await user.save({ session });
     } else {
+      if (!email) {
+        res.status(400);
+        return next(new Error("Email is required to book a session."));
+      }
       email = email.toLowerCase();
       user = await Users.findOne({ email }).session(session);
       if (user) {
         if (user.is_verified === 1) {
           res.status(400);
-          return next(new Error("This user is already registred with us as Therapist"));
+          return next(new Error("This user is already registered with us as a Therapist"));
         }
         user.otp = generatedOtp;
         user.otp_count = otp_count;
+        if (name && !user.name) user.name = name;
+        if (phone && !user.phone) user.phone = phone;
         await user.save({ session });
       } else {
         user = await Users.create(
           [{
-            name,
+            name:  name || email.split("@")[0],
             email,
-            phone,
-            otp: generatedOtp,
+            phone: phone || "",
+            otp:   generatedOtp,
             otp_count,
             age,
           }],
