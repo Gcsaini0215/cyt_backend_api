@@ -214,9 +214,19 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       { session }
     );
 
-    const subject = "Welcome to CYT";
-    const text = `Hello Thank you for registering. Use this otp to verify ${generatedOtp}.Best regards CYT`;
-    const html = otpVerificationEmail(generatedOtp);
+    const subject = "Booking Request Received — Choose Your Therapist";
+    const text = `Hi ${name || "there"}, your booking request has been received. Our team will contact you on WhatsApp within 24 hours to confirm your session.`;
+    const html = bookingConfirmationMail({
+      clientName: name || email,
+      therapistName: isExist?.user?.name || "your therapist",
+      service,
+      format,
+      whom,
+      cname,
+      relation_with_client,
+      notes,
+      pin: booked[0]._id.toString().slice(-6).toUpperCase(),
+    });
     await sendMail(email, subject, text, html);
 
     await session.commitTransaction();
