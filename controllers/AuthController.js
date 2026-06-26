@@ -372,7 +372,7 @@ export const resendTherapistOtp = expressAsyncHandler(async (req, res, next) => 
     res.status(400);
     return next(new Error("No user found with this email"));
   }
-  const otp = generate6DigitOTP();
+  const otp = generate6DigitOTP().toString();
   user.otp = otp;
   user.otp_count = (user.otp_count || 0) + 1;
   await user.save();
@@ -512,7 +512,7 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
     }
 
     if (user) {
-      if (user.otp === otp) {
+      if (user.otp?.toString() === otp?.toString()) {
         user.otp = "";
         user.otp_count = 0;
         await user.save();
