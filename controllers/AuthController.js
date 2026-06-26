@@ -47,13 +47,9 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
       const email = req.body.email.toLowerCase();
       const userExists = await Users.findOne({ email });
 
-      if (userExists) {
+      if (userExists && userExists.is_verified === 1) {
         res.status(400);
-        return next(new Error("This user is already registred with us"));
-      }
-      if (userExists && userExists.is_verified === 0) {
-        res.status(400);
-        return next(new Error("Your ID is not aproved yet by Admin"));
+        return next(new Error("This email is already registered with us"));
       }
 
       if (!req.file || req.file == null) {
@@ -71,33 +67,56 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
       const subject = "Therapist Registration – OTP Verification & Approval Process";
       const text = `Hello Thank you for registering.Best regards,CYT`;
 
-      const user = await Users.create([{
-        name,
-        email,
-        phone: phone.toString(),
-        otp,
-        otp_count: 1,
-        is_verified: 0,
-        role: 1
-      }], { session });
+      let user;
 
-      await Therapists.create([{
-        _id: user[0]._id,
-        user: user[0]._id,
-        profile_type: type,
-        mode,
-        serve_type: serve,
-        resume: url,
-        profile_code: generateProfileCode()
-      }], { session });
+      if (userExists && userExists.is_verified === 0) {
+        // Unverified user — update OTP and therapist info, resend mail
+        userExists.otp = otp;
+        userExists.otp_count = (userExists.otp_count || 0) + 1;
+        userExists.name = name;
+        userExists.phone = phone.toString();
+        await userExists.save({ session });
 
+        await Therapists.findOneAndUpdate(
+          { user: userExists._id },
+          { profile_type: type, mode, serve_type: serve, resume: url },
+          { session, upsert: true }
+        );
 
-      await session.commitTransaction();
-      session.endSession();
+        await session.commitTransaction();
+        session.endSession();
 
-      const html = therapistVerificationEmail(email, otp);
+        const html = therapistVerificationEmail(email, otp);
+        await sendMail(email, subject, text, html);
+      } else {
+        const newUser = await Users.create([{
+          name,
+          email,
+          phone: phone.toString(),
+          otp,
+          otp_count: 1,
+          is_verified: 0,
+          role: 1
+        }], { session });
 
-      await sendMail(email, subject, text, html);
+        await Therapists.create([{
+          _id: newUser[0]._id,
+          user: newUser[0]._id,
+          profile_type: type,
+          mode,
+          serve_type: serve,
+          resume: url,
+          profile_code: generateProfileCode()
+        }], { session });
+
+        await session.commitTransaction();
+        session.endSession();
+
+        const html = therapistVerificationEmail(email, otp);
+        await sendMail(email, subject, text, html);
+
+        user = newUser;
+      }
 
       res.status(201).json({
         status: true,
@@ -124,7 +143,7 @@ export const checkTherapistEmail = expressAsyncHandler(async (req, res, next) =>
     return next(new Error("Email is required"));
   }
   const exists = await Users.findOne({ email: email.toLowerCase() });
-  if (exists) {
+  if (exists && exists.is_verified === 1) {
     res.status(400);
     return next(new Error("This email is already registered with us"));
   }
