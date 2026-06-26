@@ -117,6 +117,20 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
+export const checkTherapistEmail = expressAsyncHandler(async (req, res, next) => {
+  const { email } = req.body;
+  if (!email) {
+    res.status(400);
+    return next(new Error("Email is required"));
+  }
+  const exists = await Users.findOne({ email: email.toLowerCase() });
+  if (exists) {
+    res.status(400);
+    return next(new Error("This email is already registered with us"));
+  }
+  res.status(200).json({ status: true, message: "Email is available" });
+});
+
 export const aproveTherapist = expressAsyncHandler(async (req, res, next) => {
   const userId = req.params.userId;
   if (!userId) {

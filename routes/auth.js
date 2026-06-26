@@ -7,6 +7,7 @@ import {
   register,
   sendForgotPasswordOtp,
   therapistRegister,
+  checkTherapistEmail,
   verifyOtp,
   sendAproveMail,
   adminLogin,
@@ -33,6 +34,8 @@ router.get("/test", (req, res, next) => {
 router.post("/register", register);
 
 router.post("/send-otp-to-mail", sendOtpToMail);
+
+router.post("/check-therapist-email", checkTherapistEmail);
 
 router.post(
   "/therapist-registeration",
