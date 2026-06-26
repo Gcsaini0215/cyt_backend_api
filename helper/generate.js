@@ -2,7 +2,7 @@ import crypto from "crypto";
 import QRCode from "qrcode";
 export const generate6DigitOTP = () => {
   const otp = crypto.randomInt(100000, 1000000);
-  return otp;
+  return otp.toString();
 };
 
 export const generateQrCode = async (data) => {
