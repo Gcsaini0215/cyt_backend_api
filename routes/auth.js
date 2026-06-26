@@ -8,6 +8,7 @@ import {
   sendForgotPasswordOtp,
   therapistRegister,
   checkTherapistEmail,
+  resendTherapistOtp,
   verifyOtp,
   sendAproveMail,
   adminLogin,
@@ -36,6 +37,7 @@ router.post("/register", register);
 router.post("/send-otp-to-mail", sendOtpToMail);
 
 router.post("/check-therapist-email", checkTherapistEmail);
+router.post("/resend-therapist-otp", resendTherapistOtp);
 
 router.post(
   "/therapist-registeration",

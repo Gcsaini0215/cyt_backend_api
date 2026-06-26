@@ -342,6 +342,28 @@ export const register = expressAsyncHandler(async (req, res, next) => {
 
 });
 
+export const resendTherapistOtp = expressAsyncHandler(async (req, res, next) => {
+  const email = req.body.email?.toLowerCase();
+  if (!email) {
+    res.status(400);
+    return next(new Error("Email is required"));
+  }
+  const user = await Users.findOne({ email });
+  if (!user) {
+    res.status(400);
+    return next(new Error("No user found with this email"));
+  }
+  const otp = generate6DigitOTP();
+  user.otp = otp;
+  user.otp_count = (user.otp_count || 0) + 1;
+  await user.save();
+  const subject = "Therapist Registration – Resend OTP";
+  const text = `Your new OTP is ${otp}`;
+  const html = therapistVerificationEmail(email, otp);
+  await sendMail(email, subject, text, html);
+  res.status(200).json({ status: true, message: "OTP resent to your email" });
+});
+
 export const sendOtpToMail = expressAsyncHandler(async (req, res) => {
   let email = req.body.email.toLowerCase();
 
