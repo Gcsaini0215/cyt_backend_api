@@ -373,9 +373,8 @@ export const resendTherapistOtp = expressAsyncHandler(async (req, res, next) => 
     return next(new Error("No user found with this email"));
   }
   const otp = generate6DigitOTP().toString();
-  user.otp = otp;
-  user.otp_count = (user.otp_count || 0) + 1;
-  await user.save();
+  await Users.findByIdAndUpdate(user._id, { otp, otp_count: (user.otp_count || 0) + 1 });
+  console.log(`[resendOtp] email=${email} | new_otp="${otp}" saved`);
   const subject = "Therapist Registration – Resend OTP";
   const text = `Your new OTP is ${otp}`;
   const html = therapistVerificationEmail(email, otp);
@@ -512,6 +511,7 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
     }
 
     if (user) {
+      console.log(`[verifyOtp] email=${email} | db_otp="${user.otp}" (${typeof user.otp}) | req_otp="${otp}" (${typeof otp}) | match=${user.otp?.toString() === otp?.toString()}`);
       if (user.otp?.toString() === otp?.toString()) {
         user.otp = "";
         user.otp_count = 0;
