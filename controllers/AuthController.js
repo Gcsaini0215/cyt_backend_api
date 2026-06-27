@@ -118,14 +118,15 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
         user = newUser;
       }
 
+      const savedUser = userExists || (user && user[0]);
       res.status(201).json({
         status: true,
         message:
           "Thank you for submitting your resume. Our admin will review your profile soon. You will receive approval via email.",
         data: {
-          name: user.name,
-          email: user.email,
-          phone: user.phone
+          name: savedUser?.name,
+          email: savedUser?.email,
+          phone: savedUser?.phone
         },
       });
     } catch (err) {
