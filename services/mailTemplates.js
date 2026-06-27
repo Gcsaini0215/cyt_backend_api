@@ -496,7 +496,7 @@ const baseOtpTemplate = (title, greeting, message, otp) => `
     body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f0f2f5; margin: 0; padding: 0; }
     .wrapper { width: 100%; table-layout: fixed; background-color: #f0f2f5; padding-bottom: 40px; }
     .container { max-width: 500px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
-    .header { background: #2563eb; color: #ffffff; padding: 32px 20px; text-align: center; }
+    .header { background: linear-gradient(135deg, #16a34a, #22bb33); color: #ffffff; padding: 32px 20px; text-align: center; }
     .logo-text { font-size: 24px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 4px; }
     .header h2 { margin: 0; font-size: 18px; font-weight: 600; opacity: 0.9; }
     .content { padding: 32px 24px; line-height: 1.6; color: #1c1e21; }
