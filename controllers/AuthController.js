@@ -71,16 +71,17 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
 
       if (userExists && userExists.is_verified === 0) {
         // Unverified user — update OTP and therapist info, resend mail
-        userExists.otp = otp;
-        userExists.otp_count = (userExists.otp_count || 0) + 1;
-        userExists.name = name;
-        userExists.phone = phone.toString();
-        await userExists.save({ session });
+        await Users.findByIdAndUpdate(userExists._id, {
+          otp: otp.toString(),
+          otp_count: (userExists.otp_count || 0) + 1,
+          name,
+          phone: phone.toString(),
+        });
 
         await Therapists.findOneAndUpdate(
           { user: userExists._id },
           { profile_type: type, mode, serve_type: serve, resume: url },
-          { session, upsert: true }
+          { upsert: true }
         );
 
         await session.commitTransaction();
@@ -93,7 +94,7 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
           name,
           email,
           phone: phone.toString(),
-          otp,
+          otp: otp.toString(),
           otp_count: 1,
           is_verified: 0,
           role: 1
