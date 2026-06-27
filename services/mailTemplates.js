@@ -489,46 +489,120 @@ export const leadNotificationEmail = (data) => {
 
 const baseOtpTemplate = (title, greeting, message, otp) => `
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <style>
-    body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f0f2f5; margin: 0; padding: 0; }
-    .wrapper { width: 100%; table-layout: fixed; background-color: #f0f2f5; padding-bottom: 40px; }
-    .container { max-width: 500px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
-    .header { background: linear-gradient(135deg, #16a34a, #22bb33); color: #ffffff; padding: 32px 20px; text-align: center; }
-    .logo-text { font-size: 24px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 4px; }
-    .header h2 { margin: 0; font-size: 18px; font-weight: 600; opacity: 0.9; }
-    .content { padding: 32px 24px; line-height: 1.6; color: #1c1e21; }
-    .otp-box { background: #f8fafc; border: 2px dashed #cbd5e1; padding: 24px; text-align: center; margin: 24px 0; border-radius: 12px; }
-    .otp-label { font-size: 11px; color: #65676b; margin-bottom: 12px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px; }
-    .otp-code { font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #1e293b; font-family: 'Courier New', monospace; }
-    .footer { text-align: center; padding: 24px; font-size: 12px; color: #65676b; border-top: 1px solid #ebedf0; }
-    @media only screen and (max-width: 480px) {
-      .container { width: 95% !important; margin-top: 10px !important; }
-      .otp-code { font-size: 28px !important; letter-spacing: 4px !important; }
-    }
-  </style>
+  <title>${title} | CYT</title>
 </head>
-<body>
-  <div class="wrapper">
-    <div class="container">
-      <div class="header">
-        <div class="logo-text">CYT</div>
-        <h2>${title}</h2>
-      </div>
-      <div class="content">
-        <p style="font-size: 16px;">Hello <strong>${greeting}</strong>,</p>
-        <p style="color: #4b4b4b;">${message}</p>
-        <div class="otp-box">
-          <div class="otp-label">Verification Code</div>
-          <div class="otp-code">${otp}</div>
-        </div>
-        <p style="font-size: 13px; color: #65676b;">This code is valid for a limited time. Please do not share this OTP with anyone.</p>
-      </div>
-      <div class="footer">Choose Your Therapist (CYT) &bull; Mental Wellness Platform</div>
-    </div>
-  </div>
+<body style="margin:0;padding:0;background-color:#f0f4f8;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f0f4f8;padding:32px 0;">
+  <tr><td align="center">
+
+    <table width="520" cellpadding="0" cellspacing="0" border="0"
+      style="max-width:520px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.09);">
+
+      <!-- TOP GREEN BAR -->
+      <tr>
+        <td style="height:5px;background:linear-gradient(90deg,#16a34a,#4ade80);font-size:0;line-height:0;">&nbsp;</td>
+      </tr>
+
+      <!-- HEADER -->
+      <tr>
+        <td style="background:linear-gradient(135deg,#14532d 0%,#16a34a 60%,#22bb33 100%);padding:32px 28px 28px;text-align:center;">
+          <!-- Logo badge -->
+          <div style="display:inline-block;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);border-radius:50px;padding:6px 20px;margin-bottom:16px;">
+            <span style="font-size:15px;font-weight:900;color:#ffffff;letter-spacing:2px;">CYT</span>
+          </div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:2px;font-weight:600;margin-bottom:6px;">Choose Your Therapist</div>
+          <div style="font-size:20px;font-weight:800;color:#ffffff;">${title}</div>
+        </td>
+      </tr>
+
+      <!-- GREETING -->
+      <tr>
+        <td style="padding:28px 32px 0;">
+          <p style="margin:0 0 6px;font-size:16px;font-weight:700;color:#0f172a;">Hello, ${greeting}</p>
+          <p style="margin:0;font-size:14px;color:#475569;line-height:1.7;">${message}</p>
+        </td>
+      </tr>
+
+      <!-- OTP CARD -->
+      <tr>
+        <td style="padding:24px 32px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0"
+            style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1.5px solid #86efac;border-radius:14px;overflow:hidden;">
+            <tr>
+              <td style="padding:10px 0 6px;text-align:center;">
+                <div style="font-size:10px;font-weight:700;color:#15803d;text-transform:uppercase;letter-spacing:2px;">Your One-Time Code</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px 24px 16px;text-align:center;">
+                <!-- OTP digits split into boxes -->
+                <table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
+                  <tr>
+                    ${otp.toString().split('').map(d => `
+                    <td style="padding:0 4px;">
+                      <div style="width:44px;height:54px;background:#ffffff;border:2px solid #22bb33;border-radius:10px;text-align:center;line-height:54px;font-size:26px;font-weight:900;color:#14532d;font-family:'Courier New',monospace;box-shadow:0 2px 8px rgba(34,187,51,0.15);">${d}</div>
+                    </td>`).join('')}
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 24px 16px;text-align:center;">
+                <div style="display:inline-block;background:#fef9c3;border:1px solid #fde047;border-radius:20px;padding:5px 16px;">
+                  <span style="font-size:12px;color:#854d0e;font-weight:600;">⏱ Valid for 10 minutes</span>
+                </div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+
+      <!-- SECURITY NOTE -->
+      <tr>
+        <td style="padding:0 32px 28px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0"
+            style="background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #ef4444;border-radius:8px;">
+            <tr>
+              <td style="padding:12px 16px;">
+                <p style="margin:0;font-size:12px;color:#7f1d1d;line-height:1.6;">
+                  <strong>Security tip:</strong> CYT will never ask for this code via call, chat, or email. Do not share it with anyone.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+
+      <!-- DIVIDER -->
+      <tr>
+        <td style="padding:0 32px;">
+          <div style="border-top:1px solid #e2e8f0;"></div>
+        </td>
+      </tr>
+
+      <!-- FOOTER -->
+      <tr>
+        <td style="padding:20px 32px;text-align:center;">
+          <p style="margin:0 0 4px;font-size:12px;color:#94a3b8;">Choose Your Therapist &bull; Mental Wellness Platform</p>
+          <p style="margin:0;font-size:11px;color:#cbd5e1;">&copy; ${new Date().getFullYear()} CYT. All rights reserved.</p>
+        </td>
+      </tr>
+
+      <!-- BOTTOM GREEN BAR -->
+      <tr>
+        <td style="height:4px;background:linear-gradient(90deg,#22bb33,#4ade80);font-size:0;line-height:0;">&nbsp;</td>
+      </tr>
+
+    </table>
+
+  </td></tr>
+  </table>
+
 </body>
 </html>
 `;
