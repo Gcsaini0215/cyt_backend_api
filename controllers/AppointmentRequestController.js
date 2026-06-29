@@ -23,6 +23,17 @@ export const getAppointmentRequests = async (req, res) => {
   }
 };
 
+export const deleteAppointmentRequest = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const doc = await AppointmentRequest.findByIdAndDelete(id);
+    if (!doc) return res.status(404).json({ success: false, message: "Not found." });
+    res.json({ success: true, message: "Deleted." });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 export const updateAppointmentRequest = async (req, res) => {
   try {
     const { id } = req.params;
