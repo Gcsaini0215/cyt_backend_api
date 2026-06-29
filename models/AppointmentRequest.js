@@ -11,6 +11,8 @@ const AppointmentRequestSchema = new mongoose.Schema({
   confirmedTime: { type: String, default: "" },
   adminNote:     { type: String, default: "" },
   source:        { type: String, default: "website" },
+  therapistId:   { type: String, default: "" },
+  therapistName: { type: String, default: "" },
 }, { timestamps: true });
 
 export default mongoose.model("AppointmentRequest", AppointmentRequestSchema);

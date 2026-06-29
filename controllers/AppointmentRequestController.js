@@ -3,9 +3,9 @@ import { sendMail } from "../helper/mailer.js";
 
 export const createAppointmentRequest = async (req, res) => {
   try {
-    const { name, phone, email, concern, preferredTime, message } = req.body;
+    const { name, phone, email, concern, preferredTime, message, therapistId, therapistName } = req.body;
     if (!name || !phone) return res.status(400).json({ success: false, message: "Name and phone are required." });
-    const doc = await AppointmentRequest.create({ name, phone, email: email || "", concern, preferredTime, message });
+    const doc = await AppointmentRequest.create({ name, phone, email: email || "", concern, preferredTime, message, therapistId: therapistId || "", therapistName: therapistName || "" });
     res.status(201).json({ success: true, data: doc });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
