@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 const AppointmentRequestSchema = new mongoose.Schema({
   name:          { type: String, required: true },
   phone:         { type: String, required: true },
+  email:         { type: String, default: "" },
   concern:       { type: String, default: "" },
   preferredTime: { type: String, default: "" },
   message:       { type: String, default: "" },
