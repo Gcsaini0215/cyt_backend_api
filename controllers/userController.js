@@ -227,7 +227,7 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
     for (const u of users) {
       if (!u.email) continue;
       const firstName = u.name ? u.name.split(" ")[0] : "";
-      const fromName = firstName ? `Hii, ${firstName} ${nameEmoji}` : `CYT Team ${nameEmoji}`;
+      const fromName = `Hii, ${nameEmoji}`;
       const ok = await sendMail(u.email, subject, message, buildHtml(firstName || "there"), fromName);
       if (ok) sentCount++;
     }
@@ -236,7 +236,7 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
     if (Array.isArray(leadEmails)) {
       for (const email of leadEmails) {
         if (!email) continue;
-        const ok = await sendMail(email, subject, message, buildHtml("there"), `CYT Team ${nameEmoji}`);
+        const ok = await sendMail(email, subject, message, buildHtml("there"), `Hii, ${nameEmoji}`);
         if (ok) sentCount++;
       }
     }
