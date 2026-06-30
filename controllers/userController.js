@@ -144,7 +144,8 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
   }
   try {
     const users = await Users.find({ _id: { $in: ids }, role: 0 }).select("name email");
-    const html = `
+
+    const buildHtml = (firstName) => `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -157,16 +158,17 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
           <div style="color:rgba(255,255,255,0.65);font-size:12px;margin-top:4px">Your well-being is our priority</div>
         </td></tr>
         <tr><td style="padding:32px 36px">
+          <div style="font-size:18px;font-weight:800;color:#0f172a;margin-bottom:16px">Hi ${firstName},</div>
           <div style="font-size:14px;color:#475569;line-height:1.8;white-space:pre-wrap">${message}</div>
-          <div style="text-align:center;margin-top:28px">
-            <a href="https://chooseyourtherapist.in" style="display:inline-block;background:linear-gradient(135deg,#1a6b3a,#228756);color:#fff;text-decoration:none;border-radius:10px;padding:14px 36px;font-weight:700;font-size:14px;box-shadow:0 4px 14px rgba(34,135,86,0.35)">
+          <div style="text-align:left;margin-top:28px">
+            <a href="https://chooseyourtherapist.in" style="display:inline-block;background:#ffffff;color:#1a6b3a;text-decoration:none;border:1.5px solid #1a6b3a;border-radius:8px;padding:12px 30px;font-weight:700;font-size:13px;letter-spacing:0.2px">
               Visit Choose Your Therapist
             </a>
           </div>
         </td></tr>
         <tr><td style="background:#f0fdf4;border-top:1.5px solid #dcfce7;padding:16px 36px;text-align:center">
           <div style="font-size:12px;color:#64748b">
-            📞 +91-8077757951 &nbsp;·&nbsp; ✉ hello@chooseyourtherapist.in &nbsp;·&nbsp; chooseyourtherapist.in
+            📞 +91-8077757951 &nbsp;·&nbsp; ✉ cyt@chooseyourtherapist.in &nbsp;·&nbsp; chooseyourtherapist.in
           </div>
         </td></tr>
       </table>
@@ -178,7 +180,8 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
     let sentCount = 0;
     for (const u of users) {
       if (!u.email) continue;
-      const ok = await sendMail(u.email, subject, message, html);
+      const firstName = u.name ? u.name.split(" ")[0] : "there";
+      const ok = await sendMail(u.email, subject, message, buildHtml(firstName));
       if (ok) sentCount++;
     }
 
