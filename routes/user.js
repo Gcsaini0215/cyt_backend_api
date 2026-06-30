@@ -4,6 +4,7 @@ import {
   getProfile,
   getUser,
   updateUser,
+  sendBulkUserMail,
 } from "../controllers/userController.js";
 import { isAdmin, isAuth, isAuthCommon } from "../middlewares/authMiddleware.js";
 import { upload } from "../services/fileUpload.js";
@@ -16,5 +17,6 @@ router.get("/get-user", isAuthCommon, getUser);
 router.post("/update-user", isAuth, upload.single("file"), updateUser);
 
 router.get("/get-all-users",isAdmin,getAllUserForAdmin)
+router.post("/send-bulk-user-mail",isAdmin,sendBulkUserMail)
 
 export default router;
