@@ -133,7 +133,7 @@ export const getAllUserForAdmin = expressAsyncHandler(async (req, res, next) => 
 });
 
 export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
-  const { ids, subject, message } = req.body;
+  const { ids, subject, message, ctaText, ctaLink } = req.body;
   if (!ids || !Array.isArray(ids) || ids.length === 0) {
     res.status(400);
     throw new Error("ids array is required");
@@ -144,6 +144,14 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
   }
   try {
     const users = await Users.find({ _id: { $in: ids }, role: 0 }).select("name email");
+
+    const ctaBlock = (ctaText?.trim() && ctaLink?.trim())
+      ? `<div style="text-align:left;margin-top:28px">
+            <a href="${ctaLink.trim()}" title="${ctaText.trim()}" style="display:inline-block;background:#ffffff;color:#1a6b3a;text-decoration:none;border:1.5px solid #1a6b3a;border-radius:8px;padding:12px 30px;font-weight:700;font-size:13px;letter-spacing:0.2px">
+              ${ctaText.trim()}
+            </a>
+          </div>`
+      : "";
 
     const buildHtml = (firstName) => `
 <!DOCTYPE html>
@@ -160,11 +168,7 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
         <tr><td style="padding:32px 36px">
           <div style="font-size:18px;font-weight:800;color:#0f172a;margin-bottom:16px">Hi ${firstName},</div>
           <div style="font-size:14px;color:#475569;line-height:1.8;white-space:pre-wrap">${message}</div>
-          <div style="text-align:left;margin-top:28px">
-            <a href="https://chooseyourtherapist.in" style="display:inline-block;background:#ffffff;color:#1a6b3a;text-decoration:none;border:1.5px solid #1a6b3a;border-radius:8px;padding:12px 30px;font-weight:700;font-size:13px;letter-spacing:0.2px">
-              Visit Choose Your Therapist
-            </a>
-          </div>
+          ${ctaBlock}
         </td></tr>
         <tr><td style="background:#f0fdf4;border-top:1.5px solid #dcfce7;padding:16px 36px;text-align:center">
           <div style="font-size:12px;color:#64748b">
