@@ -9,7 +9,7 @@ const gmailTransporter = nodemailer.createTransport({
 });
 
 const zohoTransporter = nodemailer.createTransport({
-  host: "smtp.zoho.in",
+  host: "smtp.zoho.com",
   port: 465,
   secure: true,
   auth: {
@@ -30,7 +30,7 @@ export const sendMail = async (to, subject, text, html, fromName = "CYT Team") =
     console.log("Email sent: %s", info.messageId);
     return true;
   } catch (error) {
-    console.error("Error sending email:", error);
+    console.error("sendMail error:", error.message, error.code, error.response);
     return false;
   }
 };
