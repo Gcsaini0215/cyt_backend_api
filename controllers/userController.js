@@ -218,16 +218,17 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
     // Registered users
     for (const u of users) {
       if (!u.email) continue;
-      const firstName = u.name ? u.name.split(" ")[0] : "there";
-      const ok = await sendMail(u.email, subject, message, buildHtml(firstName));
+      const firstName = u.name ? u.name.split(" ")[0] : "";
+      const fromName = firstName ? `Hii, ${firstName}` : "CYT Team";
+      const ok = await sendMail(u.email, subject, message, buildHtml(firstName || "there"), fromName);
       if (ok) sentCount++;
     }
 
-    // Leads (no User doc, just email strings)
+    // Leads (no User doc, just email strings — no name available)
     if (Array.isArray(leadEmails)) {
       for (const email of leadEmails) {
         if (!email) continue;
-        const ok = await sendMail(email, subject, message, buildHtml("there"));
+        const ok = await sendMail(email, subject, message, buildHtml("there"), "CYT Team");
         if (ok) sentCount++;
       }
     }
