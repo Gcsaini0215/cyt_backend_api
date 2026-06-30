@@ -194,14 +194,7 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
     <tr><td align="center">
       <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)">
         <tr><td style="background:linear-gradient(135deg,#0d4a28,#1a6b3a,#228756);padding:24px 36px">
-          <table cellpadding="0" cellspacing="0" border="0"><tr>
-            <td style="width:44px;vertical-align:middle">
-              <img src="https://chooseyourtherapist.in/assets/img/favicon.png" alt="" width="36" height="36" style="display:block;border-radius:8px;border:0" />
-            </td>
-            <td style="vertical-align:middle;padding-left:12px">
-              <span style="color:#fff;font-size:20px;font-weight:800;letter-spacing:-0.3px">Choose Your Therapist</span>
-            </td>
-          </tr></table>
+          <span style="color:#fff;font-size:18px;font-weight:800;letter-spacing:-0.3px">chooseyourtherapist.in</span>
         </td></tr>
         <tr><td style="padding:32px 36px">
           <div style="font-size:18px;font-weight:800;color:#0f172a;margin-bottom:16px">Hi ${firstName},</div>
@@ -227,7 +220,7 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
     for (const u of users) {
       if (!u.email) continue;
       const firstName = u.name ? u.name.split(" ")[0] : "";
-      const fromName = `Hii, ${nameEmoji}`;
+      const fromName = firstName ? `Hii, ${firstName} ${nameEmoji}` : `Hii, ${nameEmoji}`;
       const ok = await sendMail(u.email, subject, message, buildHtml(firstName || "there"), fromName);
       if (ok) sentCount++;
     }
