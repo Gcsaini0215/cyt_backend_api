@@ -20,8 +20,8 @@ const zohoTransporter = nodemailer.createTransport({
 
 export const sendMail = async (to, subject, text, html, fromName = "CYT Team") => {
   try {
-    const info = await gmailTransporter.sendMail({
-      from: `"${fromName}" <chooseyourtherapist@gmail.com>`,
+    const info = await zohoTransporter.sendMail({
+      from: `"${fromName}" <hello@chooseyourtherapist.in>`,
       to,
       subject,
       text,
