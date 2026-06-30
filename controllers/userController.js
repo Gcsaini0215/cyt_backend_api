@@ -194,7 +194,7 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
     <tr><td align="center">
       <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)">
         <tr><td style="background:linear-gradient(135deg,#0d4a28,#1a6b3a,#228756);padding:24px 36px">
-          <span style="color:#fff;font-size:18px;font-weight:800;letter-spacing:-0.3px">chooseyourtherapist.in</span>
+          <span style="color:#fff;font-size:18px;font-weight:800;letter-spacing:-0.3px">ChooseYourTherapist.in</span>
         </td></tr>
         <tr><td style="padding:32px 36px">
           <div style="font-size:18px;font-weight:800;color:#0f172a;margin-bottom:16px">Hi ${firstName},</div>
