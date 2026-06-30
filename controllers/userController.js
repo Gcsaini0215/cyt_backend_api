@@ -165,7 +165,7 @@ export const getChatUsersWithLeads = expressAsyncHandler(async (req, res, next) 
 });
 
 export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
-  const { ids, leadEmails, subject, message, ctaText, ctaLink } = req.body;
+  const { ids, leadEmails, subject, message, ctaText, ctaLink, nameEmoji = "💚" } = req.body;
   if (!ids || !Array.isArray(ids) || ids.length === 0) {
     res.status(400);
     throw new Error("ids array is required");
@@ -193,18 +193,20 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 0">
     <tr><td align="center">
       <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)">
-        <tr><td style="background:linear-gradient(135deg,#0d4a28,#1a6b3a,#228756);padding:28px 36px">
-          <div style="color:#fff;font-size:20px;font-weight:800;letter-spacing:-0.3px">Choose Your Therapist</div>
-          <div style="color:rgba(255,255,255,0.65);font-size:12px;margin-top:4px">Your well-being is our priority</div>
+        <tr><td style="background:linear-gradient(135deg,#0d4a28,#1a6b3a,#228756);padding:24px 36px">
+          <img src="https://chooseyourtherapist.in/assets/img/favicon.png" alt="CYT" width="36" height="36" style="display:inline-block;vertical-align:middle;border-radius:8px;margin-right:12px" />
+          <span style="color:#fff;font-size:20px;font-weight:800;letter-spacing:-0.3px;vertical-align:middle">Choose Your Therapist</span>
         </td></tr>
         <tr><td style="padding:32px 36px">
-          <div style="font-size:18px;font-weight:800;color:#0f172a;margin-bottom:16px">Hi ${firstName},</div>
+          <div style="font-size:18px;font-weight:800;color:#0f172a;margin-bottom:16px">Hi ${firstName}, ${nameEmoji}</div>
           <div style="font-size:14px;color:#475569;line-height:1.8;white-space:pre-wrap">${message}</div>
           ${ctaBlock}
         </td></tr>
-        <tr><td style="background:#f0fdf4;border-top:1.5px solid #dcfce7;padding:16px 36px;text-align:center">
-          <div style="font-size:12px;color:#64748b">
-            📞 +91-8077757951 &nbsp;·&nbsp; ✉ cyt@chooseyourtherapist.in &nbsp;·&nbsp; chooseyourtherapist.in
+        <tr><td style="background:#f1f5f9;border-top:1.5px solid #e2e8f0;padding:16px 36px">
+          <div style="font-size:12px;color:#64748b;line-height:1.9">
+            📞 +91-8077757951<br>
+            ✉ hello@chooseyourtherapist.in<br>
+            🌐 chooseyourtherapist.in
           </div>
         </td></tr>
       </table>
