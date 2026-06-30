@@ -9,7 +9,7 @@ const gmailTransporter = nodemailer.createTransport({
 });
 
 const zohoTransporter = nodemailer.createTransport({
-  host: "smtp.zoho.com",
+  host: "smtp.hostinger.com",
   port: 465,
   secure: true,
   auth: {
