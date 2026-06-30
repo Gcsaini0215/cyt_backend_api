@@ -1,6 +1,15 @@
 import ChatMessage from "../models/ChatMessage.js";
 import User from "../models/Users.js";
 
+const CLIENT_MSG_LIMIT = 5;
+
+// Detects phone numbers: 10-digit Indian, +91, spaces/dashes between digits
+const PHONE_REGEX = /(\+?91[\s\-]?)?[6-9]\d{9}|(\d[\s\-]?){10}/g;
+
+function containsPhone(text) {
+  return PHONE_REGEX.test(text.replace(/\s+/g, " "));
+}
+
 /* GET /chat/messages?therapistId=xxx  — fetch conversation */
 export const getMessages = async (req, res) => {
   try {
@@ -31,14 +40,20 @@ export const sendMessage = async (req, res) => {
     const { therapistId, message } = req.body;
     if (!therapistId || !message?.trim()) return res.status(400).json({ success: false, message: "therapistId and message required" });
 
-    const msg = await ChatMessage.create({
-      therapistId,
-      userId,
-      sender: "user",
-      message: message.trim(),
-    });
+    // Block phone numbers
+    if (containsPhone(message)) {
+      return res.status(400).json({ success: false, message: "Phone numbers are not allowed in chat. Please connect through the platform only.", blocked: "phone" });
+    }
 
-    res.status(201).json({ success: true, data: msg });
+    // Enforce 5-message limit per client per therapist within a 24-hour rolling window
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const sentCount = await ChatMessage.countDocuments({ therapistId, userId, sender: "user", createdAt: { $gte: since24h } });
+    if (sentCount >= CLIENT_MSG_LIMIT) {
+      return res.status(403).json({ success: false, message: `You can send up to ${CLIENT_MSG_LIMIT} messages per 24 hours. Book a session to continue.`, blocked: "limit" });
+    }
+
+    const msg = await ChatMessage.create({ therapistId, userId, sender: "user", message: message.trim() });
+    res.status(201).json({ success: true, data: msg, remaining: CLIENT_MSG_LIMIT - sentCount - 1 });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -113,6 +128,11 @@ export const therapistSendMessage = async (req, res) => {
     const therapistId = req.user._id;
     const { userId, message } = req.body;
     if (!userId || !message?.trim()) return res.status(400).json({ success: false, message: "userId and message required" });
+
+    // Block phone numbers in therapist replies too
+    if (containsPhone(message)) {
+      return res.status(400).json({ success: false, message: "Phone numbers are not allowed. Please use the platform booking system.", blocked: "phone" });
+    }
 
     const msg = await ChatMessage.create({ therapistId, userId, sender: "therapist", message: message.trim() });
     res.status(201).json({ success: true, data: msg });
