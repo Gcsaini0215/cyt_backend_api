@@ -1,6 +1,7 @@
 import expressAsyncHandler from "express-async-handler";
 import Users from "../models/Users.js";
 import UserInfo from "../models/UserInfo.js";
+import Lead from "../models/Lead.js";
 import { sendMail } from "../helper/mailer.js";
 export const getProfile = expressAsyncHandler(async (req, res, next) => {
   const user_id = req.user._id;
@@ -132,8 +133,39 @@ export const getAllUserForAdmin = expressAsyncHandler(async (req, res, next) => 
   }
 });
 
+/* Chat Users page: registered users (role:0) + contact-form leads, merged and newest-first.
+   Leads have no account/login, so they're tagged _source:"lead" and the frontend
+   keeps them read-only (not selectable for delete/bulk-email). */
+export const getChatUsersWithLeads = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const users = await Users.find({ role: 0 })
+      .select("name email phone profile age gender bio is_online dob createdAt")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const leads = await Lead.find({})
+      .select("name email phone created_at")
+      .sort({ created_at: -1 })
+      .lean();
+
+    const merged = [
+      ...users.map(u => ({ ...u, _source: "user", _sortDate: u.createdAt })),
+      ...leads.map(l => ({ ...l, _source: "lead", _sortDate: l.created_at })),
+    ].sort((a, b) => new Date(b._sortDate) - new Date(a._sortDate));
+
+    res.status(200).json({
+      message: "Fetched successfully",
+      data: merged,
+      status: true,
+    });
+  } catch (err) {
+    res.status(400);
+    throw new Error(err.message);
+  }
+});
+
 export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
-  const { ids, subject, message, ctaText, ctaLink } = req.body;
+  const { ids, leadEmails, subject, message, ctaText, ctaLink } = req.body;
   if (!ids || !Array.isArray(ids) || ids.length === 0) {
     res.status(400);
     throw new Error("ids array is required");
@@ -182,6 +214,8 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
 </html>`;
 
     let sentCount = 0;
+
+    // Registered users
     for (const u of users) {
       if (!u.email) continue;
       const firstName = u.name ? u.name.split(" ")[0] : "there";
@@ -189,9 +223,18 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
       if (ok) sentCount++;
     }
 
+    // Leads (no User doc, just email strings)
+    if (Array.isArray(leadEmails)) {
+      for (const email of leadEmails) {
+        if (!email) continue;
+        const ok = await sendMail(email, subject, message, buildHtml("there"));
+        if (ok) sentCount++;
+      }
+    }
+
     res.status(200).json({
       status: true,
-      message: `Email sent to ${sentCount} user(s)`,
+      message: `Email sent to ${sentCount} contact(s)`,
       sentCount,
     });
   } catch (err) {

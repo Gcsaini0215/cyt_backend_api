@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   getAllUserForAdmin,
+  getChatUsersWithLeads,
   getProfile,
   getUser,
   updateUser,
@@ -17,6 +18,7 @@ router.get("/get-user", isAuthCommon, getUser);
 router.post("/update-user", isAuth, upload.single("file"), updateUser);
 
 router.get("/get-all-users",isAdmin,getAllUserForAdmin)
+router.get("/get-chat-users",isAdmin,getChatUsersWithLeads)
 router.post("/send-bulk-user-mail",isAdmin,sendBulkUserMail)
 
 export default router;
