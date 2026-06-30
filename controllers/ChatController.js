@@ -57,3 +57,66 @@ export const getUnreadCount = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+/* ── THERAPIST SIDE ──────────────────────────────────────────────── */
+
+/* GET /chat/therapist/conversations — list all users who messaged this therapist */
+export const getConversations = async (req, res) => {
+  try {
+    const therapistId = req.user._id;
+
+    // get distinct userIds
+    const userIds = await ChatMessage.distinct("userId", { therapistId });
+
+    // for each userId get last message + unread count
+    const conversations = await Promise.all(userIds.map(async (userId) => {
+      const last = await ChatMessage.findOne({ therapistId, userId })
+        .sort({ createdAt: -1 }).populate("userId", "name email").lean();
+      const unread = await ChatMessage.countDocuments({ therapistId, userId, sender: "user", readAt: null });
+      return { userId, user: last?.userId || null, lastMessage: last, unread };
+    }));
+
+    // sort by last message time desc
+    conversations.sort((a, b) => new Date(b.lastMessage?.createdAt) - new Date(a.lastMessage?.createdAt));
+
+    res.json({ success: true, data: conversations });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/* GET /chat/therapist/messages?userId=xxx — get full thread with a user */
+export const getThreadAsTherapist = async (req, res) => {
+  try {
+    const therapistId = req.user._id;
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ success: false, message: "userId required" });
+
+    const messages = await ChatMessage.find({ therapistId, userId })
+      .sort({ createdAt: 1 }).lean();
+
+    // mark user messages as read
+    await ChatMessage.updateMany(
+      { therapistId, userId, sender: "user", readAt: null },
+      { $set: { readAt: new Date() } }
+    );
+
+    res.json({ success: true, data: messages });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/* POST /chat/therapist/send — therapist replies */
+export const therapistSendMessage = async (req, res) => {
+  try {
+    const therapistId = req.user._id;
+    const { userId, message } = req.body;
+    if (!userId || !message?.trim()) return res.status(400).json({ success: false, message: "userId and message required" });
+
+    const msg = await ChatMessage.create({ therapistId, userId, sender: "therapist", message: message.trim() });
+    res.status(201).json({ success: true, data: msg });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
