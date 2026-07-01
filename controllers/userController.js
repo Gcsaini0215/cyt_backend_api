@@ -229,11 +229,14 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
       if (ok) sentCount++;
     }
 
-    // Leads (no User doc, just email strings — no name available)
+    // Leads
     if (Array.isArray(leadEmails)) {
-      for (const email of leadEmails) {
+      for (const lead of leadEmails) {
+        const email = typeof lead === "string" ? lead : lead.email;
+        const firstName = typeof lead === "object" && lead.name ? lead.name.split(" ")[0] : "";
         if (!email) continue;
-        const ok = await sendMail(email, subject, message, buildHtml("there"), `Hii, ${nameEmoji}`);
+        const fromName = firstName ? `Hii, ${firstName} ${nameEmoji}` : `Hii, ${nameEmoji}`;
+        const ok = await sendMail(email, subject, message, buildHtml(firstName || "there"), fromName);
         if (ok) sentCount++;
       }
     }
