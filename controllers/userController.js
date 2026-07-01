@@ -218,33 +218,42 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
 </body>
 </html>`;
 
-    let sentCount = 0;
+    const tasks = [];
 
-    // Registered users
     for (const u of users) {
       if (!u.email) continue;
       const firstName = u.name ? u.name.split(" ")[0] : "";
       const fromName = firstName ? `Hii, ${firstName} ${nameEmoji}` : `Hii, ${nameEmoji}`;
-      const ok = await sendMail(u.email, subject, message, buildHtml(firstName || "there"), fromName);
-      if (ok) sentCount++;
+      tasks.push(sendMail(u.email, subject, message, buildHtml(firstName || "there"), fromName));
     }
 
-    // Leads
     if (Array.isArray(leadEmails)) {
       for (const lead of leadEmails) {
         const email = typeof lead === "string" ? lead : lead.email;
         const firstName = typeof lead === "object" && lead.name ? lead.name.split(" ")[0] : "";
         if (!email) continue;
         const fromName = firstName ? `Hii, ${firstName} ${nameEmoji}` : `Hii, ${nameEmoji}`;
-        const ok = await sendMail(email, subject, message, buildHtml(firstName || "there"), fromName);
-        if (ok) sentCount++;
+        tasks.push(sendMail(email, subject, message, buildHtml(firstName || "there"), fromName));
+      }
+    }
+
+    // send in parallel batches of 10
+    const BATCH = 10;
+    let sentCount = 0;
+    let failCount = 0;
+    for (let i = 0; i < tasks.length; i += BATCH) {
+      const results = await Promise.allSettled(tasks.slice(i, i + BATCH));
+      for (const r of results) {
+        if (r.status === "fulfilled" && r.value === true) sentCount++;
+        else failCount++;
       }
     }
 
     res.status(200).json({
       status: true,
-      message: `Email sent to ${sentCount} contact(s)`,
+      message: `Email sent to ${sentCount} contact(s)${failCount > 0 ? `, ${failCount} failed` : ""}`,
       sentCount,
+      failCount,
     });
   } catch (err) {
     res.status(400);
