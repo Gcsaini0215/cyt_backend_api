@@ -3,6 +3,7 @@ import Users from "../models/Users.js";
 import UserInfo from "../models/UserInfo.js";
 import Lead from "../models/Lead.js";
 import EmailLog from "../models/EmailLog.js";
+import ContactMeta from "../models/ContactMeta.js";
 import { sendMail } from "../helper/mailer.js";
 export const getProfile = expressAsyncHandler(async (req, res, next) => {
   const user_id = req.user._id;
@@ -154,15 +155,34 @@ export const getChatUsersWithLeads = expressAsyncHandler(async (req, res, next) 
       ...leads.map(l => ({ ...l, _source: "lead", _sortDate: l.created_at })),
     ].sort((a, b) => new Date(b._sortDate) - new Date(a._sortDate));
 
-    res.status(200).json({
-      message: "Fetched successfully",
-      data: merged,
-      status: true,
-    });
+    // attach meta (status + notes) to each contact
+    const allIds = merged.map(u => String(u._id));
+    const metas  = await ContactMeta.find({ refId: { $in: allIds } }).lean();
+    const metaMap = {};
+    metas.forEach(m => { metaMap[m.refId] = m; });
+
+    const withMeta = merged.map(u => ({
+      ...u,
+      _status: metaMap[String(u._id)]?.status || "new",
+      _notes:  metaMap[String(u._id)]?.notes  || "",
+    }));
+
+    res.status(200).json({ message: "Fetched successfully", data: withMeta, status: true });
   } catch (err) {
     res.status(400);
     throw new Error(err.message);
   }
+});
+
+export const updateContactMeta = expressAsyncHandler(async (req, res) => {
+  const { refId, source, status, notes } = req.body;
+  if (!refId || !source) { res.status(400); throw new Error("refId and source required"); }
+  const meta = await ContactMeta.findOneAndUpdate(
+    { refId },
+    { refId, source, ...(status !== undefined && { status }), ...(notes !== undefined && { notes }), updatedAt: new Date() },
+    { upsert: true, new: true }
+  );
+  res.status(200).json({ status: true, data: meta });
 });
 
 export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
