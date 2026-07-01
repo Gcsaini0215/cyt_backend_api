@@ -163,8 +163,11 @@ export const getChatUsersWithLeads = expressAsyncHandler(async (req, res, next) 
 
     const withMeta = merged.map(u => ({
       ...u,
-      _status: metaMap[String(u._id)]?.status || "new",
-      _notes:  metaMap[String(u._id)]?.notes  || "",
+      _status:       metaMap[String(u._id)]?.status       || "new",
+      _notes:        metaMap[String(u._id)]?.notes        || "",
+      _favourite:    metaMap[String(u._id)]?.favourite    || false,
+      _tags:         metaMap[String(u._id)]?.tags         || [],
+      _lastEmailedAt:metaMap[String(u._id)]?.lastEmailedAt|| null,
     }));
 
     res.status(200).json({ message: "Fetched successfully", data: withMeta, status: true });
@@ -175,13 +178,15 @@ export const getChatUsersWithLeads = expressAsyncHandler(async (req, res, next) 
 });
 
 export const updateContactMeta = expressAsyncHandler(async (req, res) => {
-  const { refId, source, status, notes } = req.body;
+  const { refId, source, status, notes, favourite, tags, lastEmailedAt } = req.body;
   if (!refId || !source) { res.status(400); throw new Error("refId and source required"); }
-  const meta = await ContactMeta.findOneAndUpdate(
-    { refId },
-    { refId, source, ...(status !== undefined && { status }), ...(notes !== undefined && { notes }), updatedAt: new Date() },
-    { upsert: true, new: true }
-  );
+  const patch = { refId, source, updatedAt: new Date() };
+  if (status        !== undefined) patch.status         = status;
+  if (notes         !== undefined) patch.notes          = notes;
+  if (favourite     !== undefined) patch.favourite      = favourite;
+  if (tags          !== undefined) patch.tags           = tags;
+  if (lastEmailedAt !== undefined) patch.lastEmailedAt  = lastEmailedAt;
+  const meta = await ContactMeta.findOneAndUpdate({ refId }, patch, { upsert: true, new: true });
   res.status(200).json({ status: true, data: meta });
 });
 
@@ -279,6 +284,16 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
     }
 
     await EmailLog.create({ subject, message, sentCount, failCount, recipients: recipientsLog });
+
+    // stamp lastEmailedAt for sent recipients
+    const sentEmails = recipientsLog.filter(r=>r.status==="sent").map(r=>r.email);
+    const allContacts = await Promise.all([
+      Users.find({ email: { $in: sentEmails }, role: 0 }).select("_id email"),
+    ]);
+    const now = new Date();
+    for (const u of allContacts[0]) {
+      await ContactMeta.findOneAndUpdate({ refId: String(u._id) }, { lastEmailedAt: now, updatedAt: now }, { upsert: false });
+    }
 
     res.status(200).json({
       status: true,
