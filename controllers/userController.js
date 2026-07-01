@@ -166,9 +166,13 @@ export const getChatUsersWithLeads = expressAsyncHandler(async (req, res, next) 
 
 export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
   const { ids, leadEmails, subject, message, ctaText, ctaLink, nameEmoji = "💚" } = req.body;
-  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+  if (!Array.isArray(ids)) {
     res.status(400);
-    throw new Error("ids array is required");
+    throw new Error("ids must be an array");
+  }
+  if (ids.length === 0 && (!Array.isArray(leadEmails) || leadEmails.length === 0)) {
+    res.status(400);
+    throw new Error("No recipients — provide ids or leadEmails");
   }
   if (!subject?.trim() || !message?.trim()) {
     res.status(400);
