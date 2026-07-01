@@ -2,6 +2,7 @@ import expressAsyncHandler from "express-async-handler";
 import Users from "../models/Users.js";
 import UserInfo from "../models/UserInfo.js";
 import Lead from "../models/Lead.js";
+import EmailLog from "../models/EmailLog.js";
 import { sendMail } from "../helper/mailer.js";
 export const getProfile = expressAsyncHandler(async (req, res, next) => {
   const user_id = req.user._id;
@@ -219,20 +220,24 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
 </html>`;
 
     const tasks = [];
+    const recipientMeta = [];
 
     for (const u of users) {
       if (!u.email) continue;
       const firstName = u.name ? u.name.split(" ")[0] : "";
       const fromName = firstName ? `Hii, ${firstName} ${nameEmoji}` : `Hii, ${nameEmoji}`;
+      recipientMeta.push({ name: u.name || "", email: u.email });
       tasks.push(sendMail(u.email, subject, message, buildHtml(firstName || "there"), fromName));
     }
 
     if (Array.isArray(leadEmails)) {
       for (const lead of leadEmails) {
         const email = typeof lead === "string" ? lead : lead.email;
-        const firstName = typeof lead === "object" && lead.name ? lead.name.split(" ")[0] : "";
+        const name = typeof lead === "object" && lead.name ? lead.name : "";
+        const firstName = name ? name.split(" ")[0] : "";
         if (!email) continue;
         const fromName = firstName ? `Hii, ${firstName} ${nameEmoji}` : `Hii, ${nameEmoji}`;
+        recipientMeta.push({ name, email });
         tasks.push(sendMail(email, subject, message, buildHtml(firstName || "there"), fromName));
       }
     }
@@ -241,13 +246,19 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
     const BATCH = 10;
     let sentCount = 0;
     let failCount = 0;
+    const recipientsLog = [];
+
     for (let i = 0; i < tasks.length; i += BATCH) {
       const results = await Promise.allSettled(tasks.slice(i, i + BATCH));
-      for (const r of results) {
-        if (r.status === "fulfilled" && r.value === true) sentCount++;
-        else failCount++;
-      }
+      results.forEach((r, j) => {
+        const meta = recipientMeta[i + j];
+        const status = (r.status === "fulfilled" && r.value === true) ? "sent" : "failed";
+        if (status === "sent") sentCount++; else failCount++;
+        recipientsLog.push({ name: meta.name, email: meta.email, status });
+      });
     }
+
+    await EmailLog.create({ subject, message, sentCount, failCount, recipients: recipientsLog });
 
     res.status(200).json({
       status: true,
@@ -259,5 +270,17 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
     res.status(400);
     throw new Error(err.message);
   }
+});
+
+export const getEmailLogs = expressAsyncHandler(async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = 20;
+  const total = await EmailLog.countDocuments();
+  const logs = await EmailLog.find({})
+    .sort({ sentAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit)
+    .select("subject sentCount failCount sentAt recipients");
+  res.status(200).json({ status: true, data: logs, total, page, pages: Math.ceil(total / limit) });
 });
 
