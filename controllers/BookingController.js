@@ -416,7 +416,7 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       relation_with_client,
       notes
     });
-    await sendMail("Appointment.cyt@gmail.com", subjectAdmin, textAdmin, htmlAdmin);
+    await sendMail("hello@chooseyourtherapist.in", subjectAdmin, textAdmin, htmlAdmin);
 
 
     res.status(201).json({
@@ -600,7 +600,7 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
       relation_with_client,
       notes
     });
-    await sendMail("Appointment.cyt@gmail.com", subjectAdmin, textAdmin, htmlAdmin);
+    await sendMail("hello@chooseyourtherapist.in", subjectAdmin, textAdmin, htmlAdmin);
 
     res.status(200).json({
       status: true,
