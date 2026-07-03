@@ -20,8 +20,8 @@ const zohoTransporter = nodemailer.createTransport({
 
 export const sendMail = async (to, subject, text, html, fromName = "CYT Team") => {
   try {
-    const info = await gmailTransporter.sendMail({
-      from: `"${fromName}" <chooseyourtherapist@gmail.com>`,
+    const info = await zohoTransporter.sendMail({
+      from: `"${fromName}" <hello@chooseyourtherapist.in>`,
       to,
       subject,
       text,
@@ -87,8 +87,8 @@ export const sendReminderMail = async (to, clientName, customNote) => {
   const text = `Hi ${firstName},\n\nWe hope you're doing well! It's been a while since your last session and we wanted to check in.\n\n${customNote || ""}\n\nBook your next session: https://chooseyourtherapist.in\n\nWarm regards,\nChoose Your Therapist Team\n+91-8077757951 | hello@chooseyourtherapist.in`;
 
   try {
-    const info = await gmailTransporter.sendMail({
-      from: `"Choose Your Therapist" <chooseyourtherapist@gmail.com>`,
+    const info = await zohoTransporter.sendMail({
+      from: `"Choose Your Therapist" <hello@chooseyourtherapist.in>`,
       to,
       subject,
       text,
