@@ -99,6 +99,82 @@ export const therapistSessionMail = ({
 
 
 
+export const bookingRequestReceivedMail = ({
+    clientName,
+    therapistName,
+    service,
+    format,
+    whom,
+    cname,
+    relation_with_client,
+    notes,
+}) => {
+    return `
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Booking Request Received | CYT</title>
+    <style>
+      body { font-family: 'Segoe UI', Roboto, Arial, sans-serif; color: #1c1e21; line-height: 1.6; background-color: #f0f2f5; margin: 0; padding: 0; }
+      .wrapper { width: 100%; table-layout: fixed; background-color: #f0f2f5; padding-bottom: 40px; }
+      .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+      .header { background: linear-gradient(135deg, #2e7d32 0%, #43a047 100%); color: #ffffff; padding: 40px 20px; text-align: center; }
+      .logo-text { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 8px; }
+      .header-tagline { font-size: 14px; opacity: 0.9; text-transform: uppercase; letter-spacing: 2px; }
+      .content { padding: 32px 24px; }
+      .welcome-text { font-size: 18px; font-weight: 600; margin-bottom: 12px; color: #1c1e21; }
+      .status-banner { background-color: #fffbeb; border-left: 4px solid #d97706; padding: 12px 16px; margin-bottom: 24px; border-radius: 4px; color: #92400e; font-weight: 600; }
+      .info-card { background-color: #f7f8fa; border-radius: 12px; padding: 8px; margin-bottom: 24px; }
+      .info-item { padding: 12px 16px; border-bottom: 2px solid #2e7d32; width: 90%; margin: 0 auto; }
+      .info-item:last-child { border-bottom: none; }
+      .info-label { font-size: 11px; color: #65676b; font-weight: 700; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+      .info-value { font-size: 15px; color: #050505; font-weight: 500; }
+      .footer { text-align: center; padding: 32px 20px; color: #65676b; font-size: 13px; }
+      @media only screen and (max-width: 480px) { .container { width: 95% !important; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrapper">
+      <div class="container">
+        <div class="header">
+          <div class="logo-text">CYT</div>
+          <div class="header-tagline">Choose Your Therapist</div>
+        </div>
+        <div class="content">
+          <div class="status-banner">⏳ Booking Request Received — Payment Pending</div>
+          <p class="welcome-text">Dear ${clientName},</p>
+          <p>We've received your session request. Your booking will be confirmed once payment is completed.</p>
+
+          <div class="info-card" style="margin-top: 24px;">
+            <div class="info-item">
+              <div class="info-label">Therapist</div>
+              <div class="info-value">${therapistName}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Service / Format</div>
+              <div class="info-value">${service || "Counseling"} (${format || "Video Session"})</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Patient Name</div>
+              <div class="info-value">${cname || clientName}</div>
+            </div>
+          </div>
+
+          <p style="font-size:13px; color:#65676b;">You'll receive your Session PIN and full confirmation by email once payment is successful.</p>
+        </div>
+        <div class="footer">
+          <p><strong>Choose Your Therapist LLP</strong><br/>Professional Mental Health Support Platform</p>
+          <p>&copy; ${new Date().getFullYear()} CYT. All rights reserved.</p>
+        </div>
+      </div>
+    </div>
+  </body>
+  </html>
+  `;
+};
+
 export const bookingConfirmationMail = ({
     clientName,
     therapistName,

@@ -48,6 +48,10 @@ const bookingSchema = new Schema({
     type: String,
     default: "",
   },
+  guest_email_verified: {
+    type: Boolean,
+    default: false,
+  },
   otp: {
     type: Number,
     required: true
@@ -74,6 +78,11 @@ const bookingSchema = new Schema({
   status: {
     type: String,
     default: "New",
+  },
+  payment_status: {
+    type: String,
+    enum: ["Pending Payment", "Paid", "Payment Failed"],
+    default: "Pending Payment",
   },
 });
 

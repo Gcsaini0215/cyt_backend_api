@@ -20,7 +20,8 @@ const getRazorpayInstance = () => {
     key_secret: process.env.RAZORPAY_KEY_SECRET,
   });
 };
-import { adminText, bookingConfirmationMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
+import { adminText, bookingConfirmationMail, bookingRequestReceivedMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
+import { pushToUsers } from "./PushController.js";
 
 export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
   const validateSchema = Joi.object({
@@ -128,7 +129,8 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       notes,
       therapist,
       user_id,
-      is_logged_in
+      is_logged_in,
+      guest_email_verified,
     } = req.body;
 
 
@@ -138,7 +140,7 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       return next(new Error("Therapist Not Found."));
     }
 
-    const isExist = await Therapists.findById(therapist);
+    const isExist = await Therapists.findById(therapist).populate("user", "name");
 
     if (!isExist) {
       res.status(400);
@@ -210,13 +212,15 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         notes,
         amount,
         otp: generatedOtp,
+        guest_email_verified: !is_logged_in && !!guest_email_verified,
+        payment_status: "Pending Payment",
       }],
       { session }
     );
 
     const subject = "Booking Request Received — Choose Your Therapist";
-    const text = `Hi ${name || "there"}, your booking request has been received. Our team will contact you on WhatsApp within 24 hours to confirm your session.`;
-    const html = bookingConfirmationMail({
+    const text = `Hi ${name || "there"}, your booking request has been received. Your session will be confirmed once payment is completed.`;
+    const html = bookingRequestReceivedMail({
       clientName: name || email,
       therapistName: isExist?.user?.name || "your therapist",
       service,
@@ -225,7 +229,6 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       cname,
       relation_with_client,
       notes,
-      pin: booked[0]._id.toString().slice(-6).toUpperCase(),
     });
     await sendMail(email, subject, text, html);
 
@@ -346,6 +349,7 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       return next(new Error("Failed to save transaction."));
     }
     isBookingDetail.transaction = savedTransaction._id;
+    isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
 
     const therapistName = isBookingDetail.therapist.user.name;
@@ -379,7 +383,8 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       pin
 
     });
-    await sendMail(isBookingDetail.client.email, subjectClient, textClient, clientHtml);
+    const clientMailSent = await sendMail(isBookingDetail.client.email, subjectClient, textClient, clientHtml);
+    if (!clientMailSent) console.error(`[saveTransactionId] Client mail FAILED to ${isBookingDetail.client.email} for booking ${isBookingDetail._id}`);
 
     //Therapist Mail
     const subjectTherapist = `NEW SESSION: ${clientName} - ${service || 'General'} Session assigned to you | PIN: ${pin}`;
@@ -397,7 +402,18 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       relation_with_client,
       notes
     })
-    await sendMail(isBookingDetail.therapist.user.email, subjectTherapist, textTherapist, therapistHtml);
+    if (!isBookingDetail.therapist?.user?.email) {
+      console.error(`[saveTransactionId] Therapist has no email on file — booking ${isBookingDetail._id}, therapist ${isBookingDetail.therapist?._id}`);
+    } else {
+      const therapistMailSent = await sendMail(isBookingDetail.therapist.user.email, subjectTherapist, textTherapist, therapistHtml);
+      if (!therapistMailSent) console.error(`[saveTransactionId] Therapist mail FAILED to ${isBookingDetail.therapist.user.email} for booking ${isBookingDetail._id}`);
+    }
+    await pushToUsers(
+      { userId: isBookingDetail.therapist.user._id },
+      "New Session Booked",
+      `${clientName} booked a ${service || 'General'} session with you.`,
+      "/appointments"
+    );
 
     //Admin Mail
     const subjectAdmin = `CONFIRMED BOOKING: ${clientName} booked ${isBookingDetail.therapist.user.name} | ₹${paymentAmount}`;
@@ -493,6 +509,7 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
 
   if (razorpay_signature !== expectedSign) {
     console.error("Payment verification failed. Signatures do not match.");
+    await Booking.findByIdAndUpdate(booking_id, { payment_status: "Payment Failed" });
     res.status(400);
     return next(new Error("Invalid payment signature"));
   }
@@ -530,6 +547,7 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     }
 
     isBookingDetail.transaction = savedTransaction._id;
+    isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
 
     // Send emails (Reuse the logic from saveTransactionId)
@@ -563,7 +581,8 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
       notes,
       pin
     });
-    await sendMail(isBookingDetail.client.email, subjectClient, textClient, clientHtml);
+    const clientMailSent = await sendMail(isBookingDetail.client.email, subjectClient, textClient, clientHtml);
+    if (!clientMailSent) console.error(`[verifyRazorpayPayment] Client mail FAILED to ${isBookingDetail.client.email} for booking ${isBookingDetail._id}`);
 
     //Therapist Mail
     const subjectTherapist = `NEW SESSION: ${clientName} - ${service || 'General'} Session assigned to you | PIN: ${pin}`;
@@ -581,7 +600,18 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
       relation_with_client,
       notes
     });
-    await sendMail(isBookingDetail.therapist.user.email, subjectTherapist, textTherapist, therapistHtml);
+    if (!isBookingDetail.therapist?.user?.email) {
+      console.error(`[verifyRazorpayPayment] Therapist has no email on file — booking ${isBookingDetail._id}, therapist ${isBookingDetail.therapist?._id}`);
+    } else {
+      const therapistMailSent = await sendMail(isBookingDetail.therapist.user.email, subjectTherapist, textTherapist, therapistHtml);
+      if (!therapistMailSent) console.error(`[verifyRazorpayPayment] Therapist mail FAILED to ${isBookingDetail.therapist.user.email} for booking ${isBookingDetail._id}`);
+    }
+    await pushToUsers(
+      { userId: isBookingDetail.therapist.user._id },
+      "New Session Booked",
+      `${clientName} booked a ${service || 'General'} session with you.`,
+      "/appointments"
+    );
 
     //Admin Mail
     const subjectAdmin = `CONFIRMED BOOKING: ${clientName} booked ${isBookingDetail.therapist.user.name} | ₹${paymentAmount}`;

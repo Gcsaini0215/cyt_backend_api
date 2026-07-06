@@ -18,7 +18,7 @@ const zohoTransporter = nodemailer.createTransport({
   },
 });
 
-export const sendMail = async (to, subject, text, html, fromName = "CYT Team") => {
+export const sendMail = async (to, subject, text, html, fromName = "CYT Team", attachments = []) => {
   try {
     const info = await zohoTransporter.sendMail({
       from: `"${fromName}" <hello@chooseyourtherapist.in>`,
@@ -26,6 +26,7 @@ export const sendMail = async (to, subject, text, html, fromName = "CYT Team") =
       subject,
       text,
       html,
+      attachments,
     });
     console.log("Email sent: %s", info.messageId);
     return true;

@@ -13,9 +13,14 @@ import {
   verifyRazorpayPayment,
 } from "../controllers/BookingController.js";
 import { isAdmin, isAuth, isAuthCommon, isTherapist } from "../middlewares/authMiddleware.js";
+import { sendGuestEmailOtp, verifyGuestEmailOtp } from "../controllers/GuestOtpController.js";
 const router = Router();
 
 router.post("/book-therapist", bookTherapist);
+
+router.post("/send-guest-email-otp", sendGuestEmailOtp);
+
+router.post("/verify-guest-email-otp", verifyGuestEmailOtp);
 
 router.get("/get-payment/:id", generatePaymentQR);
 

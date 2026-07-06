@@ -31,8 +31,13 @@ export const subscribe = expressAsyncHandler(async (req, res) => {
 
 export const sendNotification = expressAsyncHandler(async (req, res) => {
     const { title, body, url, userId } = req.body;
-    const payload = JSON.stringify({ title, body, url: url || '/' });
     let query = {}; if (userId) query.userId = userId;
+    await pushToUsers(query, title, body, url);
+    res.status(200).json({ message: "Notifications sent successfully" });
+});
+
+export const pushToUsers = async (query, title, body, url) => {
+    const payload = JSON.stringify({ title, body, url: url || '/' });
     const subscriptions = await PushSubscription.find(query);
     const notifications = subscriptions.map(sub => {
         return webpush.sendNotification(sub.subscription, payload).catch(err => {
@@ -41,5 +46,4 @@ export const sendNotification = expressAsyncHandler(async (req, res) => {
         });
     });
     await Promise.all(notifications);
-    res.status(200).json({ message: "Notifications sent successfully" });
-});
+};
