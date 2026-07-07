@@ -20,7 +20,7 @@ const getRazorpayInstance = () => {
     key_secret: process.env.RAZORPAY_KEY_SECRET,
   });
 };
-import { adminText, bookingConfirmationMail, bookingRequestReceivedMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
+import { adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
 import { pushToUsers } from "./PushController.js";
 
 export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
@@ -850,20 +850,66 @@ export const checkRazorpayStatus = expressAsyncHandler(async (req, res, next) =>
   }
 });
 
+const notifyBookingRemoved = async (booking, action) => {
+  const populated = await Booking.findById(booking._id)
+    .populate("client", "name email")
+    .populate({ path: "therapist", select: "user", populate: { path: "user", select: "name email" } });
+  if (!populated) return;
+
+  const therapistName = populated.therapist?.user?.name || "your therapist";
+  const clientName = populated.client?.name || "the client";
+
+  if (populated.client?.email) {
+    const html = bookingCancelledMail({
+      recipientName: clientName,
+      otherPartyName: therapistName,
+      service: populated.service,
+      format: populated.format,
+      booking_date: populated.booking_date,
+      action,
+    });
+    const sent = await sendMail(populated.client.email, `Your session has been ${action} — Choose Your Therapist`, "", html, "Choose Your Therapist");
+    if (!sent) console.error(`[${action}Booking] Client mail FAILED to ${populated.client.email} for booking ${populated._id}`);
+  }
+
+  if (populated.therapist?.user?.email) {
+    const html = bookingCancelledMail({
+      recipientName: therapistName,
+      otherPartyName: clientName,
+      service: populated.service,
+      format: populated.format,
+      booking_date: populated.booking_date,
+      action,
+    });
+    const sent = await sendMail(populated.therapist.user.email, `A session has been ${action} — Choose Your Therapist`, "", html, "Choose Your Therapist");
+    if (!sent) console.error(`[${action}Booking] Therapist mail FAILED to ${populated.therapist.user.email} for booking ${populated._id}`);
+  }
+};
+
+export const cancelBooking = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const booking = await Booking.findById(id);
+    if (!booking) return res.status(404).json({ status: false, message: "Booking not found." });
+
+    booking.status = SESSION_STATUS.CANCELED;
+    await booking.save();
+
+    await notifyBookingRemoved(booking, "cancelled");
+
+    res.status(200).json({ status: true, message: "Booking cancelled successfully." });
+  } catch (err) {
+    return next(new Error(err.message));
+  }
+});
+
 export const deleteBooking = expressAsyncHandler(async (req, res, next) => {
   try {
     const { id } = req.params;
     const booking = await Booking.findById(id);
     if (!booking) return res.status(404).json({ status: false, message: "Booking not found." });
 
-    // Therapist can only delete their own bookings; admin can delete any
-    if (req.user.role === 1) {
-      const therapistProfile = await Therapists.findOne({ user: req.user._id }).select("_id");
-      if (!therapistProfile || booking.therapist.toString() !== therapistProfile._id.toString()) {
-        return res.status(403).json({ status: false, message: "Not authorized to delete this booking." });
-      }
-    }
-
+    await notifyBookingRemoved(booking, "deleted");
     await Booking.findByIdAndDelete(id);
     res.status(200).json({ status: true, message: "Booking deleted successfully." });
   } catch (err) {

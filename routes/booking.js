@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   bookTherapist,
+  cancelBooking,
   checkRazorpayStatus,
   createRazorpayOrder,
   deleteBooking,
@@ -41,5 +42,7 @@ router.post("/end-session",isTherapist, EndSession);
 router.get("/check-razorpay-status", checkRazorpayStatus);
 
 router.delete("/delete-booking/:id", isAuthCommon, deleteBooking);
+
+router.post("/cancel-booking/:id", isAdmin, cancelBooking);
 
 export default router;
