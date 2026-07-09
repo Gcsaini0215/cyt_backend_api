@@ -5,7 +5,7 @@ const emailLogSchema = new mongoose.Schema({
   message: { type: String, required: true },
   sentCount: { type: Number, default: 0 },
   failCount: { type: Number, default: 0 },
-  recipients: [{ name: String, email: String, status: { type: String, enum: ["sent", "failed"], default: "sent" } }],
+  recipients: [{ name: String, email: String, status: { type: String, enum: ["sent", "failed"], default: "sent" }, error: String }],
   sentAt: { type: Date, default: Date.now },
 });
 

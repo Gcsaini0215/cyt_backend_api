@@ -36,6 +36,25 @@ export const sendMail = async (to, subject, text, html, fromName = "CYT Team", a
   }
 };
 
+// Same as sendMail but resolves { success, error } so bulk senders can log failure reasons per recipient.
+export const sendMailWithReason = async (to, subject, text, html, fromName = "CYT Team", attachments = []) => {
+  try {
+    const info = await zohoTransporter.sendMail({
+      from: `"${fromName}" <hello@chooseyourtherapist.in>`,
+      to,
+      subject,
+      text,
+      html,
+      attachments,
+    });
+    console.log("Email sent: %s", info.messageId);
+    return { success: true };
+  } catch (error) {
+    console.error("sendMail error:", error.message, error.code, error.response);
+    return { success: false, error: error.message };
+  }
+};
+
 export const sendReminderMail = async (to, clientName, customNote) => {
   const firstName = clientName ? clientName.split(" ")[0] : "there";
   const subject = `A gentle check-in from Choose Your Therapist 💚`;

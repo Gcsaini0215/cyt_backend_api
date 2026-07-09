@@ -4,7 +4,7 @@ import UserInfo from "../models/UserInfo.js";
 import Lead from "../models/Lead.js";
 import EmailLog from "../models/EmailLog.js";
 import ContactMeta from "../models/ContactMeta.js";
-import { sendMail } from "../helper/mailer.js";
+import { sendMail, sendMailWithReason } from "../helper/mailer.js";
 export const getProfile = expressAsyncHandler(async (req, res, next) => {
   const user_id = req.user._id;
   try {
@@ -244,6 +244,7 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
 </body>
 </html>`;
 
+    // build lazy send functions (not invoked yet) so sending is actually throttled by the batch loop below
     const tasks = [];
     const recipientMeta = [];
 
@@ -252,7 +253,7 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
       const firstName = u.name ? u.name.split(" ")[0] : "";
       const fromName = firstName ? `Hii, ${firstName} ${nameEmoji}` : `Hii, ${nameEmoji}`;
       recipientMeta.push({ name: u.name || "", email: u.email });
-      tasks.push(sendMail(u.email, subject, message, buildHtml(firstName || "there"), fromName));
+      tasks.push(() => sendMailWithReason(u.email, subject, message, buildHtml(firstName || "there"), fromName));
     }
 
     if (Array.isArray(leadEmails)) {
@@ -263,24 +264,29 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
         if (!email) continue;
         const fromName = firstName ? `Hii, ${firstName} ${nameEmoji}` : `Hii, ${nameEmoji}`;
         recipientMeta.push({ name, email });
-        tasks.push(sendMail(email, subject, message, buildHtml(firstName || "there"), fromName));
+        tasks.push(() => sendMailWithReason(email, subject, message, buildHtml(firstName || "there"), fromName));
       }
     }
 
-    // send in parallel batches of 10
+    // send in batches with a cooldown between batches to stay under the SMTP provider's rate limit
     const BATCH = 10;
+    const BATCH_DELAY_MS = 3000;
     let sentCount = 0;
     let failCount = 0;
     const recipientsLog = [];
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
     for (let i = 0; i < tasks.length; i += BATCH) {
-      const results = await Promise.allSettled(tasks.slice(i, i + BATCH));
+      const batch = tasks.slice(i, i + BATCH);
+      const results = await Promise.allSettled(batch.map(task => task()));
       results.forEach((r, j) => {
         const meta = recipientMeta[i + j];
-        const status = (r.status === "fulfilled" && r.value === true) ? "sent" : "failed";
-        if (status === "sent") sentCount++; else failCount++;
-        recipientsLog.push({ name: meta.name, email: meta.email, status });
+        const success = r.status === "fulfilled" && r.value?.success === true;
+        const error = r.status === "fulfilled" ? r.value?.error : r.reason?.message;
+        if (success) sentCount++; else failCount++;
+        recipientsLog.push({ name: meta.name, email: meta.email, status: success ? "sent" : "failed", ...(error ? { error } : {}) });
       });
+      if (i + BATCH < tasks.length) await sleep(BATCH_DELAY_MS);
     }
 
     await EmailLog.create({ subject, message, sentCount, failCount, recipients: recipientsLog });
