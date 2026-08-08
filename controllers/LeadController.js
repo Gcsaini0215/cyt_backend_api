@@ -1,9 +1,12 @@
 import expressAsyncHandler from "express-async-handler";
 import Joi from "joi";
 import mongoose from "mongoose";
+import crypto from "crypto";
 import Lead from "../models/Lead.js";
 import { leadNotificationEmail } from "../services/mailTemplates.js";
 import { sendMail } from "../helper/mailer.js";
+
+const CONSULT_AMOUNT_RUPEES = 99;
 export const saveLead = expressAsyncHandler(async (req, res, next) => {
   const validateSchema = Joi.object({
     name: Joi.string().min(2).required().messages({
@@ -109,6 +112,88 @@ export const getLeads = expressAsyncHandler(async (req, res, next) => {
     });
 
     return res.status(200).json(processedLeads);
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+export const verifyConsultPayment = expressAsyncHandler(async (req, res, next) => {
+  const {
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
+    name,
+    phone,
+    email,
+    concern,
+    source,
+  } = req.body;
+
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    res.status(400);
+    return next(new Error("Missing payment verification details"));
+  }
+
+  const validateSchema = Joi.object({
+    name: Joi.string().min(2).required(),
+    phone: Joi.string().pattern(/^[0-9]{10}$/).required().messages({
+      "string.pattern.base": "Phone number must be exactly 10 digits",
+    }),
+    email: Joi.string().email().allow("", null).optional(),
+  }).unknown(true);
+
+  const { error } = validateSchema.validate(req.body);
+  if (error) {
+    res.status(400);
+    return next(new Error(error));
+  }
+
+  const sign = razorpay_order_id + "|" + razorpay_payment_id;
+  const expectedSign = crypto
+    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+    .update(sign.toString())
+    .digest("hex");
+
+  if (razorpay_signature !== expectedSign) {
+    res.status(400);
+    return next(new Error("Invalid payment signature"));
+  }
+
+  try {
+    const finalSource = source && source !== "Not provided" ? source : "15-Min Paid Consultation";
+
+    const lead = await Lead.create({
+      name,
+      phone,
+      email,
+      concern: concern || "15-Minute Paid Consultation",
+      source: finalSource,
+      message: "Paid consultation booking (₹" + CONSULT_AMOUNT_RUPEES + ")",
+      data: {
+        ...req.body,
+        amount: CONSULT_AMOUNT_RUPEES,
+        payment_status: "Paid",
+        razorpay_order_id,
+        razorpay_payment_id,
+      },
+    });
+
+    const sendMailid = "chooseyourtherapist@gmail.com";
+    const subject = `New Paid Lead: ${name} - 15-Min Consultation (₹${CONSULT_AMOUNT_RUPEES})`;
+    const text = `A new paid consultation was booked: ${name}. Phone: ${phone}. Payment ID: ${razorpay_payment_id}`;
+
+    try {
+      const html = leadNotificationEmail({ ...req.body, name, phone, email, concern, source: finalSource });
+      await sendMail(sendMailid, subject, text, html);
+    } catch (mailErr) {
+      console.error("Consult payment notification email failed (non-fatal):", mailErr.message);
+    }
+
+    return res.status(201).json({
+      status: true,
+      message: "Payment verified and consultation booked successfully.",
+      data: { id: lead._id },
+    });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
