@@ -117,6 +117,15 @@ export const getLeads = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
+export const getProbonoLeads = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const leads = await Lead.find({ source: "Probono Therapist Page" }).sort({ created_at: -1 });
+    return res.status(200).json({ status: true, data: leads });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
 export const verifyConsultPayment = expressAsyncHandler(async (req, res, next) => {
   const {
     razorpay_order_id,

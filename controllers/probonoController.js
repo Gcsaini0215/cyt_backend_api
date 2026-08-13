@@ -25,10 +25,16 @@ export const getAllProbonoInterns = expressAsyncHandler(async (req, res) => {
 
 /* POST /api/probono-interns (admin) */
 export const createProbonoIntern = expressAsyncHandler(async (req, res) => {
-  const { name, email, intro, bio, concerns, rating, requestsSent, connected } = req.body;
+  const { name, email, intro, bio, concerns, availableDays, roleLabel, rating, requestsSent, connected } = req.body;
   if (!name?.trim()) {
     res.status(400);
     throw new Error("Name is required");
+  }
+
+  const parsedDays = availableDays ? JSON.parse(availableDays) : [];
+  if (!parsedDays.length) {
+    res.status(400);
+    throw new Error("Please select at least one available day");
   }
 
   let slug = slugify(name);
@@ -45,6 +51,8 @@ export const createProbonoIntern = expressAsyncHandler(async (req, res) => {
     intro: intro || "",
     bio: bio || "",
     concerns: concerns ? JSON.parse(concerns) : [],
+    availableDays: parsedDays,
+    roleLabel: roleLabel?.trim() || "Trainee Psychologist",
     rating: rating ? Number(rating) : 5,
     requestsSent: requestsSent ? Number(requestsSent) : 0,
     connected: connected ? Number(connected) : 0,
@@ -61,7 +69,7 @@ export const updateProbonoIntern = expressAsyncHandler(async (req, res) => {
     throw new Error("Intern not found");
   }
 
-  const { name, email, intro, bio, concerns, rating, requestsSent, connected, isActive } = req.body;
+  const { name, email, intro, bio, concerns, availableDays, roleLabel, rating, requestsSent, connected, isActive } = req.body;
 
   if (name?.trim() && name.trim() !== intern.name) {
     intern.name = name.trim();
@@ -76,6 +84,15 @@ export const updateProbonoIntern = expressAsyncHandler(async (req, res) => {
   if (intro !== undefined) intern.intro = intro;
   if (bio !== undefined) intern.bio = bio;
   if (concerns !== undefined) intern.concerns = JSON.parse(concerns);
+  if (availableDays !== undefined) {
+    const parsedDays = JSON.parse(availableDays);
+    if (!parsedDays.length) {
+      res.status(400);
+      throw new Error("Please select at least one available day");
+    }
+    intern.availableDays = parsedDays;
+  }
+  if (roleLabel !== undefined) intern.roleLabel = roleLabel.trim() || "Trainee Psychologist";
   if (rating !== undefined) intern.rating = Number(rating);
   if (requestsSent !== undefined) intern.requestsSent = Number(requestsSent);
   if (connected !== undefined) intern.connected = Number(connected);

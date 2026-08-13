@@ -10,6 +10,8 @@ const ProbonoInternSchema = new Schema(
     intro: { type: String, default: "" },
     bio: { type: String, default: "" },
     concerns: { type: [String], default: [] },
+    availableDays: { type: [String], default: [] },
+    roleLabel: { type: String, default: "Trainee Psychologist" },
     rating: { type: Number, default: 5 },
     requestsSent: { type: Number, default: 0 },
     connected: { type: Number, default: 0 },
