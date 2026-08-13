@@ -1,5 +1,6 @@
 import expressAsyncHandler from "express-async-handler";
 import ProbonoIntern from "../models/ProbonoIntern.js";
+import ProbonoReview from "../models/ProbonoReview.js";
 
 const BASE_URL = process.env.BASE_URL || "https://api.chooseyourtherapist.in";
 
@@ -105,4 +106,83 @@ export const toggleProbonoIntern = expressAsyncHandler(async (req, res) => {
   intern.isActive = !intern.isActive;
   await intern.save();
   res.json({ status: true, data: intern, message: `Intern ${intern.isActive ? "activated" : "deactivated"}` });
+});
+
+/* PATCH /api/probono-interns/:id/request-sent — public, rate-limited.
+   Called when a visitor submits the "Connect Now" lead form for an intern. */
+export const incrementRequestSent = expressAsyncHandler(async (req, res) => {
+  const intern = await ProbonoIntern.findByIdAndUpdate(
+    req.params.id,
+    { $inc: { requestsSent: 1 } },
+    { new: true }
+  );
+  if (!intern) {
+    res.status(404);
+    throw new Error("Intern not found");
+  }
+  res.json({ status: true, data: { requestsSent: intern.requestsSent } });
+});
+
+/* POST /api/probono-interns/:id/review — public, rate-limited */
+export const saveProbonoReview = expressAsyncHandler(async (req, res, next) => {
+  const { name, email, rating, description } = req.body;
+
+  if (!name || !email || !rating || !description) {
+    res.status(400);
+    return next(new Error("Please provide all required fields"));
+  }
+
+  const intern = await ProbonoIntern.findById(req.params.id);
+  if (!intern) {
+    res.status(404);
+    throw new Error("Intern not found");
+  }
+
+  const review = await ProbonoReview.create({
+    probono_intern_id: intern._id,
+    name,
+    email,
+    rating,
+    description,
+  });
+
+  // Recompute the intern's overall star rating as the average of all their reviews,
+  // so the stars shown on the listing/detail cards reflect real feedback.
+  const allReviews = await ProbonoReview.find({ probono_intern_id: intern._id });
+  const avgRating = allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length;
+  intern.rating = Math.round(avgRating * 10) / 10;
+  await intern.save();
+
+  res.status(201).json({ status: true, message: "Review submitted successfully.", data: review, rating: intern.rating });
+});
+
+/* GET /api/probono-interns/:id/reviews — public */
+export const getProbonoReviews = expressAsyncHandler(async (req, res) => {
+  const reviews = await ProbonoReview.find({ probono_intern_id: req.params.id }).sort({ createdAt: -1 });
+  res.json({ status: true, data: reviews });
+});
+
+/* GET /api/probono-reviews (admin) — all reviews across all interns, for the admin panel */
+export const getAllProbonoReviews = expressAsyncHandler(async (req, res) => {
+  const reviews = await ProbonoReview.find({})
+    .populate({ path: "probono_intern_id", select: "name slug photo" })
+    .sort({ createdAt: -1 });
+  res.json({ status: true, data: reviews });
+});
+
+/* DELETE /api/probono-reviews/:id (admin) */
+export const deleteProbonoReview = expressAsyncHandler(async (req, res, next) => {
+  const review = await ProbonoReview.findByIdAndDelete(req.params.id);
+  if (!review) {
+    res.status(404);
+    return next(new Error("Review not found"));
+  }
+
+  const remaining = await ProbonoReview.find({ probono_intern_id: review.probono_intern_id });
+  const newRating = remaining.length
+    ? Math.round((remaining.reduce((sum, r) => sum + r.rating, 0) / remaining.length) * 10) / 10
+    : 5;
+  await ProbonoIntern.findByIdAndUpdate(review.probono_intern_id, { rating: newRating });
+
+  res.json({ status: true, message: "Review deleted successfully" });
 });
