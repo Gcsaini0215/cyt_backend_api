@@ -157,6 +157,37 @@ export const checkTherapistEmail = expressAsyncHandler(async (req, res, next) =>
   res.status(200).json({ status: true, message: "Email is available" });
 });
 
+export const checkTherapistStatus = expressAsyncHandler(async (req, res, next) => {
+  const email = (req.body.email || req.query.email || "").toLowerCase().trim();
+  if (!email) {
+    res.status(400);
+    return next(new Error("Email is required"));
+  }
+
+  const user = await Users.findOne({ email, role: 1 });
+  if (!user) {
+    res.status(404);
+    return next(new Error("No therapist application found for this email"));
+  }
+
+  const therapist = await Therapists.findOne({ user: user._id });
+
+  let stage = "review";       // application submitted, awaiting admin review
+  if (user.otp && user.otp.length > 0) stage = "email_pending"; // OTP not yet verified
+  else if (user.is_verified === 1) stage = "approved";          // admin approved & live
+
+  res.status(200).json({
+    status: true,
+    data: {
+      name: user.name,
+      email: user.email,
+      appliedOn: user.createdAt,
+      stage,
+      profileType: therapist?.profile_type || null,
+    },
+  });
+});
+
 export const aproveTherapist = expressAsyncHandler(async (req, res, next) => {
   const userId = req.params.userId;
   if (!userId) {
