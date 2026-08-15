@@ -90,6 +90,9 @@ const TherapistSchema = new Schema(
     profile_code: { type: String, default: "" },
 
     resume: { type: String, default: null },
+    qualification_certificate: { type: String, default: null },
+    id_card: { type: String, default: null },
+    id_card_type: { type: String, default: null },
 
     is_mail_sent: {
       type: Number,

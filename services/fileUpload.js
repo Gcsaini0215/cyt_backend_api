@@ -12,11 +12,13 @@ const appRoot    = path.resolve(__dirname, "..");
 const imagesPath    = path.join(appRoot, "uploads/images");
 const resumesPath   = path.join(appRoot, "uploads/resumes");
 const resourcesPath = path.join(appRoot, "uploads/resources");
+const documentsPath = path.join(appRoot, "uploads/documents");
 
 // Ensure folders exist
 if (!fs.existsSync(imagesPath))    fs.mkdirSync(imagesPath,    { recursive: true });
 if (!fs.existsSync(resumesPath))   fs.mkdirSync(resumesPath,   { recursive: true });
 if (!fs.existsSync(resourcesPath)) fs.mkdirSync(resourcesPath, { recursive: true });
+if (!fs.existsSync(documentsPath)) fs.mkdirSync(documentsPath, { recursive: true });
 
 // Storage for image files
 const storage = multer.diskStorage({
@@ -97,6 +99,33 @@ export const multiUpload = multer({
       cb(new Error("Only images and PDFs are allowed!"), false);
     }
   },
+});
+
+// Storage for therapist verification documents (resume, qualification
+// certificate, ID card) — accepts PDF, DOC/DOCX, or scanned images
+const storageDocuments = multer.diskStorage({
+  destination: (req, file, cb) => { cb(null, documentsPath); },
+  filename:    (req, file, cb) => { cb(null, `${uuidv4()}_${file.originalname}`); },
+});
+
+const fileFilterDocuments = (req, file, cb) => {
+  const allowedTypes = [
+    "application/pdf",
+    "image/jpeg", "image/jpg", "image/png",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ];
+  if (!allowedTypes.includes(file.mimetype)) {
+    return cb(new Error("Only PDF, DOC, DOCX, JPG or PNG files are allowed!"), false);
+  }
+  cb(null, true);
+};
+
+// Exported multi-field document upload (5 MB per file)
+export const uploadTherapistDocuments = multer({
+  storage: storageDocuments,
+  fileFilter: fileFilterDocuments,
+  limits: { fileSize: 5 * 1024 * 1024 },
 });
 
 // Delete uploaded file

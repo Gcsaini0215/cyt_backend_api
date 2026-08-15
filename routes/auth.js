@@ -16,7 +16,7 @@ import {
   sendOtpToMail,
   verifyOtpAndResetPassword,
 } from "../controllers/AuthController.js";
-import { uploadFile } from "../services/fileUpload.js";
+import { uploadTherapistDocuments } from "../services/fileUpload.js";
 
 const router = Router();
 
@@ -41,7 +41,11 @@ router.post("/resend-therapist-otp", resendTherapistOtp);
 
 router.post(
   "/therapist-registeration",
-  uploadFile.single("file"),
+  uploadTherapistDocuments.fields([
+    { name: "resume", maxCount: 1 },
+    { name: "qualification_certificate", maxCount: 1 },
+    { name: "id_card", maxCount: 1 },
+  ]),
   therapistRegister
 );
 

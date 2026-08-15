@@ -13,9 +13,13 @@ import { generate6DigitOTP, generateProfileCode } from "../helper/generate.js";
 import { loginOtpEmail, otpVerificationEmail, registrationOtpEmail, therapistVerificationEmail } from "../services/mailTemplates.js";
 
 export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
-  if (!req.file) {
+  const resumeFile      = req.files?.resume?.[0];
+  const qualCertFile    = req.files?.qualification_certificate?.[0];
+  const idCardFile      = req.files?.id_card?.[0];
+
+  if (!resumeFile || !qualCertFile || !idCardFile) {
     res.status(400);
-    return next(new Error("No file uploaded"));
+    return next(new Error("Please upload your resume, qualification certificate, and ID card."));
   } else {
     const registerSchema = Joi.object({
       name: Joi.string().min(3).max(30).required(),
@@ -23,6 +27,7 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
       serve: Joi.string().required(),
       email: Joi.string().email().required(),
       mode: Joi.number().required(),
+      idCardType: Joi.string().required(),
       phone: Joi.number()
         .integer()
         .min(10 ** 9)
@@ -43,7 +48,7 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
         res.status(400);
         return next(new Error(error));
       }
-      const { phone, name, type, mode, serve } = req.body;
+      const { phone, name, type, mode, serve, idCardType } = req.body;
       const email = req.body.email.toLowerCase();
       const userExists = await Users.findOne({ email });
 
@@ -52,17 +57,9 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
         return next(new Error("This email is already registered with us"));
       }
 
-      if (!req.file || req.file == null) {
-        res.status(400);
-        return next(new Error("Please uplolad you resume."));
-      } else {
-        if (req.file.size > 500 * 1024) {
-          res.status(400);
-          return next(new Error("File size should be less than 500KB!"));
-        }
-      }
-
-      let url = req.file.filename;
+      const url = resumeFile.filename;
+      const qualificationCertificateUrl = qualCertFile.filename;
+      const idCardUrl = idCardFile.filename;
       const otp = generate6DigitOTP();
       const subject = "Therapist Registration – OTP Verification & Approval Process";
       const text = `Hello Thank you for registering.Best regards,CYT`;
@@ -80,7 +77,12 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
 
         await Therapists.findOneAndUpdate(
           { user: userExists._id },
-          { profile_type: type, mode, serve_type: serve, resume: url },
+          {
+            profile_type: type, mode, serve_type: serve, resume: url,
+            qualification_certificate: qualificationCertificateUrl,
+            id_card: idCardUrl,
+            id_card_type: idCardType,
+          },
           { upsert: true }
         );
 
@@ -107,6 +109,9 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
           mode,
           serve_type: serve,
           resume: url,
+          qualification_certificate: qualificationCertificateUrl,
+          id_card: idCardUrl,
+          id_card_type: idCardType,
           profile_code: generateProfileCode()
         }], { session });
 
