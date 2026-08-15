@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { isAuth, isTherapist } from "../middlewares/authMiddleware.js";
-import { getMessages, sendMessage, getUnreadCount, getConversations, getThreadAsTherapist, therapistSendMessage } from "../controllers/ChatController.js";
+import { getMessages, sendMessage, getUnreadCount, getConversations, getThreadAsTherapist, therapistSendMessage, deleteConversation } from "../controllers/ChatController.js";
 
 const router = Router();
 
@@ -13,5 +13,6 @@ router.get("/chat/unread-count",            isAuth,       getUnreadCount);
 router.get("/chat/therapist/conversations", isTherapist,  getConversations);
 router.get("/chat/therapist/messages",      isTherapist,  getThreadAsTherapist);
 router.post("/chat/therapist/send",         isTherapist,  therapistSendMessage);
+router.delete("/chat/therapist/conversation", isTherapist, deleteConversation);
 
 export default router;

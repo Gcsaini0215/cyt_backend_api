@@ -619,6 +619,36 @@ export const ShowToPage = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
+/* Self-service version of ShowToPage — lets a logged-in therapist toggle
+   their own public-listing visibility without needing admin rights. */
+export const ShowToPageSelf = expressAsyncHandler(async (req, res, next) => {
+  const user = req.user;
+  try {
+    const therapistProfile = await Therapists.findOne({ user: user._id });
+    if (!therapistProfile) {
+      res.status(404);
+      return next(new Error("Therapist profile not found"));
+    }
+
+    const show_to_page = !therapistProfile.show_to_page;
+
+    const updatedProfile = await Therapists.findByIdAndUpdate(
+      therapistProfile._id,
+      { show_to_page },
+      { new: true }
+    );
+
+    res.status(200).json({
+      message: "Visibility updated successfully",
+      data: updatedProfile,
+      status: true,
+    });
+  } catch (error) {
+    res.status(400);
+    return next(new Error(error));
+  }
+});
+
 
 
 export const SetPriority = expressAsyncHandler(async (req, res, next) => {

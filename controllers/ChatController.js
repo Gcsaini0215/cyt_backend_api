@@ -122,6 +122,20 @@ export const getThreadAsTherapist = async (req, res) => {
   }
 };
 
+/* DELETE /chat/therapist/conversation?userId=xxx — delete an entire thread */
+export const deleteConversation = async (req, res) => {
+  try {
+    const therapistId = req.user._id;
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ success: false, message: "userId required" });
+
+    await ChatMessage.deleteMany({ therapistId, userId });
+    res.json({ success: true, message: "Conversation deleted" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 /* POST /chat/therapist/send — therapist replies */
 export const therapistSendMessage = async (req, res) => {
   try {

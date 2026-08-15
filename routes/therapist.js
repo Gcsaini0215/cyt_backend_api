@@ -17,6 +17,7 @@ import {
   checkProfileSet,
   getDashboardData,
   ShowToPage,
+  ShowToPageSelf,
   SetPriority,
   saveReview,
   getReviews,
@@ -50,7 +51,9 @@ router.get("/get-availability-details", isTherapist, getAvailabilityDetails);
   
 router.get("/get-therapists",isAdmin, getTherapists);  
   
-router.get("/toggle-to-show-to-page/:therapistId",isAdmin, ShowToPage);  
+router.get("/toggle-to-show-to-page/:therapistId",isAdmin, ShowToPage);
+
+router.get("/toggle-my-visibility", isTherapist, ShowToPageSelf);
   
 router.post("/set-priority",isAdmin, SetPriority);  
   
