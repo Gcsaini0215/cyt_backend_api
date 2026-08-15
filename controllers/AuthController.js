@@ -175,10 +175,11 @@ export const checkTherapistStatus = expressAsyncHandler(async (req, res, next) =
 
   let stage = "review";       // application submitted, awaiting admin review
   if (user.otp && user.otp.length > 0) stage = "email_pending"; // OTP not yet verified
-  else if (user.is_verified === 1) stage = "approved";          // admin approved & live
+  else if (user.is_verified === 1) stage = "approved";          // admin approved
 
   const now = new Date();
   const hasActiveSubscription = !!(therapist?.subscription_expires_at && new Date(therapist.subscription_expires_at) > now);
+  const isLive = therapist?.show_to_page === 1;                 // actually visible on the public directory
 
   res.status(200).json({
     status: true,
@@ -188,6 +189,7 @@ export const checkTherapistStatus = expressAsyncHandler(async (req, res, next) =
       phone: user.phone,
       appliedOn: user.createdAt,
       stage,
+      isLive,
       profileType: therapist?.profile_type || null,
       mode: therapist?.mode || null,
       services: therapist?.serve_type || null,
@@ -248,6 +250,7 @@ export const verifyTherapistSubscriptionPayment = expressAsyncHandler(async (req
       subscription_started_at: startedAt,
       subscription_expires_at: expiresAt,
       subscription_transaction_id: razorpay_payment_id,
+      show_to_page: 1, // payment activates the public profile
     },
     { new: true, upsert: true }
   );
