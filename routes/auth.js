@@ -9,6 +9,7 @@ import {
   therapistRegister,
   checkTherapistEmail,
   checkTherapistStatus,
+  verifyTherapistSubscriptionPayment,
   resendTherapistOtp,
   verifyOtp,
   sendAproveMail,
@@ -39,6 +40,7 @@ router.post("/send-otp-to-mail", sendOtpToMail);
 
 router.post("/check-therapist-email", checkTherapistEmail);
 router.post("/check-therapist-status", leadRateLimit, checkTherapistStatus);
+router.post("/verify-therapist-subscription", leadRateLimit, verifyTherapistSubscriptionPayment);
 router.post("/resend-therapist-otp", resendTherapistOtp);
 
 router.post(

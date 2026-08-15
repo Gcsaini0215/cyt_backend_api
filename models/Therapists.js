@@ -94,6 +94,12 @@ const TherapistSchema = new Schema(
     id_card: { type: String, default: null },
     id_card_type: { type: String, default: null },
 
+    subscription_plan: { type: String, default: null },
+    subscription_amount: { type: Number, default: null },
+    subscription_started_at: { type: Date, default: null },
+    subscription_expires_at: { type: Date, default: null },
+    subscription_transaction_id: { type: String, default: null },
+
     is_mail_sent: {
       type: Number,
       default: 0,

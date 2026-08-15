@@ -1,6 +1,7 @@
 import expressAsyncHandler from "express-async-handler";
 import Joi from "joi";
 import mongoose from "mongoose";
+import crypto from "crypto";
 import passwordComplexity from "joi-password-complexity";
 import generateToken from "../config/generateToken.js";
 import Users from "../models/Users.js";
@@ -176,14 +177,89 @@ export const checkTherapistStatus = expressAsyncHandler(async (req, res, next) =
   if (user.otp && user.otp.length > 0) stage = "email_pending"; // OTP not yet verified
   else if (user.is_verified === 1) stage = "approved";          // admin approved & live
 
+  const now = new Date();
+  const hasActiveSubscription = !!(therapist?.subscription_expires_at && new Date(therapist.subscription_expires_at) > now);
+
   res.status(200).json({
     status: true,
     data: {
       name: user.name,
       email: user.email,
+      phone: user.phone,
       appliedOn: user.createdAt,
       stage,
       profileType: therapist?.profile_type || null,
+      mode: therapist?.mode || null,
+      services: therapist?.serve_type || null,
+      subscription: hasActiveSubscription ? {
+        plan: therapist.subscription_plan,
+        amount: therapist.subscription_amount,
+        startedAt: therapist.subscription_started_at,
+        expiresAt: therapist.subscription_expires_at,
+      } : null,
+    },
+  });
+});
+
+const PLAN_MONTHS = { "3_month": 3, "6_month": 6, "annual": 12 };
+const PLAN_AMOUNTS = { "3_month": 1999, "6_month": 4999, "annual": 9500 };
+
+export const verifyTherapistSubscriptionPayment = expressAsyncHandler(async (req, res, next) => {
+  const {
+    email, plan,
+    razorpay_order_id, razorpay_payment_id, razorpay_signature,
+  } = req.body;
+
+  if (!email || !plan || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    res.status(400);
+    return next(new Error("Missing required payment verification details"));
+  }
+  if (!PLAN_MONTHS[plan]) {
+    res.status(400);
+    return next(new Error("Invalid subscription plan"));
+  }
+
+  const sign = razorpay_order_id + "|" + razorpay_payment_id;
+  const expectedSign = crypto
+    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+    .update(sign.toString())
+    .digest("hex");
+
+  if (razorpay_signature !== expectedSign) {
+    res.status(400);
+    return next(new Error("Invalid payment signature"));
+  }
+
+  const user = await Users.findOne({ email: email.toLowerCase().trim(), role: 1 });
+  if (!user || user.is_verified !== 1) {
+    res.status(403);
+    return next(new Error("This email is not an approved therapist account"));
+  }
+
+  const startedAt = new Date();
+  const expiresAt = new Date(startedAt);
+  expiresAt.setMonth(expiresAt.getMonth() + PLAN_MONTHS[plan]);
+
+  const therapist = await Therapists.findOneAndUpdate(
+    { user: user._id },
+    {
+      subscription_plan: plan,
+      subscription_amount: PLAN_AMOUNTS[plan],
+      subscription_started_at: startedAt,
+      subscription_expires_at: expiresAt,
+      subscription_transaction_id: razorpay_payment_id,
+    },
+    { new: true, upsert: true }
+  );
+
+  res.status(200).json({
+    status: true,
+    message: "Subscription activated successfully",
+    data: {
+      plan,
+      amount: PLAN_AMOUNTS[plan],
+      startedAt,
+      expiresAt,
     },
   });
 });
