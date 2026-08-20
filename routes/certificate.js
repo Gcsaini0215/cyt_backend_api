@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { sendCertificateEmail } from "../controllers/CertificateController.js";
-import { isAdmin } from "../middlewares/authMiddleware.js";
+import { hasPermission } from "../middlewares/authMiddleware.js";
 
 const router = Router();
 
-router.post("/certificate/send-email", isAdmin, sendCertificateEmail);
+router.post("/certificate/send-email", hasPermission("certificates"), sendCertificateEmail);
 
 export default router;

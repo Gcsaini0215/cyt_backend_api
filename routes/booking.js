@@ -13,7 +13,7 @@ import {
   startSession,
   verifyRazorpayPayment,
 } from "../controllers/BookingController.js";
-import { isAdmin, isAuth, isAuthCommon, isTherapist } from "../middlewares/authMiddleware.js";
+import { isAuthCommon, isTherapist, hasPermission } from "../middlewares/authMiddleware.js";
 import { sendGuestEmailOtp, verifyGuestEmailOtp } from "../controllers/GuestOtpController.js";
 const router = Router();
 
@@ -27,7 +27,7 @@ router.get("/get-payment/:id", generatePaymentQR);
 
 router.get("/get-bookings", isAuthCommon, getBookings);
 
-router.get("/get-booking-admin", isAdmin, getBookingsForAdmin);
+router.get("/get-booking-admin", hasPermission(["bookings","bdm"]), getBookingsForAdmin);
 
 router.post("/save-payment", saveTransactionId);
 
@@ -43,6 +43,6 @@ router.get("/check-razorpay-status", checkRazorpayStatus);
 
 router.delete("/delete-booking/:id", isAuthCommon, deleteBooking);
 
-router.post("/cancel-booking/:id", isAdmin, cancelBooking);
+router.post("/cancel-booking/:id", hasPermission("bookings"), cancelBooking);
 
 export default router;

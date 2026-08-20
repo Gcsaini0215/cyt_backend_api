@@ -1,5 +1,5 @@
 import { Router } from "express";  
-import { isAdmin, isTherapist, isAuthCommon } from "../middlewares/authMiddleware.js";  
+import { hasPermission, isTherapist, isAuthCommon } from "../middlewares/authMiddleware.js";
   
 import {
   getTherapist,
@@ -49,13 +49,13 @@ router.post(
   
 router.get("/get-availability-details", isTherapist, getAvailabilityDetails);  
   
-router.get("/get-therapists",isAdmin, getTherapists);  
-  
-router.get("/toggle-to-show-to-page/:therapistId",isAdmin, ShowToPage);
+router.get("/get-therapists",hasPermission(["therapists","bdm"]), getTherapists);
+
+router.get("/toggle-to-show-to-page/:therapistId",hasPermission("therapists"), ShowToPage);
 
 router.get("/toggle-my-visibility", isTherapist, ShowToPageSelf);
-  
-router.post("/set-priority",isAdmin, SetPriority);  
+
+router.post("/set-priority",hasPermission("therapists"), SetPriority);
   
 router.get("/get-therapists-profile", getFilteredTherapists);  
   
@@ -71,11 +71,11 @@ router.get("/check-profile-set", isTherapist, checkProfileSet);
   
 router.post("/save-review", saveReview);  
   
-router.get("/get-reviews", isAdmin, getReviews);  
-  
-router.delete("/delete-review/:id", isAdmin, deleteReview);
+router.get("/get-reviews", hasPermission(["reviews","bdm"]), getReviews);
 
-router.delete("/delete-user", isAdmin, deleteUser);
+router.delete("/delete-review/:id", hasPermission("reviews"), deleteReview);
+
+router.delete("/delete-user", hasPermission(["therapists","clients"]), deleteUser);
 
 router.get("/get-my-reviews", isAuthCommon, getMyReviews);
 

@@ -1,5 +1,20 @@
 import expressAsyncHandler from "express-async-handler";
 import Admin from "../models/Admin.js";
+import Role from "../models/Role.js";
+
+export const getMyPermissions = expressAsyncHandler(async (req, res) => {
+  const admin = await Admin.findById(req.user._id).select("roleId");
+  if (!admin) {
+    res.status(404);
+    throw new Error("Admin not found");
+  }
+  if (!admin.roleId) {
+    // Super admin — unrestricted, no permissions list needed
+    return res.json({ status: true, permissions: null });
+  }
+  const role = await Role.findById(admin.roleId).select("permissions");
+  res.json({ status: true, permissions: role?.permissions || [] });
+});
 
 export const listAdmins = expressAsyncHandler(async (req, res) => {
   const admins = await Admin.find()

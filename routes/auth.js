@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { isAdmin, isAuth, isTherapist } from "../middlewares/authMiddleware.js";
+import { isSuperAdmin, hasPermission } from "../middlewares/authMiddleware.js";
 import { leadRateLimit } from "../middlewares/rateLimitMiddleware.js";
 import {
   aproveTherapist,
@@ -53,7 +53,7 @@ router.post(
   therapistRegister
 );
 
-router.get("/aprove-therapist/:userId",isAdmin, aproveTherapist);
+router.get("/aprove-therapist/:userId",hasPermission("therapists"), aproveTherapist);
 
 router.get("/send-aprove-mail/:userId", sendAproveMail); 
 
@@ -61,7 +61,7 @@ router.post("/login", leadRateLimit, login);
 
 router.post("/admin-login", adminLogin);
 
-router.post("/admin-register", isAdmin, adminRegister);
+router.post("/admin-register", isSuperAdmin, adminRegister);
 
 router.post("/send-forgot-password-otp", sendForgotPasswordOtp);
 

@@ -1,12 +1,12 @@
 import { Router } from "express";
 import { getIntakeClients, createIntakeClient, updateIntakeClient, deleteIntakeClient } from "../controllers/IntakeController.js";
-import { isAdmin } from "../middlewares/authMiddleware.js";
+import { hasPermission } from "../middlewares/authMiddleware.js";
 
 const router = Router();
 
-router.get("/intake-clients",     isAdmin, getIntakeClients);
-router.post("/intake-clients",    isAdmin, createIntakeClient);
-router.put("/intake-clients/:id", isAdmin, updateIntakeClient);
-router.delete("/intake-clients/:id", isAdmin, deleteIntakeClient);
+router.get("/intake-clients",     hasPermission("clients"), getIntakeClients);
+router.post("/intake-clients",    hasPermission("clients"), createIntakeClient);
+router.put("/intake-clients/:id", hasPermission("clients"), updateIntakeClient);
+router.delete("/intake-clients/:id", hasPermission("clients"), deleteIntakeClient);
 
 export default router;

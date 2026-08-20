@@ -133,7 +133,13 @@ export const isSuperAdmin = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
-export const hasPermission = (permKey) => expressAsyncHandler(async (req, res, next) => {
+/* permKeys: a single permission string, or an array of alternatives — access is
+   granted if the admin's role has ANY one of them (used where one page/action
+   is shared across domains, e.g. delete-user from both the Therapists and
+   Clients pages, or a rollup role like "bdm" that reads across leads/
+   therapists/reviews/bookings). */
+export const hasPermission = (permKeys) => expressAsyncHandler(async (req, res, next) => {
+  const required = Array.isArray(permKeys) ? permKeys : [permKeys];
   let token;
   if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
     try {
@@ -153,9 +159,9 @@ export const hasPermission = (permKey) => expressAsyncHandler(async (req, res, n
         return next();
       }
       const role = await Role.findById(admin.roleId).select("permissions");
-      if (!role || !role.permissions.includes(permKey)) {
+      if (!role || !required.some(k => role.permissions.includes(k))) {
         res.status(403);
-        throw new Error(`Access denied: missing permission '${permKey}'`);
+        throw new Error(`Access denied: missing permission '${required.join("' or '")}'`);
       }
       req.user = admin;
       next();

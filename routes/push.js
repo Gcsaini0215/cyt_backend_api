@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { subscribe, sendNotification } from "../controllers/PushController.js";
-import { isAdmin, isAuth } from "../middlewares/authMiddleware.js";
+import { hasPermission } from "../middlewares/authMiddleware.js";
 
 const router = Router();
 
@@ -8,6 +8,6 @@ const router = Router();
 router.post("/subscribe", subscribe);
 
 // Route to send notification (Admin only)
-router.post("/send-notification", isAdmin, sendNotification);
+router.post("/send-notification", hasPermission("notifications"), sendNotification);
 
 export default router;
