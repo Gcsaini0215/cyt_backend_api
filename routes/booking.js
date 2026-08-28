@@ -7,6 +7,7 @@ import {
   deleteBooking,
   EndSession,
   generatePaymentQR,
+  getBookedSlots,
   getBookings,
   getBookingsForAdmin,
   saveTransactionId,
@@ -24,6 +25,8 @@ router.post("/send-guest-email-otp", sendGuestEmailOtp);
 router.post("/verify-guest-email-otp", verifyGuestEmailOtp);
 
 router.get("/get-payment/:id", generatePaymentQR);
+
+router.get("/booked-slots/:therapistId", getBookedSlots);
 
 router.get("/get-bookings", isAuthCommon, getBookings);
 

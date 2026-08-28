@@ -20,6 +20,23 @@ const getRazorpayInstance = () => {
     key_secret: process.env.RAZORPAY_KEY_SECRET,
   });
 };
+
+// Human-readable appointment slot in IST, e.g. "Mon, 1 Sep 2026, 02:00 pm IST"
+const formatSlotIST = (d) => {
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return "To be confirmed";
+  return (
+    dt.toLocaleString("en-IN", {
+      weekday: "short", day: "numeric", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata",
+    }) + " IST"
+  );
+};
+
+const formatSessionMode = (t) =>
+  ({ video: "Video Call", audio: "Voice Call", "in-person": "In-Person" }[
+    String(t || "").toLowerCase()
+  ] || (t ? String(t) : "—"));
 import { adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
 import { pushToUsers } from "./PushController.js";
 
@@ -213,6 +230,26 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       }
     }
 
+    // Prevent double-booking the same therapist slot. A slot is "taken" if a
+    // paid booking exists for it, or a pending one was started in the last 20
+    // minutes (someone's mid-checkout). Abandoned pending carts free up.
+    const pendingCutoff = mongoose.Types.ObjectId.createFromTime(
+      Math.floor((Date.now() - 20 * 60 * 1000) / 1000)
+    );
+    const slotConflict = await Booking.findOne({
+      therapist,
+      booking_date: parsedBookingDate,
+      status: { $ne: "Cancelled" },
+      $or: [
+        { payment_status: "Paid" },
+        { payment_status: "Pending Payment", _id: { $gt: pendingCutoff } },
+      ],
+    }).session(session);
+    if (slotConflict) {
+      res.status(409);
+      return next(new Error("That time slot has just been taken. Please pick another slot."));
+    }
+
     const booked = await Booking.create(
       [{
         therapist,
@@ -234,13 +271,17 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       { session }
     );
 
+    const slotLabel = formatSlotIST(parsedBookingDate);
+    const modeLabel = formatSessionMode(session_type);
     const subject = "Booking Request Received — Choose Your Therapist";
-    const text = `Hi ${name || "there"}, your booking request has been received. Your session will be confirmed once payment is completed.`;
+    const text = `Hi ${name || "there"}, your booking request for ${slotLabel} has been received. Your session will be confirmed once payment is completed.`;
     const html = bookingRequestReceivedMail({
       clientName: name || email,
       therapistName: isExist?.user?.name || "your therapist",
       service,
       format,
+      sessionDateTime: slotLabel,
+      sessionMode: modeLabel,
       whom,
       cname,
       relation_with_client,
@@ -380,10 +421,12 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
     const cname = isBookingDetail.cname;
     const relation_with_client = isBookingDetail.relation_with_client;
     const notes = isBookingDetail.notes;
+    const sessionDateTime = formatSlotIST(isBookingDetail.booking_date);
+    const sessionMode = formatSessionMode(isBookingDetail.session_type);
 
 
     //Client Mail
-    const subjectClient = `Session Confirmed! Your appointment with ${isBookingDetail.therapist.user.name} is scheduled. | PIN: ${pin}`;
+    const subjectClient = `Session Confirmed! ${isBookingDetail.therapist.user.name} · ${sessionDateTime} | PIN: ${pin}`;
     const textClient = clientText(isBookingDetail, transactionId);
     const clientHtml = bookingConfirmationMail({
       clientName,
@@ -392,6 +435,8 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       transactionId: transactionId,
       service,
       format,
+      sessionDateTime,
+      sessionMode,
       whom,
       cname,
       relation_with_client,
@@ -403,7 +448,7 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
     if (!clientMailSent) console.error(`[saveTransactionId] Client mail FAILED to ${isBookingDetail.client.email} for booking ${isBookingDetail._id}`);
 
     //Therapist Mail
-    const subjectTherapist = `NEW SESSION: ${clientName} - ${service || 'General'} Session assigned to you | PIN: ${pin}`;
+    const subjectTherapist = `NEW SESSION: ${clientName} · ${sessionDateTime} · ${service || 'General'} | PIN: ${pin}`;
     const textTherapist = therapistText(isBookingDetail, transactionId);
     const therapistHtml = therapistSessionMail({
       therapistName,
@@ -413,6 +458,8 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       transactionId,
       service,
       format,
+      sessionDateTime,
+      sessionMode,
       whom,
       cname,
       relation_with_client,
@@ -443,6 +490,8 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       therapistId,
       service,
       format,
+      sessionDateTime,
+      sessionMode,
       whom,
       cname,
       relation_with_client,
@@ -580,9 +629,11 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     const relation_with_client = isBookingDetail.relation_with_client;
     const notes = isBookingDetail.notes;
     const transactionId = razorpay_payment_id;
+    const sessionDateTime = formatSlotIST(isBookingDetail.booking_date);
+    const sessionMode = formatSessionMode(isBookingDetail.session_type);
 
     //Client Mail
-    const subjectClient = `Session Confirmed! Your appointment with ${isBookingDetail.therapist.user.name} is scheduled. | PIN: ${pin}`;
+    const subjectClient = `Session Confirmed! ${isBookingDetail.therapist.user.name} · ${sessionDateTime} | PIN: ${pin}`;
     const textClient = clientText(isBookingDetail, transactionId);
     const clientHtml = bookingConfirmationMail({
       clientName,
@@ -591,6 +642,8 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
       transactionId: transactionId,
       service,
       format,
+      sessionDateTime,
+      sessionMode,
       whom,
       cname,
       relation_with_client,
@@ -601,7 +654,7 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     if (!clientMailSent) console.error(`[verifyRazorpayPayment] Client mail FAILED to ${isBookingDetail.client.email} for booking ${isBookingDetail._id}`);
 
     //Therapist Mail
-    const subjectTherapist = `NEW SESSION: ${clientName} - ${service || 'General'} Session assigned to you | PIN: ${pin}`;
+    const subjectTherapist = `NEW SESSION: ${clientName} · ${sessionDateTime} · ${service || 'General'} | PIN: ${pin}`;
     const textTherapist = therapistText(isBookingDetail, transactionId);
     const therapistHtml = therapistSessionMail({
       therapistName,
@@ -611,6 +664,8 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
       transactionId,
       service,
       format,
+      sessionDateTime,
+      sessionMode,
       whom,
       cname,
       relation_with_client,
@@ -641,6 +696,8 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
       therapistId,
       service,
       format,
+      sessionDateTime,
+      sessionMode,
       whom,
       cname,
       relation_with_client,
@@ -707,6 +764,38 @@ export const getBookings = expressAsyncHandler(async (req, res, next) => {
       status: true,
       message: "Fetched successfully.",
       data: result || [],
+    });
+  } catch (err) {
+    return next(new Error(err.message));
+  }
+});
+
+// Public: busy slots for a therapist so the booking calendar can grey them out.
+// Returns only ISO date-times (no client info). "Busy" = a paid booking, or a
+// pending one started in the last 20 minutes.
+export const getBookedSlots = expressAsyncHandler(async (req, res, next) => {
+  const { therapistId } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(therapistId)) {
+    return res.status(400).json({ status: false, message: "Invalid therapist id" });
+  }
+  try {
+    const pendingCutoff = mongoose.Types.ObjectId.createFromTime(
+      Math.floor((Date.now() - 20 * 60 * 1000) / 1000)
+    );
+    const rows = await Booking.find({
+      therapist: therapistId,
+      booking_date: { $gte: new Date() },
+      status: { $ne: "Cancelled" },
+      $or: [
+        { payment_status: "Paid" },
+        { payment_status: "Pending Payment", _id: { $gt: pendingCutoff } },
+      ],
+    })
+      .select("booking_date")
+      .lean();
+    return res.status(200).json({
+      status: true,
+      data: rows.map((r) => new Date(r.booking_date).toISOString()),
     });
   } catch (err) {
     return next(new Error(err.message));

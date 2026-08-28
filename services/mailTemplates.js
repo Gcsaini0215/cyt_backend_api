@@ -6,6 +6,8 @@ export const therapistSessionMail = ({
     transactionId,
     service,
     format,
+    sessionDateTime,
+    sessionMode,
     whom,
     cname,
     relation_with_client,
@@ -71,6 +73,11 @@ export const therapistSessionMail = ({
               <div class="info-value" style="text-transform: capitalize;">${format || "N/A"}</div>
             </div>
             <div class="info-item">
+              <div class="info-label">Session Date &amp; Time</div>
+              <div class="info-value">${sessionDateTime || "To be confirmed"}</div>
+            </div>
+            ${sessionMode ? `<div class="info-item"><div class="info-label">Mode</div><div class="info-value">${sessionMode}</div></div>` : ''}
+            <div class="info-item">
               <div class="info-label">Transaction ID</div>
               <div class="info-value">${transactionId}</div>
             </div>
@@ -104,6 +111,8 @@ export const bookingRequestReceivedMail = ({
     therapistName,
     service,
     format,
+    sessionDateTime,
+    sessionMode,
     whom,
     cname,
     relation_with_client,
@@ -157,6 +166,11 @@ export const bookingRequestReceivedMail = ({
               <div class="info-value">${service || "Counseling"} (${format || "Video Session"})</div>
             </div>
             <div class="info-item">
+              <div class="info-label">Session Date &amp; Time</div>
+              <div class="info-value">${sessionDateTime || "To be confirmed"}</div>
+            </div>
+            ${sessionMode ? `<div class="info-item"><div class="info-label">Mode</div><div class="info-value">${sessionMode}</div></div>` : ''}
+            <div class="info-item">
               <div class="info-label">Patient Name</div>
               <div class="info-value">${cname || clientName}</div>
             </div>
@@ -182,6 +196,8 @@ export const bookingConfirmationMail = ({
     transactionId,
     service,
     format,
+    sessionDateTime,
+    sessionMode,
     whom,
     cname,
     relation_with_client,
@@ -247,6 +263,11 @@ export const bookingConfirmationMail = ({
               <div class="info-value">${service || "Counseling"} (${format || "Video Session"})</div>
             </div>
             <div class="info-item">
+              <div class="info-label">Session Date &amp; Time</div>
+              <div class="info-value">${sessionDateTime || "To be confirmed"}</div>
+            </div>
+            ${sessionMode ? `<div class="info-item"><div class="info-label">Mode</div><div class="info-value">${sessionMode}</div></div>` : ''}
+            <div class="info-item">
               <div class="info-label">Patient Name</div>
               <div class="info-value">${cname || clientName} ${clientAge ? '(' + clientAge + 'y)' : ''}</div>
             </div>
@@ -300,6 +321,8 @@ export const newSessionAdminMail = ({
     therapistId,
     service,
     format,
+    sessionDateTime,
+    sessionMode,
     whom,
     cname,
     relation_with_client,
@@ -351,6 +374,8 @@ export const newSessionAdminMail = ({
             <tr><td class="label">Patient (Age)</td><td class="value">${cname || clientName} ${clientAge ? '('+clientAge+')' : ''}</td></tr>
             <tr><td class="label">Service</td><td class="value">${service || "N/A"}</td></tr>
             <tr><td class="label">Format</td><td class="value">${format || "N/A"}</td></tr>
+            <tr><td class="label">Date &amp; Time</td><td class="value">${sessionDateTime || "To be confirmed"}</td></tr>
+            <tr><td class="label">Mode</td><td class="value">${sessionMode || "—"}</td></tr>
             <tr><td class="label">Relation</td><td class="value">${relation_with_client || "Self"}</td></tr>
             <tr><td class="label">Amount</td><td class="value"><strong>₹${paymentAmount}</strong></td></tr>
             <tr><td class="label">Transaction</td><td class="value"><code>${transactionId}</code></td></tr>
@@ -763,12 +788,21 @@ export const bookingCancelledMail = ({ recipientName, otherPartyName, service, f
 
 // --- PLAIN TEXT HELPERS ---
 
-export const clientText = (booking, txId) => 
-  `Session Confirmed! Transaction: ${txId}. Your unique session PIN is ${booking.otp}. Please share this with your therapist at the start of the session.`;
+const slotText = (d) => {
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return "to be confirmed";
+  return dt.toLocaleString("en-IN", {
+    weekday: "short", day: "numeric", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata",
+  }) + " IST";
+};
 
-export const therapistText = (booking, txId) => 
-  `NEW SESSION assigned. Transaction: ${txId}. Client: ${booking.client.name}. Please log in to your dashboard for details.`;
+export const clientText = (booking, txId) =>
+  `Session Confirmed for ${slotText(booking.booking_date)}. Transaction: ${txId}. Your unique session PIN is ${booking.otp}. Please share this with your therapist at the start of the session.`;
 
-export const adminText = (booking, txId) => 
-  `CONFIRMED BOOKING: ${booking.client.name} with ${booking.therapist.user.name}. Amount: ₹${booking.amount}. Transaction: ${txId}.`;
+export const therapistText = (booking, txId) =>
+  `NEW SESSION assigned for ${slotText(booking.booking_date)}. Client: ${booking.client.name}. Transaction: ${txId}. Please log in to your dashboard for details.`;
+
+export const adminText = (booking, txId) =>
+  `CONFIRMED BOOKING: ${booking.client.name} with ${booking.therapist.user.name} on ${slotText(booking.booking_date)}. Amount: ₹${booking.amount}. Transaction: ${txId}.`;
 
