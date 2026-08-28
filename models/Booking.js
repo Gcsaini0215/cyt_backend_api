@@ -32,6 +32,10 @@ const bookingSchema = new Schema({
     type: String,
     required: true,
   },
+  session_type: {
+    type: String,
+    default: "",
+  },
   whom: {
     type: String,
     default:"Whom"

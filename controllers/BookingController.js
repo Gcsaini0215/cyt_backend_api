@@ -102,6 +102,8 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
     age: Joi.alternatives()
       .try(Joi.number().integer().min(1).max(120), Joi.string().allow("", null))
       .optional(),
+    booking_date: Joi.date().optional(),
+    session_type: Joi.string().optional().allow("", null),
 
   }).unknown(true);
 
@@ -131,7 +133,15 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       user_id,
       is_logged_in,
       guest_email_verified,
+      booking_date,
+      session_type,
     } = req.body;
+
+    // Resolve the chosen appointment slot; fall back to now only if unparseable
+    const parsedBookingDate =
+      booking_date && !isNaN(new Date(booking_date).getTime())
+        ? new Date(booking_date)
+        : new Date();
 
 
 
@@ -171,6 +181,10 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         res.status(400);
         return next(new Error("Email is required to book a session."));
       }
+      if (!guest_email_verified) {
+        res.status(400);
+        return next(new Error("Please verify your email before booking."));
+      }
       email = email.toLowerCase();
       user = await Users.findOne({ email }).session(session);
       if (user) {
@@ -205,6 +219,8 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         client: user._id,
         service,
         format,
+        session_type: session_type || "",
+        booking_date: parsedBookingDate,
         whom,
         cname,
         age,
