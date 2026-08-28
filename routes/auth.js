@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { isSuperAdmin, hasPermission } from "../middlewares/authMiddleware.js";
-import { leadRateLimit } from "../middlewares/rateLimitMiddleware.js";
+import {
+  leadRateLimit,
+  loginOtpRequestRateLimit,
+  otpVerifyRateLimit,
+} from "../middlewares/rateLimitMiddleware.js";
 import {
   aproveTherapist,
   login,
@@ -57,7 +61,7 @@ router.get("/aprove-therapist/:userId",hasPermission("therapists"), aproveTherap
 
 router.get("/send-aprove-mail/:userId", sendAproveMail); 
 
-router.post("/login", leadRateLimit, login);
+router.post("/login", leadRateLimit, loginOtpRequestRateLimit, login);
 
 router.post("/admin-login", adminLogin);
 
@@ -65,7 +69,7 @@ router.post("/admin-register", isSuperAdmin, adminRegister);
 
 router.post("/send-forgot-password-otp", sendForgotPasswordOtp);
 
-router.post("/verify-otp", verifyOtp);
+router.post("/verify-otp", otpVerifyRateLimit, verifyOtp);
 
 router.post("/verify-otp-and-reset-password", verifyOtpAndResetPassword);
 
