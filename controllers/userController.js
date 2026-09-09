@@ -5,6 +5,7 @@ import Lead from "../models/Lead.js";
 import EmailLog from "../models/EmailLog.js";
 import ContactMeta from "../models/ContactMeta.js";
 import { sendMail, sendMailWithReason } from "../helper/mailer.js";
+import { broadcastMail } from "../services/mailTemplates.js";
 export const getProfile = expressAsyncHandler(async (req, res, next) => {
   const user_id = req.user._id;
   try {
@@ -207,42 +208,8 @@ export const sendBulkUserMail = expressAsyncHandler(async (req, res, next) => {
   try {
     const users = await Users.find({ _id: { $in: ids }, role: 0 }).select("name email");
 
-    const ctaBlock = (ctaText?.trim() && ctaLink?.trim())
-      ? `<div style="text-align:left;margin-top:28px">
-            <a href="${ctaLink.trim()}" title="${ctaText.trim()}" style="display:inline-block;background:#ffffff;color:#1a6b3a;text-decoration:none;border:1.5px solid #1a6b3a;border-radius:8px;padding:12px 30px;font-weight:700;font-size:13px;letter-spacing:0.2px">
-              ${ctaText.trim()}
-            </a>
-          </div>`
-      : "";
-
-    const buildHtml = (firstName) => `
-<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f0f4f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:32px 0">
-    <tr><td align="center">
-      <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08)">
-        <tr><td style="background:linear-gradient(135deg,#0d4a28,#1a6b3a,#228756);padding:24px 36px">
-          <span style="color:#fff;font-size:18px;font-weight:800;letter-spacing:-0.3px">ChooseYourTherapist.in</span>
-        </td></tr>
-        <tr><td style="padding:32px 36px">
-          <div style="font-size:18px;font-weight:800;color:#0f172a;margin-bottom:16px">Hi ${firstName},</div>
-          <div style="font-size:14px;color:#475569;line-height:1.8;white-space:pre-wrap">${message}</div>
-          ${ctaBlock}
-        </td></tr>
-        <tr><td style="background:#f1f5f9;border-top:1.5px solid #e2e8f0;padding:16px 36px">
-          <div style="font-size:12px;color:#64748b;line-height:1.9">
-            📞 +91-8077757951<br>
-            ✉ hello@chooseyourtherapist.in<br>
-            🌐 chooseyourtherapist.in
-          </div>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
+    const buildHtml = (firstName) =>
+      broadcastMail({ firstName, message, ctaText, ctaLink });
 
     // build lazy send functions (not invoked yet) so sending is actually throttled by the batch loop below
     const tasks = [];

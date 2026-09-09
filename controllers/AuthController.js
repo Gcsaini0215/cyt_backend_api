@@ -11,7 +11,7 @@ import Therapists from "../models/Therapists.js";
 import { sendMail } from "../helper/mailer.js";
 import { getTimeDifferenceInSeconds } from "../helper/time.js";
 import { generate6DigitOTP, generateProfileCode } from "../helper/generate.js";
-import { loginOtpEmail, otpVerificationEmail, registrationOtpEmail, therapistVerificationEmail } from "../services/mailTemplates.js";
+import { loginOtpEmail, otpVerificationEmail, registrationOtpEmail, therapistVerificationEmail, therapistApprovedMail, welcomeCredentialsMail, passwordResetMail } from "../services/mailTemplates.js";
 
 export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
   const resumeFile      = req.files?.resume?.[0];
@@ -288,9 +288,7 @@ export const aproveTherapist = expressAsyncHandler(async (req, res, next) => {
     const subject = "Approved profile";
     const text = `Thank you for registering with Choose Your Therapist.`;
 
-    const html = `<p>Dear ${userExists.name},</p><p>Thank you for registering with Choose Your Therapist.
-                </p><p>We are pleased to inform you that your profile has been successfully approved. Below are your credentials to log in to your account:
-                </p><p>Email - ${userExists.email}</p><p><b>Login Credentials:</b></p><p><b>Email:</b> ${userExists.email}</p><p>You can now access your profile and start offering your services to clients. Please follow the link below to log in:</p><p></br><b><a href="chooseyourtherapist.in/login">Login Here</a></b></p><p></br>If you encounter any issues or have any questions, please do not hesitate to reach out to our support team at support@chooseyourtherapist.in.</p>`;
+    const html = therapistApprovedMail({ name: userExists.name, email: userExists.email });
 
     const isMailSent = await sendMail(userExists.email, subject, text, html);
 
@@ -340,7 +338,7 @@ export const sendAproveMail = expressAsyncHandler(async (req, res, next) => {
     const subject = "Welcome to CYT";
     const text = `Hello Thank you for registering.Best regards,CYT`;
 
-    const html = `<p>Hello ${userExists.name},</p><p>Thank you for registering.</p><p>Best regards,CYT<br>Use the below credentials to login</p><p>Email - ${userExists.email}</p>`;
+    const html = welcomeCredentialsMail({ name: userExists.name, email: userExists.email });
     const isMailSent = await sendMail(userExists.email, subject, text, html);
 
     let is_mail_sent = isMailSent ? 1 : 0;
@@ -570,9 +568,7 @@ export const sendForgotPasswordOtp = expressAsyncHandler(
           const subject = "Password Reset";
           const text = `OTP.`;
 
-          const html = `<p>Dear ${user.name},</p><p>Thank you for registering with Choose Your Therapist.
-                </p><p>Use the below OTP to verify your account
-                </p><p>OTP - ${otp}</p>`;
+          const html = passwordResetMail({ name: user.name, otp });
 
           const isMailSent = await sendMail(user.email, subject, text, html);
           let is_mail_sent = isMailSent ? 1 : 0;
