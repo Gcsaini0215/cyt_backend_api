@@ -331,24 +331,67 @@ export const leadNotificationEmail = (data) => {
     if (concernMatch) displayConcern = concernMatch[1].trim();
   }
 
-  const digits = phone ? String(phone).replace(/\D/g, "") : "";
+  let num = phone ? String(phone).replace(/\D/g, "") : "";
+  if (num.length === 10) num = "91" + num; // bare Indian mobile -> add country code
+  const tel = num ? "+" + num : "";
+  const wa = num ? "https://wa.me/" + num : "";
+  const first = (name || "them").split(/\s+/)[0];
   const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
 
-  return shell({
-    preheader: `New lead: ${name || "consultation request"}`,
-    body:
-      eyebrow("New consultation request", INFO) +
-      heading(esc(name || "New lead")) +
-      para(`Came in via ${esc(source || "the website")} &middot; ${esc(now)} IST`) +
-      kvTable([
-        ["Phone", esc(phone || "—")],
-        ["Email", esc(email || "—"), true],
-        ["Age", esc(displayAge || "—")],
-        ["Concern", esc(displayConcern)],
-      ]) +
-      (digits ? button("WhatsApp client", `https://wa.me/91${digits}`) : ""),
-    foot: "CYT CRM &middot; Automated lead notification",
-  });
+  const amount = getVal(others.amount);
+  const kicker = amount ? `Paid consultation &middot; &#8377;${esc(amount)}` : "Consultation request";
+
+  const dl = (label, val) =>
+    val
+      ? `<tr>
+          <td style="padding:11px 0;border-bottom:1px solid #ece9e2;font-family:Arial,sans-serif;font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:#a0a096;width:34%;vertical-align:top;">${label}</td>
+          <td style="padding:11px 0;border-bottom:1px solid #ece9e2;font-size:13.5px;color:#222;vertical-align:top;">${val}</td>
+        </tr>`
+      : "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${BRAND.name} — new lead</title>
+</head>
+<body style="margin:0;padding:0;background:#eceee8;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">New ${amount ? "paid " : ""}consultation lead: ${esc(name || "")}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eceee8;padding:18px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#fcfcfa;font-family:Georgia,'Times New Roman',serif;">
+        <tr><td style="padding:0;font-size:0;line-height:0;">
+          <img src="https://images.unsplash.com/photo-1493809842364-78817add7ffb?auto=format&fit=crop&w=1200&h=360&q=70" alt="" width="600" style="display:block;width:100%;max-width:600px;height:132px;object-fit:cover;" />
+        </td></tr>
+        <tr><td style="padding:30px 30px 10px;">
+          <div style="font-family:Arial,sans-serif;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:#8a8a80;">${kicker}</div>
+          <div style="font-size:24px;color:#222;margin-top:10px;line-height:1.25;">A new person has asked to talk</div>
+          <div style="font-family:Arial,sans-serif;font-size:12px;color:#8a8a80;margin-top:8px;">Received ${esc(now)} IST</div>
+        </td></tr>
+        <tr><td style="padding:8px 30px 0;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+            ${dl("Name", esc(name || "&mdash;"))}
+            ${dl("Phone", tel ? `<a href="tel:${tel}" style="color:#3f6b4f;">${esc(phone)}</a>` : esc(phone || "&mdash;"))}
+            ${dl("Email", email ? `<a href="mailto:${esc(email)}" style="color:#3f6b4f;">${esc(email)}</a>` : "&mdash;")}
+            ${dl("Age", esc(displayAge || ""))}
+            ${dl("Source", esc(source || "Website"))}
+          </table>
+          <div style="font-family:Arial,sans-serif;font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:#a0a096;margin:22px 0 8px;">In their words</div>
+          <div style="font-size:14.5px;color:#33332e;font-style:italic;line-height:1.8;">&ldquo;${esc(displayConcern)}&rdquo;</div>
+        </td></tr>
+        <tr><td style="padding:24px 30px 30px;">
+          ${tel ? `<a href="tel:${tel}" style="font-family:Arial,sans-serif;font-size:13px;color:#ffffff;background:#3f6b4f;padding:12px 26px;border-radius:6px;font-weight:700;text-decoration:none;display:inline-block;">Call ${esc(first)}</a>` : ""}
+          ${wa ? `<a href="${wa}" style="font-family:Arial,sans-serif;font-size:13px;color:#3f6b4f;padding:12px 18px;text-decoration:none;display:inline-block;">or WhatsApp &rarr;</a>` : ""}
+        </td></tr>
+        <tr><td style="padding:16px 30px;border-top:1px solid #ece9e2;font-family:Arial,sans-serif;font-size:10px;color:#a0a096;">
+          ${BRAND.name} &middot; forwarded from the consultation form
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
 };
 
 // ============================================================================

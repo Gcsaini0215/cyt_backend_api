@@ -192,7 +192,7 @@ export const verifyConsultPayment = expressAsyncHandler(async (req, res, next) =
     const text = `A new paid consultation was booked: ${name}. Phone: ${phone}. Payment ID: ${razorpay_payment_id}`;
 
     try {
-      const html = leadNotificationEmail({ ...req.body, name, phone, email, concern, source: finalSource });
+      const html = leadNotificationEmail({ ...req.body, name, phone, email, concern, source: finalSource, amount: CONSULT_AMOUNT_RUPEES });
       await sendMail(sendMailid, subject, text, html);
     } catch (mailErr) {
       console.error("Consult payment notification email failed (non-fatal):", mailErr.message);
