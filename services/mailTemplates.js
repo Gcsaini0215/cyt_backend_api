@@ -37,12 +37,15 @@ const defaultFoot =
 
 // ---- layout ---------------------------------------------------------------
 
-// calm horizon band — pure CSS, no image (degrades to a soft wash everywhere)
+// warm relatable banner — hosted photo (soft daylight through green leaves).
+// Falls back to a calm green wash if the recipient blocks images.
+// To self-host later, swap BANNER_IMG for your own https URL (~1200x300, jpg).
+const BANNER_IMG =
+  "https://images.unsplash.com/photo-1518495973542-4542c06a5843?auto=format&fit=crop&w=1200&h=300&q=70";
+
 const bannerRow = () => `
-  <tr><td style="padding:0;font-size:0;line-height:0;">
-    <div style="height:84px;background:#eef3ec;background:linear-gradient(115deg,#fdeede 0%,#eef3ec 55%,#dcebe0 100%);border-bottom:1px solid ${BRAND.line};position:relative;">
-      <div style="position:absolute;top:20px;right:56px;width:38px;height:38px;background:#f4c99b;border-radius:19px;">&nbsp;</div>
-    </div>
+  <tr><td style="padding:0;font-size:0;line-height:0;background:#e6efe8;">
+    <img src="${BANNER_IMG}" alt="" width="400" style="display:block;width:100%;max-width:400px;height:96px;object-fit:cover;border-bottom:1px solid ${BRAND.line};" />
   </td></tr>`;
 
 const shell = ({ preheader = "", withBanner = false, body = "", foot }) => `<!DOCTYPE html>
@@ -361,7 +364,7 @@ export const therapistApprovedMail = ({ name, email }) =>
       para("Your therapist profile has been successfully approved. You can now sign in and start offering your services to clients.") +
       kvTable([["Login email", esc(email || "—"), true]]) +
       button("Sign in", `${BRAND.site}/login`) +
-      note(`Any issues or questions? Write to <a href="mailto:support@chooseyourtherapist.in" style="color:${BRAND.green};">support@chooseyourtherapist.in</a>.`),
+      note(`Any issues or questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
   });
 
 export const welcomeCredentialsMail = ({ name, email }) =>
