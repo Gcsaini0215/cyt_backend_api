@@ -1,9 +1,13 @@
 import mongoose from "mongoose";
 import pg from "pg";
 
-const MONGODB_URI = "mongodb+srv://Gcsaini:Gcsaini0215@teamtodo.71csztx.mongodb.net/cyt";
+const MONGODB_URI = process.env.MONGODB_URI;
 const DATABASE_URL = process.env.DATABASE_URL;
 
+if (!MONGODB_URI) {
+  console.error("MONGODB_URI env variable required");
+  process.exit(1);
+}
 if (!DATABASE_URL) {
   console.error("DATABASE_URL env variable required");
   process.exit(1);
