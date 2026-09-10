@@ -4,8 +4,8 @@ import { reminderCheckinMail } from "../services/mailTemplates.js";
 const gmailTransporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: "chooseyourtherapist@gmail.com",
-    pass: "thboznmqzpnwcpln",
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
   },
 });
 
