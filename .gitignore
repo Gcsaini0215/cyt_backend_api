@@ -1,5 +1,17 @@
 node_modules/
 package-lock.json
 .env
+.env.*
 resumes/
+uploads/
+
+# secrets / keys — never commit
 .githubssh
+githubssh
+githubssh.pub
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
