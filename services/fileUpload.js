@@ -20,112 +20,79 @@ if (!fs.existsSync(resumesPath))   fs.mkdirSync(resumesPath,   { recursive: true
 if (!fs.existsSync(resourcesPath)) fs.mkdirSync(resourcesPath, { recursive: true });
 if (!fs.existsSync(documentsPath)) fs.mkdirSync(documentsPath, { recursive: true });
 
-// Storage for image files
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, imagesPath);
-  },
-  filename: (req, file, cb) => {
-    cb(null, `${uuidv4()}_${file.originalname}`);
-  },
-});
+const MB = 1024 * 1024;
 
-// Storage for PDF files
-const storageFile = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, resumesPath);
-  },
-  filename: (req, file, cb) => {
-    cb(null, `${uuidv4()}_${file.originalname}`);
-  },
-});
-
-// Image filter
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = ["image/jpeg", "image/jpg", "image/png"];
-  if (!allowedTypes.includes(file.mimetype)) {
-    return cb(new Error("Only image files are allowed!"), false);
-  }
-  cb(null, true);
+// Strip any path, keep only safe chars, cap length. Never trust file.originalname.
+const safeName = (original) => {
+  const base = path.basename(String(original || "file"));
+  const ext = path.extname(base).toLowerCase().replace(/[^.a-z0-9]/g, "").slice(0, 10);
+  const name = path.basename(base, path.extname(base))
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 60) || "file";
+  return `${name}${ext}`;
 };
 
-// PDF filter
-const fileFilterPdf = (req, file, cb) => {
-  const allowedTypes = ["application/pdf"];
-  if (!allowedTypes.includes(file.mimetype)) {
-    return cb(new Error("Only PDF files are allowed!"), false);
-  }
-  cb(null, true);
+const storedName = (file) => `${uuidv4()}_${safeName(file.originalname)}`;
+
+// Accept only when BOTH the extension and the reported mimetype are allowed.
+// (mimetype alone is client-controlled and trivially spoofed.)
+const checkFile = (exts, mimes) => (req, file, cb) => {
+  const ext = path.extname(file.originalname || "").toLowerCase();
+  if (exts.includes(ext) && mimes.includes(file.mimetype)) return cb(null, true);
+  cb(new Error(`Only ${exts.join(", ")} files are allowed.`), false);
 };
 
-// Exported single image upload
+const IMAGE_EXT  = [".jpg", ".jpeg", ".png"];
+const IMAGE_MIME = ["image/jpeg", "image/jpg", "image/png"];
+const PDF_EXT    = [".pdf"];
+const PDF_MIME   = ["application/pdf"];
+const DOC_EXT    = [".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"];
+const DOC_MIME   = [
+  "application/pdf",
+  "image/jpeg", "image/jpg", "image/png",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+];
+
+const diskStore = (dir) => multer.diskStorage({
+  destination: (req, file, cb) => cb(null, dir),
+  filename:    (req, file, cb) => cb(null, storedName(file)),
+});
+
+// Exported single image upload (5 MB)
 export const upload = multer({
-  storage: storage,
-  fileFilter: fileFilter,
+  storage: diskStore(imagesPath),
+  fileFilter: checkFile(IMAGE_EXT, IMAGE_MIME),
+  limits: { fileSize: 5 * MB },
 });
 
-// Exported single PDF upload (resumes)
+// Exported single PDF upload — resumes (10 MB)
 export const uploadFile = multer({
-  storage: storageFile,
-  fileFilter: fileFilterPdf,
+  storage: diskStore(resumesPath),
+  fileFilter: checkFile(PDF_EXT, PDF_MIME),
+  limits: { fileSize: 10 * MB },
 });
 
-// Storage for resource PDFs
-const storageResource = multer.diskStorage({
-  destination: (req, file, cb) => { cb(null, resourcesPath); },
-  filename:    (req, file, cb) => { cb(null, `${uuidv4()}_${file.originalname}`); },
-});
-
-// Exported resource PDF upload (20 MB limit)
+// Exported resource PDF upload (20 MB)
 export const uploadResource = multer({
-  storage: storageResource,
-  fileFilter: fileFilterPdf,
-  limits: { fileSize: 20 * 1024 * 1024 },
+  storage: diskStore(resourcesPath),
+  fileFilter: checkFile(PDF_EXT, PDF_MIME),
+  limits: { fileSize: 20 * MB },
 });
 
-// Exported multi-upload (images + PDFs)
+// Exported multi-upload — images + PDFs (10 MB)
 export const multiUpload = multer({
-  storage: storage,
-  fileFilter: (req, file, cb) => {
-    const filetypes = /jpeg|jpg|png|pdf/;
-    const extname = filetypes.test(
-      path.extname(file.originalname).toLowerCase()
-    );
-    const mimetype = filetypes.test(file.mimetype);
-
-    if (extname && mimetype) {
-      return cb(null, true);
-    } else {
-      cb(new Error("Only images and PDFs are allowed!"), false);
-    }
-  },
+  storage: diskStore(imagesPath),
+  fileFilter: checkFile([...IMAGE_EXT, ...PDF_EXT], [...IMAGE_MIME, ...PDF_MIME]),
+  limits: { fileSize: 10 * MB },
 });
 
-// Storage for therapist verification documents (resume, qualification
-// certificate, ID card) — accepts PDF, DOC/DOCX, or scanned images
-const storageDocuments = multer.diskStorage({
-  destination: (req, file, cb) => { cb(null, documentsPath); },
-  filename:    (req, file, cb) => { cb(null, `${uuidv4()}_${file.originalname}`); },
-});
-
-const fileFilterDocuments = (req, file, cb) => {
-  const allowedTypes = [
-    "application/pdf",
-    "image/jpeg", "image/jpg", "image/png",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  ];
-  if (!allowedTypes.includes(file.mimetype)) {
-    return cb(new Error("Only PDF, DOC, DOCX, JPG or PNG files are allowed!"), false);
-  }
-  cb(null, true);
-};
-
-// Exported multi-field document upload (5 MB per file)
+// Exported multi-field document upload — resume / certificate / ID (5 MB per file)
 export const uploadTherapistDocuments = multer({
-  storage: storageDocuments,
-  fileFilter: fileFilterDocuments,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  storage: diskStore(documentsPath),
+  fileFilter: checkFile(DOC_EXT, DOC_MIME),
+  limits: { fileSize: 5 * MB },
 });
 
 // Delete uploaded file

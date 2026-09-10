@@ -8,6 +8,7 @@ const generateToken = (id, role, roleId = null) => {
   };
   return jwt.sign(payload, process.env.JWT_SECRET, {
     expiresIn: "7d",
+    algorithm: "HS256",
   });
 };
 

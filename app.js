@@ -72,7 +72,19 @@ global.appRoot = path.resolve(__dirname);
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve uploads, but never let the browser execute anything from this origin.
+// Raster images and PDFs still render inline; svg/html/js/xml are forced to
+// download as plain text so a file that slipped past upload filters can't XSS.
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  setHeaders: (res, filePath) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    const ext = path.extname(filePath).toLowerCase();
+    if (['.svg', '.svgz', '.html', '.htm', '.xml', '.xhtml', '.js', '.mjs'].includes(ext)) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment');
+    }
+  },
+}));
 
 app.use("/api", userRoutes);
 app.use("/api", dashboardRouter);

@@ -13,7 +13,7 @@ export const isAuth = expressAsyncHandler(async (req, res, next) => {
     try {
       
       token = req.headers.authorization.split(" ")[1];
-      const decoded = Jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = Jwt.verify(token, process.env.JWT_SECRET, { algorithms: ["HS256"] });
       const user = await Users.findById(decoded.userId).select(
         "_id name email phone profile bio role"
       );
@@ -45,7 +45,7 @@ export const isAuthCommon = expressAsyncHandler(async (req, res, next) => {
   ) {
     try {
       token = req.headers.authorization.split(" ")[1];
-      const decoded = Jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = Jwt.verify(token, process.env.JWT_SECRET, { algorithms: ["HS256"] });
 
       const user = await Users.findById(decoded.userId).select(
         "_id name email phone profile bio role age gender dob"
@@ -79,7 +79,7 @@ export const isTherapist = expressAsyncHandler(async (req, res, next) => {
   ) {
     try {
       token = req.headers.authorization.split(" ")[1];
-      const decoded = Jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = Jwt.verify(token, process.env.JWT_SECRET, { algorithms: ["HS256"] });
 
       // Find the user and check the role
       const user = await Users.findById(decoded.userId).select(
@@ -110,7 +110,7 @@ export const isSuperAdmin = expressAsyncHandler(async (req, res, next) => {
   if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
     try {
       token = req.headers.authorization.split(" ")[1];
-      const decoded = Jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = Jwt.verify(token, process.env.JWT_SECRET, { algorithms: ["HS256"] });
       if (decoded.role !== 2) {
         res.status(403);
         throw new Error("Super admin access required");
@@ -144,7 +144,7 @@ export const hasPermission = (permKeys) => expressAsyncHandler(async (req, res, 
   if (req.headers.authorization && req.headers.authorization.startsWith("Bearer")) {
     try {
       token = req.headers.authorization.split(" ")[1];
-      const decoded = Jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = Jwt.verify(token, process.env.JWT_SECRET, { algorithms: ["HS256"] });
       if (decoded.role !== 2) {
         res.status(403);
         throw new Error("Admin access required");
@@ -185,7 +185,7 @@ export const isAdmin = expressAsyncHandler(async (req, res, next) => {
   ) {
     try {
       token = req.headers.authorization.split(" ")[1];
-      const decoded = Jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = Jwt.verify(token, process.env.JWT_SECRET, { algorithms: ["HS256"] });
 
       // Find the user and check the role
       let user = await Users.findById(decoded.userId).select(

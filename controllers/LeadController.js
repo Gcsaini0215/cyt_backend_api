@@ -47,7 +47,7 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
     // Create a data object that matches what's sent in the email (excluding large/unnecessary internal fields if any)
     const emailCompatibleData = { ...req.body };
 
-    console.log("Lead Form Data received:", req.body);
+    console.log(`Lead form received from ${name || "unknown"}`);
 
     const lead = await Lead.create({
       name,
