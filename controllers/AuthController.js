@@ -730,6 +730,44 @@ export const verifyOtpAndResetPassword = expressAsyncHandler(
   }
 );
 
+// "Is this you?" identity confirmation on the admin login screen, shown
+// before the captcha/OTP step. Deliberately Admin-only (this panel never
+// authenticates regular Users) and returns a masked name — full name
+// would let anyone who already has an admin's email address confirm it
+// and grab their real name pre-auth, which is useful for phishing.
+function maskName(fullName) {
+  const parts = String(fullName).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "";
+  const first = parts[0];
+  if (parts.length === 1) {
+    return first.length <= 2 ? first : `${first.slice(0, 2)}${"*".repeat(first.length - 2)}`;
+  }
+  return `${first} ${parts[parts.length - 1][0].toUpperCase()}.`;
+}
+
+export const getAdminNameByEmail = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ message: "A valid email is required", status: false });
+    }
+
+    const admin = await Admin.findOne({ email: email.toLowerCase() }).select("name");
+
+    if (!admin) {
+      return res.status(200).json({ status: false, data: null });
+    }
+
+    return res.status(200).json({
+      status: true,
+      data: { maskedName: maskName(admin.name) },
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 export const login = expressAsyncHandler(async (req, res, next) => {
   try {
     let { email } = req.body;

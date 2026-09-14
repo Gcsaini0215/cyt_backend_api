@@ -3,6 +3,7 @@ import Joi from "joi";
 import mongoose from "mongoose";
 import crypto from "crypto";
 import Lead from "../models/Lead.js";
+import LeadActivity from "../models/LeadActivity.js";
 import { leadNotificationEmail } from "../services/mailTemplates.js";
 import { sendMail } from "../helper/mailer.js";
 
@@ -202,6 +203,85 @@ export const verifyConsultPayment = expressAsyncHandler(async (req, res, next) =
       status: true,
       message: "Payment verified and consultation booked successfully.",
       data: { id: lead._id },
+    });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// Statuses that represent an actual action taken on the lead — these
+// require the team member to leave a remark, so the superadmin activity
+// feed always has context for what happened, not just a bare status flip.
+const STATUSES_REQUIRING_REMARK = ["contacted", "converted", "lost"];
+
+export const updateLeadStatus = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  const { status, remark } = req.body;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    return next(new Error("Invalid Lead ID format."));
+  }
+
+  const validStatuses = ["new", "contacted", "converted", "lost"];
+  if (!validStatuses.includes(status)) {
+    res.status(400);
+    return next(new Error("Invalid status value."));
+  }
+
+  if (STATUSES_REQUIRING_REMARK.includes(status) && !remark?.trim()) {
+    res.status(400);
+    return next(new Error("A remark is required when marking a lead as contacted, converted, or lost."));
+  }
+
+  try {
+    const lead = await Lead.findByIdAndUpdate(id, { status }, { new: true });
+    if (!lead) {
+      res.status(404);
+      return next(new Error("Lead not found."));
+    }
+
+    const activity = await LeadActivity.create({
+      lead: id,
+      status,
+      remark: remark?.trim() || "",
+      admin: req.user._id,
+      adminName: req.user.name,
+    });
+
+    return res.status(200).json({
+      status: true,
+      message: "Lead status updated",
+      data: { lead, activity },
+    });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// Superadmin-only audit feed: every status change any team member has made
+// across every lead, newest first, with lead + admin attribution attached.
+export const getLeadActivity = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize) || 30));
+
+    const [items, total] = await Promise.all([
+      LeadActivity.find({})
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize)
+        .populate("lead", "name phone email")
+        .lean(),
+      LeadActivity.countDocuments({}),
+    ]);
+
+    return res.status(200).json({
+      status: true,
+      data: items,
+      total,
+      page,
+      pages: Math.ceil(total / pageSize) || 1,
     });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));

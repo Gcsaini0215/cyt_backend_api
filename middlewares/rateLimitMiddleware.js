@@ -35,3 +35,17 @@ export const otpVerifyRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Pre-auth "is this you?" name lookup on the admin login screen. No OTP/
+// captcha gates this yet, so it's the easiest endpoint to script against
+// for email enumeration — keep it tight and separate from the OTP limiters.
+export const nameByEmailRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 lookups per IP per 15 minutes
+  message: {
+    status: false,
+    message: "Too many requests. Please wait a few minutes and try again.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

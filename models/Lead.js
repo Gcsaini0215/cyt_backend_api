@@ -39,6 +39,11 @@ const leadSchema = new Schema({
     type: String,
     default: null,
   },
+  status: {
+    type: String,
+    enum: ["new", "contacted", "converted", "lost"],
+    default: "new",
+  },
   created_at: {
     type: Date,
     default: Date.now,

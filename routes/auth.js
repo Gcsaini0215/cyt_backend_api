@@ -4,6 +4,7 @@ import {
   leadRateLimit,
   loginOtpRequestRateLimit,
   otpVerifyRateLimit,
+  nameByEmailRateLimit,
 } from "../middlewares/rateLimitMiddleware.js";
 import {
   aproveTherapist,
@@ -21,6 +22,7 @@ import {
   adminRegister,
   sendOtpToMail,
   verifyOtpAndResetPassword,
+  getAdminNameByEmail,
 } from "../controllers/AuthController.js";
 import { uploadTherapistDocuments } from "../services/fileUpload.js";
 
@@ -62,6 +64,8 @@ router.get("/aprove-therapist/:userId",hasPermission("therapists"), aproveTherap
 router.get("/send-aprove-mail/:userId", sendAproveMail); 
 
 router.post("/login", leadRateLimit, loginOtpRequestRateLimit, login);
+
+router.post("/get-admin-name-by-email", nameByEmailRateLimit, getAdminNameByEmail);
 
 router.post("/admin-login", adminLogin);
 
