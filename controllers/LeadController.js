@@ -288,6 +288,29 @@ export const getLeadActivity = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
+export const deleteLeadActivity = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    return next(new Error("Invalid activity ID format."));
+  }
+
+  try {
+    const activity = await LeadActivity.findByIdAndDelete(id);
+    if (!activity) {
+      res.status(404);
+      return next(new Error("Activity entry not found."));
+    }
+    return res.status(200).json({
+      status: true,
+      message: "Activity entry deleted.",
+    });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
 export const deleteLead = expressAsyncHandler(async (req, res, next) => {
   const { id } = req.params;
 
