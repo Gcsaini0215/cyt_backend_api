@@ -49,3 +49,15 @@ export const nameByEmailRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Same idea, for the Noida follow-up phone lookup on the public site.
+export const phoneLookupRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 15, // 15 lookups per IP per 15 minutes
+  message: {
+    status: false,
+    message: "Too many requests. Please wait a few minutes and try again.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

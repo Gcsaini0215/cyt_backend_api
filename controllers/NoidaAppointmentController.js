@@ -1,10 +1,14 @@
 import expressAsyncHandler from "express-async-handler";
 import mongoose from "mongoose";
 import NoidaAppointment from "../models/NoidaAppointment.js";
+import NoidaFollowupSlot from "../models/NoidaFollowupSlot.js";
+import Lead from "../models/Lead.js";
 import { sendMail } from "../helper/mailer.js";
 import { leadNotificationEmail, noidaAppointmentConfirmationEmail } from "../services/mailTemplates.js";
 
 // Center hours: Mon–Sat, 10:00 AM – 7:00 PM, 45-min slots. Closed Sunday.
+// (This fixed grid is only for new-client bookings — follow-ups use whatever
+// dates/slots the admin has explicitly opened, see NoidaFollowupSlot.)
 const START_HOUR = 10;
 const END_HOUR = 19;
 const SLOT_MINUTES = 45;
@@ -35,7 +39,7 @@ function isValidDateStr(s) {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
-// All slot labels for a given date, ignoring bookings — "" (empty array) if the center is closed that day.
+// All fixed-grid slot labels for a given date — "" (empty array) if the center is closed that day.
 function allSlotsForDate(dateStr) {
   const [y, m, d] = dateStr.split("-").map(Number);
   const weekday = new Date(y, m - 1, d, 12).getDay(); // noon avoids any DST/TZ boundary issue
@@ -48,8 +52,23 @@ function allSlotsForDate(dateStr) {
   return slots;
 }
 
+// Drops slots starting within the same-day notice window. No-op for future dates.
+function dropPastNotice(slots, date, today, now) {
+  if (date !== today) return slots;
+  const nowMinutes = now.getHours() * 60 + now.getMinutes() + MIN_NOTICE_MINUTES;
+  return slots.filter((label) => {
+    const startLabel = label.split(" - ")[0];
+    const [time, ampm] = startLabel.split(" ");
+    let [h, m] = time.split(":").map(Number);
+    if (ampm === "PM" && h !== 12) h += 12;
+    if (ampm === "AM" && h === 12) h = 0;
+    return h * 60 + m >= nowMinutes;
+  });
+}
+
 export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
   const { date } = req.query;
+  const type = req.query.type === "followup" ? "followup" : "new";
   if (!isValidDateStr(date)) {
     res.status(400);
     return next(new Error("A valid date (YYYY-MM-DD) is required."));
@@ -64,22 +83,18 @@ export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
     return res.status(200).json({ status: true, data: [] });
   }
 
-  let slots = allSlotsForDate(date);
-
-  // Same-day: drop slots starting within the notice window.
-  if (date === today) {
-    const nowMinutes = now.getHours() * 60 + now.getMinutes() + MIN_NOTICE_MINUTES;
-    slots = slots.filter((label) => {
-      const startLabel = label.split(" - ")[0];
-      const [time, ampm] = startLabel.split(" ");
-      let [h, m] = time.split(":").map(Number);
-      if (ampm === "PM" && h !== 12) h += 12;
-      if (ampm === "AM" && h === 12) h = 0;
-      return h * 60 + m >= nowMinutes;
-    });
+  let slots;
+  if (type === "followup") {
+    const saved = await NoidaFollowupSlot.find({ date }).select("slot").lean();
+    slots = saved.map((s) => s.slot);
+  } else {
+    slots = allSlotsForDate(date);
   }
 
+  slots = dropPastNotice(slots, date, today, now);
+
   if (slots.length > 0) {
+    // Physical slot occupancy is global — a "new" and a "followup" booking can't share a time.
     const booked = await NoidaAppointment.find({ date, status: "confirmed" }).select("slot").lean();
     const bookedSet = new Set(booked.map((b) => b.slot));
     slots = slots.filter((s) => !bookedSet.has(s));
@@ -88,8 +103,61 @@ export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
   return res.status(200).json({ status: true, data: slots });
 });
 
+// Public: which dates currently have at least one open (unbooked) follow-up
+// slot — lets the follow-up tab show only dates worth offering, instead of
+// blindly rendering 14 days and querying each one.
+export const getFollowupDates = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const now = istNow();
+    const today = istDateStr(now);
+
+    const [allSlots, booked] = await Promise.all([
+      NoidaFollowupSlot.find({ date: { $gte: today } }).select("date slot").lean(),
+      NoidaAppointment.find({ date: { $gte: today }, status: "confirmed" }).select("date slot").lean(),
+    ]);
+
+    const bookedSet = new Set(booked.map((b) => `${b.date}|${b.slot}`));
+    const openDates = new Set();
+    for (const s of allSlots) {
+      if (!bookedSet.has(`${s.date}|${s.slot}`)) openDates.add(s.date);
+    }
+
+    return res.status(200).json({ status: true, data: Array.from(openDates).sort() });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// Public: "have we seen this phone number before?" — used by the follow-up
+// tab to greet a returning client by name instead of asking them to
+// re-type everything. Checks past Noida bookings first, then the general
+// Lead inbox. Name only — nothing else about them is exposed pre-booking.
+export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) => {
+  const phone = (req.query.phone || "").trim();
+  if (!/^\d{10}$/.test(phone)) {
+    return res.status(400).json({ status: false, message: "A valid 10-digit phone number is required." });
+  }
+
+  try {
+    const pastAppointment = await NoidaAppointment.findOne({ phone }).sort({ createdAt: -1 }).select("name").lean();
+    if (pastAppointment?.name) {
+      return res.status(200).json({ status: true, data: { found: true, name: pastAppointment.name } });
+    }
+
+    const pastLead = await Lead.findOne({ phone }).sort({ created_at: -1 }).select("name").lean();
+    if (pastLead?.name) {
+      return res.status(200).json({ status: true, data: { found: true, name: pastLead.name } });
+    }
+
+    return res.status(200).json({ status: true, data: { found: false, name: null } });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
 export const createNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
-  const { name, phone, email, concern, date, slot } = req.body;
+  const { name, phone, email, concern, date, slot, age } = req.body;
+  const type = req.body.type === "followup" ? "followup" : "new";
 
   if (!name?.trim() || !phone?.trim()) {
     res.status(400);
@@ -103,7 +171,14 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     res.status(400);
     return next(new Error("Please select a valid date and time slot."));
   }
-  if (!allSlotsForDate(date).includes(slot)) {
+
+  if (type === "followup") {
+    const isOpen = await NoidaFollowupSlot.findOne({ date, slot });
+    if (!isOpen) {
+      res.status(400);
+      return next(new Error("That slot isn't open for follow-ups on the selected date."));
+    }
+  } else if (!allSlotsForDate(date).includes(slot)) {
     res.status(400);
     return next(new Error("That slot isn't valid for the selected date."));
   }
@@ -117,19 +192,21 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
 
     const appointment = await NoidaAppointment.create({
       name: name.trim(),
+      age: age?.toString().trim() || "",
       phone: phone.trim(),
       email: email?.trim() || "",
       concern: concern?.trim() || "",
       date,
       slot,
+      type,
     });
 
     try {
       await sendMail(
         "chooseyourtherapist@gmail.com",
-        `Noida Center Booking: ${name} — ${date} ${slot}`,
+        `Noida Center Booking (${type === "followup" ? "Follow-up" : "New"}): ${name} — ${date} ${slot}`,
         `New Noida center appointment: ${name}, ${phone}, ${date} ${slot}`,
-        leadNotificationEmail({ name, phone, email, concern: `Noida center visit — ${date} at ${slot}`, source: "Noida Center Booking" })
+        leadNotificationEmail({ name, phone, email, age, concern: `Noida center ${type === "followup" ? "follow-up" : "visit"} — ${date} at ${slot}`, source: "Noida Center Booking" })
       );
     } catch (mailErr) {
       console.error("Noida appointment admin alert failed (non-fatal):", mailErr.message);
@@ -165,6 +242,7 @@ export const getNoidaAppointments = expressAsyncHandler(async (req, res, next) =
     const filter = {};
     if (req.query.date) filter.date = req.query.date;
     if (req.query.status) filter.status = req.query.status;
+    if (req.query.type) filter.type = req.query.type;
 
     const [items, total] = await Promise.all([
       NoidaAppointment.find(filter)
@@ -231,6 +309,74 @@ export const deleteNoidaAppointment = expressAsyncHandler(async (req, res, next)
       return next(new Error("Appointment not found."));
     }
     return res.status(200).json({ status: true, message: "Appointment deleted." });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// ── Follow-up slot management (admin) ──────────────────────────────────
+// Admin opens up specific date+slot combinations for follow-ups; clients
+// on the Follow-up tab can only pick from what's been opened here.
+
+export const getFollowupSlots = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const filter = {};
+    if (req.query.date) filter.date = req.query.date;
+
+    const slots = await NoidaFollowupSlot.find(filter).sort({ date: 1, slot: 1 }).lean();
+    const booked = await NoidaAppointment.find({ status: "confirmed" }).select("date slot").lean();
+    const bookedSet = new Set(booked.map((b) => `${b.date}|${b.slot}`));
+
+    const data = slots.map((s) => ({ ...s, booked: bookedSet.has(`${s.date}|${s.slot}`) }));
+    return res.status(200).json({ status: true, data });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+export const addFollowupSlots = expressAsyncHandler(async (req, res, next) => {
+  const { date, slots } = req.body;
+  if (!isValidDateStr(date) || !Array.isArray(slots) || slots.length === 0) {
+    res.status(400);
+    return next(new Error("A date and at least one slot are required."));
+  }
+
+  try {
+    const ops = slots.map((slot) => ({
+      updateOne: {
+        filter: { date, slot },
+        update: { $setOnInsert: { date, slot } },
+        upsert: true,
+      },
+    }));
+    await NoidaFollowupSlot.bulkWrite(ops);
+    const saved = await NoidaFollowupSlot.find({ date, slot: { $in: slots } }).sort({ slot: 1 }).lean();
+    return res.status(201).json({ status: true, message: "Slots opened for follow-ups.", data: saved });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+export const deleteFollowupSlot = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    return next(new Error("Invalid slot ID format."));
+  }
+
+  try {
+    const slot = await NoidaFollowupSlot.findById(id);
+    if (!slot) {
+      res.status(404);
+      return next(new Error("Slot not found."));
+    }
+    const booked = await NoidaAppointment.findOne({ date: slot.date, slot: slot.slot, status: "confirmed" });
+    if (booked) {
+      res.status(409);
+      return next(new Error("This slot already has a booking — cancel that appointment first."));
+    }
+    await slot.deleteOne();
+    return res.status(200).json({ status: true, message: "Slot removed." });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
