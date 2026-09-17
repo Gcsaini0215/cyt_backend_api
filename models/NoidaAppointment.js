@@ -15,6 +15,19 @@ const noidaAppointmentSchema = new Schema({
   type:     { type: String, enum: ["new", "followup"], default: "new" },
   status:   { type: String, enum: ["confirmed", "cancelled"], default: "confirmed" },
   adminNote: { type: String, default: "" },
+
+  sessionMode: { type: String, enum: ["individual", "couple", "package"], default: "individual" },
+  format:      { type: String, enum: ["in-person", "online", "home-visit"], default: "in-person" },
+  address:     { type: String, default: "" }, // only meaningful when format === "home-visit"
+
+  packageId:   { type: Schema.Types.ObjectId, ref: "NoidaPackage", default: null },
+  packageName: { type: String, default: "" }, // snapshotted at booking time — survives the package later being edited/deleted
+
+  amount:      { type: Number, default: 0 },  // total charged, in rupees (base + platform fee)
+  platformFee: { type: Number, default: 0 },
+  paymentStatus: { type: String, enum: ["pending", "paid", "failed"], default: "pending" },
+  razorpayOrderId:   { type: String, default: "" },
+  razorpayPaymentId: { type: String, default: "" },
 }, { timestamps: true });
 
 noidaAppointmentSchema.index({ date: 1, slot: 1 });

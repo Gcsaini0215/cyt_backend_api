@@ -1,10 +1,51 @@
 import expressAsyncHandler from "express-async-handler";
 import mongoose from "mongoose";
+import Razorpay from "razorpay";
+import crypto from "crypto";
 import NoidaAppointment from "../models/NoidaAppointment.js";
 import NoidaFollowupSlot from "../models/NoidaFollowupSlot.js";
+import NoidaPackage from "../models/NoidaPackage.js";
 import Lead from "../models/Lead.js";
 import { sendMail } from "../helper/mailer.js";
 import { leadNotificationEmail, noidaAppointmentConfirmationEmail } from "../services/mailTemplates.js";
+import { getOrCreatePricing } from "./NoidaPricingController.js";
+
+const getRazorpayInstance = () => new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
+const VALID_SESSION_MODES = ["individual", "couple", "package"];
+const VALID_FORMATS = ["in-person", "online", "home-visit"];
+
+function priceFieldFor(sessionMode, format) {
+  const fmt = format === "home-visit" ? "homevisit" : format === "online" ? "online" : "inperson";
+  const mode = sessionMode === "couple" ? "couple" : "individual";
+  return `${mode}_${fmt}`;
+}
+
+// Single source of truth for what a booking costs — never trust a client-supplied
+// amount. Returns { baseAmount, platformFee, totalAmount, packageName }.
+async function computeBookingAmount({ sessionMode, format, packageId }) {
+  const pricing = await getOrCreatePricing();
+  let baseAmount;
+  let packageName = "";
+
+  if (sessionMode === "package") {
+    if (!packageId || !mongoose.Types.ObjectId.isValid(packageId)) {
+      throw new Error("Please select a valid package.");
+    }
+    const pkg = await NoidaPackage.findOne({ _id: packageId, active: true });
+    if (!pkg) throw new Error("That package is no longer available.");
+    baseAmount = pkg.price;
+    packageName = pkg.name;
+  } else {
+    baseAmount = pricing[priceFieldFor(sessionMode, format)];
+  }
+
+  const platformFee = pricing.platformFee;
+  return { baseAmount, platformFee, totalAmount: baseAmount + platformFee, packageName };
+}
 
 // Both "new" and "followup" bookings now draw exclusively from admin-opened
 // slots (see NoidaFollowupSlot) — there's no more auto-generated fixed grid.
@@ -131,8 +172,57 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
   }
 });
 
+// Step 1 of the pay-first flow: figures out the authoritative price for the
+// chosen session mode/format/package and opens a Razorpay order for it.
+// The frontend never gets to say what the amount is.
+export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
+  const { sessionMode, format, packageId, address } = req.body;
+
+  if (!VALID_SESSION_MODES.includes(sessionMode)) {
+    res.status(400);
+    return next(new Error("Invalid session mode."));
+  }
+  if (!VALID_FORMATS.includes(format)) {
+    res.status(400);
+    return next(new Error("Invalid session format."));
+  }
+  if (format === "home-visit" && !address?.trim()) {
+    res.status(400);
+    return next(new Error("Please provide an address for the home visit."));
+  }
+
+  try {
+    const { baseAmount, platformFee, totalAmount, packageName } = await computeBookingAmount({ sessionMode, format, packageId });
+
+    const razorpay = getRazorpayInstance();
+    const order = await razorpay.orders.create({
+      amount: Math.round(totalAmount * 100), // paise
+      currency: "INR",
+      receipt: `noida_${Date.now()}`,
+    });
+
+    return res.status(200).json({
+      status: true,
+      data: {
+        orderId: order.id,
+        keyId: process.env.RAZORPAY_KEY_ID,
+        baseAmount,
+        platformFee,
+        amount: totalAmount,
+        packageName,
+      },
+    });
+  } catch (err) {
+    return next(new Error(err.message || "Could not start payment. Please try again."));
+  }
+});
+
 export const createNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
-  const { name, phone, email, concern, date, slot, age } = req.body;
+  const {
+    name, phone, email, concern, date, slot, age,
+    sessionMode, format, address, packageId,
+    razorpay_order_id, razorpay_payment_id, razorpay_signature,
+  } = req.body;
   const type = normalizeType(req.body.type);
 
   if (!name?.trim() || !phone?.trim()) {
@@ -147,6 +237,27 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     res.status(400);
     return next(new Error("Please select a valid date and time slot."));
   }
+  if (!VALID_SESSION_MODES.includes(sessionMode) || !VALID_FORMATS.includes(format)) {
+    res.status(400);
+    return next(new Error("Please select a session type and format."));
+  }
+  if (format === "home-visit" && !address?.trim()) {
+    res.status(400);
+    return next(new Error("Please provide an address for the home visit."));
+  }
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    res.status(400);
+    return next(new Error("Payment is required to confirm this booking."));
+  }
+
+  const expectedSignature = crypto
+    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+    .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+    .digest("hex");
+  if (razorpay_signature !== expectedSignature) {
+    res.status(400);
+    return next(new Error("Payment verification failed."));
+  }
 
   const isOpen = await NoidaFollowupSlot.findOne({ date, slot, type });
   if (!isOpen) {
@@ -158,8 +269,12 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     const alreadyBooked = await NoidaAppointment.findOne({ date, slot, status: "confirmed" });
     if (alreadyBooked) {
       res.status(409);
-      return next(new Error("Sorry, that slot was just booked by someone else. Please pick another."));
+      return next(new Error("Sorry, that slot was just booked by someone else. Please pick another — your payment will be refunded."));
     }
+
+    // Recomputed fresh (never trusts a client-sent amount) — matches what the
+    // order was created for, since both calls read the same live pricing.
+    const { baseAmount, platformFee, totalAmount, packageName } = await computeBookingAmount({ sessionMode, format, packageId });
 
     const appointment = await NoidaAppointment.create({
       name: name.trim(),
@@ -170,14 +285,32 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
       date,
       slot,
       type,
+      sessionMode,
+      format,
+      address: format === "home-visit" ? address.trim() : "",
+      packageId: sessionMode === "package" ? packageId : null,
+      packageName,
+      amount: totalAmount,
+      platformFee,
+      paymentStatus: "paid",
+      razorpayOrderId: razorpay_order_id,
+      razorpayPaymentId: razorpay_payment_id,
     });
+
+    const formatLabel = format === "home-visit" ? "Home Visit" : format === "online" ? "Online" : "In-person";
+    const modeLabel = sessionMode === "package" ? `Package (${packageName})` : sessionMode === "couple" ? "Couple" : "Individual";
 
     try {
       await sendMail(
         "chooseyourtherapist@gmail.com",
         `Noida Center Booking (${type === "followup" ? "Follow-up" : "New"}): ${name} — ${date} ${slot}`,
         `New Noida center appointment: ${name}, ${phone}, ${date} ${slot}`,
-        leadNotificationEmail({ name, phone, email, age, concern: `Noida center ${type === "followup" ? "follow-up" : "visit"} — ${date} at ${slot}`, source: "Noida Center Booking" })
+        leadNotificationEmail({
+          name, phone, email, age,
+          concern: `${modeLabel} · ${formatLabel}${address ? ` · ${address}` : ""} — ${date} at ${slot} — ₹${totalAmount} paid${concern ? ` — "${concern}"` : ""}`,
+          source: "Noida Center Booking",
+          amount: totalAmount,
+        })
       );
     } catch (mailErr) {
       console.error("Noida appointment admin alert failed (non-fatal):", mailErr.message);
