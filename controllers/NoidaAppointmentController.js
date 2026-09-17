@@ -64,18 +64,18 @@ export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
   }
 
   const saved = await NoidaFollowupSlot.find({ date, type }).select("slot").lean();
-  let slots = saved.map((s) => s.slot);
+  let slotLabels = saved.map((s) => s.slot);
 
-  slots = dropPastNotice(slots, date, today, now);
+  slotLabels = dropPastNotice(slotLabels, date, today, now);
 
-  if (slots.length > 0) {
-    // Physical slot occupancy is global — a "new" and a "followup" booking can't share a time.
-    const booked = await NoidaAppointment.find({ date, status: "confirmed" }).select("slot").lean();
-    const bookedSet = new Set(booked.map((b) => b.slot));
-    slots = slots.filter((s) => !bookedSet.has(s));
-  }
+  // Physical slot occupancy is global — a "new" and a "followup" booking can't share a time.
+  // Booked slots stay in the list (marked booked) rather than disappearing, so the client
+  // can see the full picture of what's taken vs. open.
+  const booked = await NoidaAppointment.find({ date, status: "confirmed" }).select("slot").lean();
+  const bookedSet = new Set(booked.map((b) => b.slot));
+  const data = slotLabels.map((slot) => ({ slot, booked: bookedSet.has(slot) }));
 
-  return res.status(200).json({ status: true, data: slots });
+  return res.status(200).json({ status: true, data });
 });
 
 // Public: which dates currently have at least one open (unbooked) slot for
