@@ -313,6 +313,26 @@ export const appointmentStatusMail = ({ firstName, isConfirmed, confirmedTime, c
   });
 
 // ============================================================================
+// NOIDA CENTER — CALENDLY-STYLE BOOKING
+// ============================================================================
+
+export const noidaAppointmentConfirmationEmail = ({ name, date, slot, concern }) =>
+  shell({
+    preheader: `Your Noida center visit is booked for ${date}, ${slot}`,
+    withBanner: true,
+    body:
+      eyebrow("Appointment confirmed", OK) +
+      heading(`See you soon, ${esc((name || "there").split(/\s+/)[0])}`) +
+      para("Your in-person session at our Noida therapy center is booked. Please arrive 10 minutes early.") +
+      kvTable([
+        ["Date", esc(date)],
+        ["Time", esc(slot)],
+        concern && ["Concern", esc(concern)],
+      ]) +
+      note(`Need to reschedule or cancel? WhatsApp us at ${BRAND.phone} or reply to this email.`),
+  });
+
+// ============================================================================
 // INTERNAL ALERTS  (sent to the CYT inbox, not to clients)
 // ============================================================================
 
