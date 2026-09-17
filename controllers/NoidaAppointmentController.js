@@ -6,25 +6,14 @@ import Lead from "../models/Lead.js";
 import { sendMail } from "../helper/mailer.js";
 import { leadNotificationEmail, noidaAppointmentConfirmationEmail } from "../services/mailTemplates.js";
 
-// Center hours: Mon–Sat, 10:00 AM – 7:00 PM, 45-min slots. Closed Sunday.
-// (This fixed grid is only for new-client bookings — follow-ups use whatever
-// dates/slots the admin has explicitly opened, see NoidaFollowupSlot.)
-const START_HOUR = 10;
-const END_HOUR = 19;
-const SLOT_MINUTES = 45;
+// Both "new" and "followup" bookings now draw exclusively from admin-opened
+// slots (see NoidaFollowupSlot) — there's no more auto-generated fixed grid.
+// These two constants are the only leftover "business hours" concept, and
+// they only matter for the same-day notice cutoff below.
 const MIN_NOTICE_MINUTES = 60; // can't book a same-day slot starting sooner than this
-const MAX_DAYS_AHEAD = 30;
+const MAX_DAYS_AHEAD = 60;
 
 const pad2 = (n) => String(n).padStart(2, "0");
-
-function fmtTime(minutesOfDay) {
-  let h = Math.floor(minutesOfDay / 60);
-  const m = minutesOfDay % 60;
-  const ampm = h >= 12 ? "PM" : "AM";
-  let h12 = h % 12;
-  if (h12 === 0) h12 = 12;
-  return `${h12}:${pad2(m)} ${ampm}`;
-}
 
 // Current wall-clock time in Asia/Kolkata, independent of the server's own timezone.
 function istNow() {
@@ -39,17 +28,8 @@ function isValidDateStr(s) {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
-// All fixed-grid slot labels for a given date — "" (empty array) if the center is closed that day.
-function allSlotsForDate(dateStr) {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const weekday = new Date(y, m - 1, d, 12).getDay(); // noon avoids any DST/TZ boundary issue
-  if (weekday === 0) return []; // closed Sunday
-
-  const slots = [];
-  for (let t = START_HOUR * 60; t + SLOT_MINUTES <= END_HOUR * 60; t += SLOT_MINUTES) {
-    slots.push(`${fmtTime(t)} - ${fmtTime(t + SLOT_MINUTES)}`);
-  }
-  return slots;
+function normalizeType(t) {
+  return t === "new" ? "new" : "followup";
 }
 
 // Drops slots starting within the same-day notice window. No-op for future dates.
@@ -68,7 +48,7 @@ function dropPastNotice(slots, date, today, now) {
 
 export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
   const { date } = req.query;
-  const type = req.query.type === "followup" ? "followup" : "new";
+  const type = normalizeType(req.query.type);
   if (!isValidDateStr(date)) {
     res.status(400);
     return next(new Error("A valid date (YYYY-MM-DD) is required."));
@@ -83,13 +63,8 @@ export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
     return res.status(200).json({ status: true, data: [] });
   }
 
-  let slots;
-  if (type === "followup") {
-    const saved = await NoidaFollowupSlot.find({ date }).select("slot").lean();
-    slots = saved.map((s) => s.slot);
-  } else {
-    slots = allSlotsForDate(date);
-  }
+  const saved = await NoidaFollowupSlot.find({ date, type }).select("slot").lean();
+  let slots = saved.map((s) => s.slot);
 
   slots = dropPastNotice(slots, date, today, now);
 
@@ -103,16 +78,17 @@ export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
   return res.status(200).json({ status: true, data: slots });
 });
 
-// Public: which dates currently have at least one open (unbooked) follow-up
-// slot — lets the follow-up tab show only dates worth offering, instead of
-// blindly rendering 14 days and querying each one.
+// Public: which dates currently have at least one open (unbooked) slot for
+// the given type — lets the booking page show only dates worth offering,
+// instead of blindly rendering N days and querying each one.
 export const getFollowupDates = expressAsyncHandler(async (req, res, next) => {
   try {
+    const type = normalizeType(req.query.type);
     const now = istNow();
     const today = istDateStr(now);
 
     const [allSlots, booked] = await Promise.all([
-      NoidaFollowupSlot.find({ date: { $gte: today } }).select("date slot").lean(),
+      NoidaFollowupSlot.find({ date: { $gte: today }, type }).select("date slot").lean(),
       NoidaAppointment.find({ date: { $gte: today }, status: "confirmed" }).select("date slot").lean(),
     ]);
 
@@ -157,7 +133,7 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
 
 export const createNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
   const { name, phone, email, concern, date, slot, age } = req.body;
-  const type = req.body.type === "followup" ? "followup" : "new";
+  const type = normalizeType(req.body.type);
 
   if (!name?.trim() || !phone?.trim()) {
     res.status(400);
@@ -172,15 +148,10 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     return next(new Error("Please select a valid date and time slot."));
   }
 
-  if (type === "followup") {
-    const isOpen = await NoidaFollowupSlot.findOne({ date, slot });
-    if (!isOpen) {
-      res.status(400);
-      return next(new Error("That slot isn't open for follow-ups on the selected date."));
-    }
-  } else if (!allSlotsForDate(date).includes(slot)) {
+  const isOpen = await NoidaFollowupSlot.findOne({ date, slot, type });
+  if (!isOpen) {
     res.status(400);
-    return next(new Error("That slot isn't valid for the selected date."));
+    return next(new Error("That slot isn't open for booking on the selected date."));
   }
 
   try {
@@ -314,14 +285,16 @@ export const deleteNoidaAppointment = expressAsyncHandler(async (req, res, next)
   }
 });
 
-// ── Follow-up slot management (admin) ──────────────────────────────────
-// Admin opens up specific date+slot combinations for follow-ups; clients
-// on the Follow-up tab can only pick from what's been opened here.
+// ── Slot management (admin) ─────────────────────────────────────────────
+// Admin opens up specific date+slot combinations, tagged "new" or
+// "followup"; clients on the matching tab can only pick from what's been
+// opened here.
 
 export const getFollowupSlots = expressAsyncHandler(async (req, res, next) => {
   try {
     const filter = {};
     if (req.query.date) filter.date = req.query.date;
+    if (req.query.type) filter.type = normalizeType(req.query.type);
 
     const slots = await NoidaFollowupSlot.find(filter).sort({ date: 1, slot: 1 }).lean();
     const booked = await NoidaAppointment.find({ status: "confirmed" }).select("date slot").lean();
@@ -336,6 +309,7 @@ export const getFollowupSlots = expressAsyncHandler(async (req, res, next) => {
 
 export const addFollowupSlots = expressAsyncHandler(async (req, res, next) => {
   const { date, slots } = req.body;
+  const type = normalizeType(req.body.type);
   if (!isValidDateStr(date) || !Array.isArray(slots) || slots.length === 0) {
     res.status(400);
     return next(new Error("A date and at least one slot are required."));
@@ -344,14 +318,49 @@ export const addFollowupSlots = expressAsyncHandler(async (req, res, next) => {
   try {
     const ops = slots.map((slot) => ({
       updateOne: {
-        filter: { date, slot },
-        update: { $setOnInsert: { date, slot } },
+        filter: { date, slot, type },
+        update: { $setOnInsert: { date, slot, type } },
         upsert: true,
       },
     }));
     await NoidaFollowupSlot.bulkWrite(ops);
-    const saved = await NoidaFollowupSlot.find({ date, slot: { $in: slots } }).sort({ slot: 1 }).lean();
-    return res.status(201).json({ status: true, message: "Slots opened for follow-ups.", data: saved });
+    const saved = await NoidaFollowupSlot.find({ date, type, slot: { $in: slots } }).sort({ slot: 1 }).lean();
+    return res.status(201).json({ status: true, message: "Slots opened.", data: saved });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// Admin convenience: open the same set of slot labels across many dates in
+// one click, instead of clicking through each date individually — mainly
+// for populating the next couple of weeks' worth of availability at once.
+export const addFollowupSlotsBulk = expressAsyncHandler(async (req, res, next) => {
+  const { dates, slots } = req.body;
+  const type = normalizeType(req.body.type);
+  if (!Array.isArray(dates) || dates.length === 0 || !Array.isArray(slots) || slots.length === 0) {
+    res.status(400);
+    return next(new Error("At least one date and one slot are required."));
+  }
+  if (!dates.every(isValidDateStr)) {
+    res.status(400);
+    return next(new Error("One or more dates are invalid."));
+  }
+
+  try {
+    const ops = [];
+    for (const date of dates) {
+      for (const slot of slots) {
+        ops.push({
+          updateOne: {
+            filter: { date, slot, type },
+            update: { $setOnInsert: { date, slot, type } },
+            upsert: true,
+          },
+        });
+      }
+    }
+    await NoidaFollowupSlot.bulkWrite(ops);
+    return res.status(201).json({ status: true, message: `Opened up to ${ops.length} slots across ${dates.length} date(s).` });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }

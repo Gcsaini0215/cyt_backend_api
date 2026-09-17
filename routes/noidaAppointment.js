@@ -9,6 +9,7 @@ import {
   deleteNoidaAppointment,
   getFollowupSlots,
   addFollowupSlots,
+  addFollowupSlotsBulk,
   deleteFollowupSlot,
 } from "../controllers/NoidaAppointmentController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
@@ -27,6 +28,7 @@ router.delete("/noida-appointments/:id", hasPermission("bookings"), deleteNoidaA
 
 router.get("/noida-followup-slots", hasPermission("bookings"), getFollowupSlots);
 router.post("/noida-followup-slots", hasPermission("bookings"), addFollowupSlots);
+router.post("/noida-followup-slots/bulk", hasPermission("bookings"), addFollowupSlotsBulk);
 router.delete("/noida-followup-slots/:id", hasPermission("bookings"), deleteFollowupSlot);
 
 export default router;
