@@ -31,6 +31,10 @@ const noidaAppointmentSchema = new Schema({
   creditUsed:  { type: Schema.Types.ObjectId, ref: "NoidaClientCredit", default: null }, // which credit record this session was deducted from, if any
 
   assignedTo:  { type: Schema.Types.ObjectId, ref: "Admin", default: null }, // team member handling this booking
+
+  previousDate:    { type: String, default: "" }, // set on reschedule — the slot this booking moved FROM
+  previousSlot:    { type: String, default: "" },
+  rescheduleCount: { type: Number, default: 0 },
 }, { timestamps: true });
 
 noidaAppointmentSchema.index({ date: 1, slot: 1 });

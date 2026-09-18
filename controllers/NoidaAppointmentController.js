@@ -148,6 +148,123 @@ export const getFollowupDates = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
+// Public: the nearest upcoming confirmed booking for a phone number — powers
+// the self-service Reschedule tab. Only name/date/slot/type are exposed,
+// same privacy bar as lookupClientByPhone.
+export const getUpcomingAppointment = expressAsyncHandler(async (req, res, next) => {
+  const phone = (req.query.phone || "").trim();
+  if (!/^\d{10}$/.test(phone)) {
+    return res.status(400).json({ status: false, message: "A valid 10-digit phone number is required." });
+  }
+
+  try {
+    const today = istDateStr(istNow());
+    const appointment = await NoidaAppointment.findOne({ phone, status: "confirmed", date: { $gte: today } })
+      .sort({ date: 1, slot: 1 })
+      .select("name date slot type")
+      .lean();
+
+    if (!appointment) {
+      return res.status(200).json({ status: true, data: { found: false } });
+    }
+    return res.status(200).json({
+      status: true,
+      data: { found: true, name: appointment.name, date: appointment.date, slot: appointment.slot, type: appointment.type },
+    });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// Public: moves a client's nearest upcoming booking to a new date/slot.
+// Re-derives the booking from phone server-side (never trusts a client-sent
+// appointment id) and re-validates the target slot exactly like a fresh
+// booking would — open, and not already taken by someone else.
+export const rescheduleNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
+  const phone = (req.body.phone || "").trim();
+  const newDate = req.body.newDate;
+  const newSlot = (req.body.newSlot || "").trim();
+
+  if (!/^\d{10}$/.test(phone)) {
+    res.status(400);
+    return next(new Error("A valid 10-digit phone number is required."));
+  }
+  if (!isValidDateStr(newDate) || !newSlot) {
+    res.status(400);
+    return next(new Error("Please select a valid date and time slot."));
+  }
+
+  try {
+    const today = istDateStr(istNow());
+    const appointment = await NoidaAppointment.findOne({ phone, status: "confirmed", date: { $gte: today } })
+      .sort({ date: 1, slot: 1 });
+
+    if (!appointment) {
+      res.status(404);
+      return next(new Error("No upcoming appointment found for this number."));
+    }
+
+    const isOpen = await NoidaFollowupSlot.findOne({ date: newDate, slot: newSlot, type: appointment.type });
+    if (!isOpen) {
+      res.status(400);
+      return next(new Error("That slot isn't open for booking on the selected date."));
+    }
+    const clash = await NoidaAppointment.findOne({ date: newDate, slot: newSlot, status: "confirmed" });
+    if (clash) {
+      res.status(409);
+      return next(new Error("Sorry, that slot was just booked by someone else. Please pick another."));
+    }
+
+    const previousDate = appointment.date;
+    const previousSlot = appointment.slot;
+
+    appointment.previousDate = previousDate;
+    appointment.previousSlot = previousSlot;
+    appointment.rescheduleCount = (appointment.rescheduleCount || 0) + 1;
+    appointment.date = newDate;
+    appointment.slot = newSlot;
+    await appointment.save();
+
+    // Notify whoever owns this booking (assignee if set, else the fixed inbox) —
+    // same pattern as a brand-new booking, just framed as a reschedule.
+    const notifyTarget = appointment.assignedTo
+      ? await Admin.findById(appointment.assignedTo).select("name email")
+      : null;
+    const notifyEmail = notifyTarget?.email || "chooseyourtherapist@gmail.com";
+    try {
+      await sendMail(
+        notifyEmail,
+        `🔄 Rescheduled: ${appointment.name} — now ${newDate} ${newSlot}`,
+        `${appointment.name} (${phone}) moved their appointment from ${previousDate} ${previousSlot} to ${newDate} ${newSlot}.`,
+        leadNotificationEmail({
+          name: appointment.name, phone, email: appointment.email,
+          concern: `Rescheduled from ${previousDate} ${previousSlot} to ${newDate} ${newSlot}${appointment.concern ? ` — "${appointment.concern}"` : ""}`,
+          source: notifyTarget ? "Assigned to you — Noida Reschedule" : "Noida Center Reschedule",
+        })
+      );
+    } catch (mailErr) {
+      console.error("Reschedule notification email failed (non-fatal):", mailErr.message);
+    }
+
+    if (appointment.email?.trim()) {
+      try {
+        await sendMail(
+          appointment.email.trim(),
+          "Your Noida Center Appointment Has Been Rescheduled",
+          `Your appointment is now confirmed for ${newDate} at ${newSlot}.`,
+          noidaAppointmentConfirmationEmail({ name: appointment.name, date: newDate, slot: newSlot, concern: appointment.concern })
+        );
+      } catch (mailErr) {
+        console.error("Reschedule client confirmation failed (non-fatal):", mailErr.message);
+      }
+    }
+
+    return res.status(200).json({ status: true, message: "Appointment rescheduled.", data: appointment });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
 // Public: "have we seen this phone number before?" — used by the follow-up
 // tab to greet a returning client by name instead of asking them to
 // re-type everything. Checks past Noida bookings first, then the general

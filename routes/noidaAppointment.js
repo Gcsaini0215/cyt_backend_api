@@ -13,6 +13,8 @@ import {
   addFollowupSlots,
   addFollowupSlotsBulk,
   deleteFollowupSlot,
+  getUpcomingAppointment,
+  rescheduleNoidaAppointment,
 } from "../controllers/NoidaAppointmentController.js";
 import {
   getPublicPricing,
@@ -40,6 +42,8 @@ router.get("/noida-appointments/followup-dates", leadRateLimit, getFollowupDates
 router.get("/noida-appointments/pricing", leadRateLimit, getPublicPricing);      // public — no auth
 router.post("/noida-appointments/create-order", leadRateLimit, createNoidaOrder); // public — no auth
 router.post("/noida-appointments", leadRateLimit, createNoidaAppointment);       // public — no auth
+router.get("/noida-appointments/upcoming", phoneLookupRateLimit, getUpcomingAppointment); // public — no auth
+router.patch("/noida-appointments/reschedule", leadRateLimit, rescheduleNoidaAppointment); // public — no auth, registered before the :id route below
 
 router.get("/noida-appointments", hasPermission("noidaCenter"), getNoidaAppointments);
 router.patch("/noida-appointments/:id", hasPermission("noidaCenter"), updateNoidaAppointment);
