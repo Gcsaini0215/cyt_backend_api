@@ -26,11 +26,13 @@ const noidaAppointmentSchema = new Schema({
   amount:      { type: Number, default: 0 },  // total charged, in rupees (base + platform fee) — 0 when paid via credit
   platformFee: { type: Number, default: 0 },
   paymentStatus: { type: String, enum: ["pending", "paid", "failed", "package-credit"], default: "pending" },
+  paymentMethod: { type: String, enum: ["razorpay", "qr", "cash", "credit"], default: "razorpay" },
   razorpayOrderId:   { type: String, default: "" },
   razorpayPaymentId: { type: String, default: "" },
   creditUsed:  { type: Schema.Types.ObjectId, ref: "NoidaClientCredit", default: null }, // which credit record this session was deducted from, if any
 
   assignedTo:  { type: Schema.Types.ObjectId, ref: "Admin", default: null }, // team member handling this booking
+  bookedByAdmin: { type: Schema.Types.ObjectId, ref: "Admin", default: null }, // set when reception/staff booked this on the client's behalf
 
   previousDate:    { type: String, default: "" }, // set on reschedule — the slot this booking moved FROM
   previousSlot:    { type: String, default: "" },

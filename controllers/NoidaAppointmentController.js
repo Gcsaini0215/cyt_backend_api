@@ -8,7 +8,9 @@ import NoidaPackage from "../models/NoidaPackage.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import Lead from "../models/Lead.js";
 import Admin from "../models/Admin.js";
+import UPIInfo from "../models/UPIInfo.js";
 import { sendMail } from "../helper/mailer.js";
+import { generateQrCode } from "../helper/generate.js";
 import { leadNotificationEmail, noidaAppointmentConfirmationEmail } from "../services/mailTemplates.js";
 import { getOrCreatePricing } from "./NoidaPricingController.js";
 import { getActiveCredit } from "./NoidaClientCreditController.js";
@@ -362,6 +364,154 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
+// Shared by both the public pay-first flow and the admin reception-booking
+// flow — caller has already verified payment (Razorpay signature) or
+// established there's an active credit before calling this. `paymentMethod`
+// is one of "razorpay" | "cash" | "qr" (ignored when credit is set).
+async function finalizeNoidaBooking({
+  name, phone, email, concern, date, slot, type, age,
+  sessionMode, format, address, packageId,
+  credit, paymentMethod, razorpayOrderId, razorpayPaymentId, bookedByAdmin,
+}) {
+  const alreadyBooked = await NoidaAppointment.findOne({ date, slot, status: "confirmed" });
+  if (alreadyBooked) {
+    const err = new Error("Sorry, that slot was just booked by someone else. Please pick another.");
+    err.status = 409;
+    throw err;
+  }
+
+  let baseAmount = 0, platformFee = 0, totalAmount = 0, packageName = "", creditUsedId = null;
+
+  if (credit) {
+    // Atomically claim one session — the sessionsUsed condition means only
+    // one concurrent request can win if two both raced in on the same credit.
+    const claimed = await NoidaClientCredit.findOneAndUpdate(
+      { _id: credit._id, sessionsUsed: credit.sessionsUsed },
+      { $inc: { sessionsUsed: 1 } },
+      { new: true }
+    );
+    if (!claimed) {
+      const err = new Error("That session credit was just claimed elsewhere. Please refresh and try again.");
+      err.status = 409;
+      throw err;
+    }
+    packageName = claimed.packageName;
+    creditUsedId = claimed._id;
+  } else {
+    // Recomputed fresh (never trusts a client-sent amount) — matches what the
+    // order was created for, since both calls read the same live pricing.
+    const computed = await computeBookingAmount({ sessionMode, format, packageId });
+    baseAmount = computed.baseAmount;
+    platformFee = computed.platformFee;
+    totalAmount = computed.totalAmount;
+    packageName = computed.packageName;
+  }
+
+  const appointment = await NoidaAppointment.create({
+    name: name.trim(),
+    age: age?.toString().trim() || "",
+    phone: phone.trim(),
+    email: email?.trim() || "",
+    concern: concern?.trim() || "",
+    date,
+    slot,
+    type,
+    sessionMode,
+    format,
+    address: format === "home-visit" ? address.trim() : "",
+    packageId: sessionMode === "package" ? packageId : null,
+    packageName,
+    amount: totalAmount,
+    platformFee,
+    paymentStatus: credit ? "package-credit" : "paid",
+    paymentMethod: credit ? "credit" : paymentMethod,
+    razorpayOrderId: razorpayOrderId || "",
+    razorpayPaymentId: razorpayPaymentId || "",
+    creditUsed: creditUsedId,
+    bookedByAdmin: bookedByAdmin || null,
+  });
+
+  // A brand-new (paid, not credit-funded) package purchase — open a credit
+  // record so this client's future follow-ups skip payment automatically.
+  if (!credit && sessionMode === "package" && packageId) {
+    const pkg = await NoidaPackage.findById(packageId).lean();
+    if (pkg) {
+      await NoidaClientCredit.create({
+        phone: phone.trim(),
+        name: name.trim(),
+        packageName: pkg.name,
+        totalSessions: pkg.sessionsCount,
+        sessionsUsed: 1, // this booking is the first session of the bundle
+        source: "online-purchase",
+      });
+    }
+  }
+
+  const formatLabel = format === "home-visit" ? "Home Visit" : format === "online" ? "Online" : "In-person";
+  const modeLabel = sessionMode === "package" ? `Package (${packageName})` : sessionMode === "couple" ? "Couple" : "Individual";
+  const paidLabel = credit ? `used 1 package session (${packageName})` : `₹${totalAmount} paid (${paymentMethod})`;
+
+  try {
+    await sendMail(
+      "chooseyourtherapist@gmail.com",
+      `Noida Center Booking (${type === "followup" ? "Follow-up" : "New"}): ${name} — ${date} ${slot}`,
+      `New Noida center appointment: ${name}, ${phone}, ${date} ${slot}`,
+      leadNotificationEmail({
+        name, phone, email, age,
+        concern: `${modeLabel} · ${formatLabel}${address ? ` · ${address}` : ""} — ${date} at ${slot} — ${paidLabel}${concern ? ` — "${concern}"` : ""}`,
+        source: bookedByAdmin ? "Noida Center Booking (Reception)" : "Noida Center Booking",
+        amount: totalAmount,
+      })
+    );
+  } catch (mailErr) {
+    console.error("Noida appointment admin alert failed (non-fatal):", mailErr.message);
+  }
+
+  // Auto-assign to whoever the admin has set as the default owner for new
+  // Noida bookings (Pricing tab), and email them the same details — so
+  // someone owns follow-up without needing to notice and self-assign.
+  const pricingForAssignee = await getOrCreatePricing();
+  if (pricingForAssignee.defaultAssignee) {
+    const assignee = await Admin.findById(pricingForAssignee.defaultAssignee).select("name email");
+    if (assignee) {
+      appointment.assignedTo = assignee._id;
+      await appointment.save();
+      if (assignee.email) {
+        try {
+          await sendMail(
+            assignee.email,
+            `📅 Noida Booking Assigned to You: ${name} — ${date} ${slot}`,
+            `A Noida center appointment has been assigned to you: ${name}, ${phone}, ${date} ${slot}`,
+            leadNotificationEmail({
+              name, phone, email, age,
+              concern: `${modeLabel} · ${formatLabel}${address ? ` · ${address}` : ""} — ${date} at ${slot} — ${paidLabel}${concern ? ` — "${concern}"` : ""}`,
+              source: "Assigned to you — Noida Center Booking",
+              amount: totalAmount,
+            })
+          );
+        } catch (mailErr) {
+          console.error("Noida appointment assignee email failed (non-fatal):", mailErr.message);
+        }
+      }
+    }
+  }
+
+  if (email?.trim()) {
+    try {
+      await sendMail(
+        email.trim(),
+        "Your Noida Center Appointment is Confirmed",
+        `Your appointment is confirmed for ${date} at ${slot}.`,
+        noidaAppointmentConfirmationEmail({ name, date, slot, concern })
+      );
+    } catch (mailErr) {
+      console.error("Noida appointment client confirmation failed (non-fatal):", mailErr.message);
+    }
+  }
+
+  return appointment;
+}
+
 export const createNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
   const {
     name, phone, email, concern, date, slot, age,
@@ -416,143 +566,101 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
   }
 
   try {
-    const alreadyBooked = await NoidaAppointment.findOne({ date, slot, status: "confirmed" });
-    if (alreadyBooked) {
-      res.status(409);
-      return next(new Error("Sorry, that slot was just booked by someone else. Please pick another — your payment will be refunded."));
-    }
-
-    let baseAmount = 0, platformFee = 0, totalAmount = 0, packageName = "", creditUsedId = null;
-
-    if (credit) {
-      // Atomically claim one session — the sessionsUsed condition means only
-      // one concurrent request can win if two both raced in on the same credit.
-      const claimed = await NoidaClientCredit.findOneAndUpdate(
-        { _id: credit._id, sessionsUsed: credit.sessionsUsed },
-        { $inc: { sessionsUsed: 1 } },
-        { new: true }
-      );
-      if (!claimed) {
-        res.status(409);
-        return next(new Error("Your session credit was just claimed elsewhere. Please refresh and try again, or WhatsApp us."));
-      }
-      packageName = claimed.packageName;
-      creditUsedId = claimed._id;
-    } else {
-      // Recomputed fresh (never trusts a client-sent amount) — matches what the
-      // order was created for, since both calls read the same live pricing.
-      const computed = await computeBookingAmount({ sessionMode, format, packageId });
-      baseAmount = computed.baseAmount;
-      platformFee = computed.platformFee;
-      totalAmount = computed.totalAmount;
-      packageName = computed.packageName;
-    }
-
-    const appointment = await NoidaAppointment.create({
-      name: name.trim(),
-      age: age?.toString().trim() || "",
-      phone: phone.trim(),
-      email: email?.trim() || "",
-      concern: concern?.trim() || "",
-      date,
-      slot,
-      type,
-      sessionMode,
-      format,
-      address: format === "home-visit" ? address.trim() : "",
-      packageId: sessionMode === "package" ? packageId : null,
-      packageName,
-      amount: totalAmount,
-      platformFee,
-      paymentStatus: credit ? "package-credit" : "paid",
-      razorpayOrderId: credit ? "" : razorpay_order_id,
-      razorpayPaymentId: credit ? "" : razorpay_payment_id,
-      creditUsed: creditUsedId,
+    const appointment = await finalizeNoidaBooking({
+      name, phone, email, concern, date, slot, type, age,
+      sessionMode, format, address, packageId, credit,
+      paymentMethod: "razorpay",
+      razorpayOrderId: razorpay_order_id,
+      razorpayPaymentId: razorpay_payment_id,
     });
-
-    // A brand-new (paid, not credit-funded) package purchase — open a credit
-    // record so this client's future follow-ups skip payment automatically.
-    if (!credit && sessionMode === "package" && packageId) {
-      const pkg = await NoidaPackage.findById(packageId).lean();
-      if (pkg) {
-        await NoidaClientCredit.create({
-          phone: phone.trim(),
-          name: name.trim(),
-          packageName: pkg.name,
-          totalSessions: pkg.sessionsCount,
-          sessionsUsed: 1, // this booking is the first session of the bundle
-          source: "online-purchase",
-        });
-      }
-    }
-
-    const formatLabel = format === "home-visit" ? "Home Visit" : format === "online" ? "Online" : "In-person";
-    const modeLabel = sessionMode === "package" ? `Package (${packageName})` : sessionMode === "couple" ? "Couple" : "Individual";
-    const paidLabel = credit ? `used 1 package session (${packageName})` : `₹${totalAmount} paid`;
-
-    try {
-      await sendMail(
-        "chooseyourtherapist@gmail.com",
-        `Noida Center Booking (${type === "followup" ? "Follow-up" : "New"}): ${name} — ${date} ${slot}`,
-        `New Noida center appointment: ${name}, ${phone}, ${date} ${slot}`,
-        leadNotificationEmail({
-          name, phone, email, age,
-          concern: `${modeLabel} · ${formatLabel}${address ? ` · ${address}` : ""} — ${date} at ${slot} — ${paidLabel}${concern ? ` — "${concern}"` : ""}`,
-          source: "Noida Center Booking",
-          amount: totalAmount,
-        })
-      );
-    } catch (mailErr) {
-      console.error("Noida appointment admin alert failed (non-fatal):", mailErr.message);
-    }
-
-    // Auto-assign to whoever the admin has set as the default owner for new
-    // Noida bookings (Pricing tab), and email them the same details — so
-    // someone owns follow-up without needing to notice and self-assign.
-    const pricingForAssignee = await getOrCreatePricing();
-    if (pricingForAssignee.defaultAssignee) {
-      const assignee = await Admin.findById(pricingForAssignee.defaultAssignee).select("name email");
-      if (assignee) {
-        appointment.assignedTo = assignee._id;
-        await appointment.save();
-        if (assignee.email) {
-          try {
-            await sendMail(
-              assignee.email,
-              `📅 Noida Booking Assigned to You: ${name} — ${date} ${slot}`,
-              `A Noida center appointment has been assigned to you: ${name}, ${phone}, ${date} ${slot}`,
-              leadNotificationEmail({
-                name, phone, email, age,
-                concern: `${modeLabel} · ${formatLabel}${address ? ` · ${address}` : ""} — ${date} at ${slot} — ${paidLabel}${concern ? ` — "${concern}"` : ""}`,
-                source: "Assigned to you — Noida Center Booking",
-                amount: totalAmount,
-              })
-            );
-          } catch (mailErr) {
-            console.error("Noida appointment assignee email failed (non-fatal):", mailErr.message);
-          }
-        }
-      }
-    }
-
-    if (email?.trim()) {
-      try {
-        await sendMail(
-          email.trim(),
-          "Your Noida Center Appointment is Confirmed",
-          `Your appointment is confirmed for ${date} at ${slot}.`,
-          noidaAppointmentConfirmationEmail({ name, date, slot, concern })
-        );
-      } catch (mailErr) {
-        console.error("Noida appointment client confirmation failed (non-fatal):", mailErr.message);
-      }
-    }
-
     return res.status(201).json({
       status: true,
       message: "Appointment booked successfully.",
       data: appointment,
     });
+  } catch (err) {
+    res.status(err.status || 500);
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// Admin-only (reception): books an appointment on the client's behalf,
+// without a Razorpay checkout — payment is either an existing credit,
+// or collected as cash/QR and confirmed by the staff member themselves.
+// A public page can never safely offer this (anyone could claim "paid"
+// without paying), so this stays behind admin auth.
+export const adminCreateNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
+  const {
+    name, phone, email, concern, date, slot, age,
+    sessionMode, format, address, packageId, paymentMethod,
+  } = req.body;
+  const type = normalizeType(req.body.type);
+
+  if (!name?.trim() || !phone?.trim()) {
+    res.status(400);
+    return next(new Error("Name and phone number are required."));
+  }
+  if (!/^\d{10}$/.test(phone.trim())) {
+    res.status(400);
+    return next(new Error("Please enter a valid 10-digit phone number."));
+  }
+  if (!isValidDateStr(date) || !slot?.trim()) {
+    res.status(400);
+    return next(new Error("Please select a valid date and time slot."));
+  }
+  if (!VALID_SESSION_MODES.includes(sessionMode) || !VALID_FORMATS.includes(format)) {
+    res.status(400);
+    return next(new Error("Please select a session type and format."));
+  }
+  if (format === "home-visit" && !address?.trim()) {
+    res.status(400);
+    return next(new Error("Please provide an address for the home visit."));
+  }
+
+  const credit = type === "followup" ? await getActiveCredit(phone.trim()) : null;
+
+  if (!credit && !["cash", "qr"].includes(paymentMethod)) {
+    res.status(400);
+    return next(new Error("Please choose how payment was collected (cash or QR)."));
+  }
+
+  const isOpen = await NoidaFollowupSlot.findOne({ date, slot, type });
+  if (!isOpen) {
+    res.status(400);
+    return next(new Error("That slot isn't open for booking on the selected date."));
+  }
+
+  try {
+    const appointment = await finalizeNoidaBooking({
+      name, phone, email, concern, date, slot, type, age,
+      sessionMode, format, address, packageId, credit,
+      paymentMethod: credit ? undefined : paymentMethod,
+      bookedByAdmin: req.user._id,
+    });
+    return res.status(201).json({ status: true, message: "Appointment booked.", data: appointment });
+  } catch (err) {
+    res.status(err.status || 500);
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// Admin-only: generates a UPI QR code (reuses the same UPIInfo config + QR
+// helper already used for therapist bookings) for the given amount, so
+// reception can show it to a walk-in client to scan-and-pay.
+export const getNoidaPaymentQr = expressAsyncHandler(async (req, res, next) => {
+  const amount = Number(req.query.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    res.status(400);
+    return next(new Error("A valid amount is required."));
+  }
+  try {
+    const upi = await UPIInfo.findOne();
+    if (!upi) {
+      res.status(400);
+      return next(new Error("UPI payment info is not configured yet — set it up first."));
+    }
+    const qrImage = await generateQrCode({ upiID: upi.upi_id, name: upi.name, amount, note: "Noida Center Session" });
+    return res.status(200).json({ status: true, data: { qrImage, upiId: upi.upi_id, name: upi.name, amount } });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
