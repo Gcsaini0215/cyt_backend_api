@@ -7,6 +7,7 @@ import {
   getFollowupDates,
   getNoidaAppointments,
   updateNoidaAppointment,
+  assignNoidaAppointment,
   deleteNoidaAppointment,
   getFollowupSlots,
   addFollowupSlots,
@@ -42,6 +43,7 @@ router.post("/noida-appointments", leadRateLimit, createNoidaAppointment);      
 
 router.get("/noida-appointments", hasPermission("noidaCenter"), getNoidaAppointments);
 router.patch("/noida-appointments/:id", hasPermission("noidaCenter"), updateNoidaAppointment);
+router.patch("/noida-appointments/:id/assign", hasPermission("noidaCenter"), assignNoidaAppointment);
 router.delete("/noida-appointments/:id", hasPermission("noidaCenter"), deleteNoidaAppointment);
 
 router.get("/noida-followup-slots", hasPermission("noidaCenter"), getFollowupSlots);

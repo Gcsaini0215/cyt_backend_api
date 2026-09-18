@@ -29,6 +29,8 @@ const noidaAppointmentSchema = new Schema({
   razorpayOrderId:   { type: String, default: "" },
   razorpayPaymentId: { type: String, default: "" },
   creditUsed:  { type: Schema.Types.ObjectId, ref: "NoidaClientCredit", default: null }, // which credit record this session was deducted from, if any
+
+  assignedTo:  { type: Schema.Types.ObjectId, ref: "Admin", default: null }, // team member handling this booking
 }, { timestamps: true });
 
 noidaAppointmentSchema.index({ date: 1, slot: 1 });

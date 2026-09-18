@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { isSuperAdmin, isAdmin } from "../middlewares/authMiddleware.js";
-import { listAdmins, createAdmin, updateAdminRole, deleteAdmin, getMyPermissions } from "../controllers/AdminController.js";
+import { listAdmins, createAdmin, updateAdminRole, deleteAdmin, getMyPermissions, listAssignableAdmins } from "../controllers/AdminController.js";
 
 const router = Router();
 
@@ -11,5 +11,8 @@ router.delete("/team/:id", isSuperAdmin, deleteAdmin);
 
 /* Any logged-in admin (super or role-restricted) can read their own permissions */
 router.get("/my-permissions", isAdmin, getMyPermissions);
+
+/* Any logged-in admin can see the team roster to assign work to a colleague */
+router.get("/team/assignable", isAdmin, listAssignableAdmins);
 
 export default router;

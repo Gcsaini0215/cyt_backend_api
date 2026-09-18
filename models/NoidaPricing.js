@@ -14,6 +14,11 @@ const noidaPricingSchema = new Schema({
   couple_online:        { type: Number, default: 1199 },
   couple_homevisit:     { type: Number, default: 2499 },
   platformFee:          { type: Number, default: 20 },
+
+  // Auto-assigned + emailed the moment a new booking comes in, before any
+  // admin manually reassigns it — lets one team member own first response
+  // without someone having to notice and assign it by hand.
+  defaultAssignee:      { type: Schema.Types.ObjectId, ref: "Admin", default: null },
 }, { timestamps: true });
 
 export default mongoose.model("NoidaPricing", noidaPricingSchema);

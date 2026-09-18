@@ -7,6 +7,7 @@ import NoidaFollowupSlot from "../models/NoidaFollowupSlot.js";
 import NoidaPackage from "../models/NoidaPackage.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import Lead from "../models/Lead.js";
+import Admin from "../models/Admin.js";
 import { sendMail } from "../helper/mailer.js";
 import { leadNotificationEmail, noidaAppointmentConfirmationEmail } from "../services/mailTemplates.js";
 import { getOrCreatePricing } from "./NoidaPricingController.js";
@@ -388,6 +389,35 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
       console.error("Noida appointment admin alert failed (non-fatal):", mailErr.message);
     }
 
+    // Auto-assign to whoever the admin has set as the default owner for new
+    // Noida bookings (Pricing tab), and email them the same details — so
+    // someone owns follow-up without needing to notice and self-assign.
+    const pricingForAssignee = await getOrCreatePricing();
+    if (pricingForAssignee.defaultAssignee) {
+      const assignee = await Admin.findById(pricingForAssignee.defaultAssignee).select("name email");
+      if (assignee) {
+        appointment.assignedTo = assignee._id;
+        await appointment.save();
+        if (assignee.email) {
+          try {
+            await sendMail(
+              assignee.email,
+              `📅 Noida Booking Assigned to You: ${name} — ${date} ${slot}`,
+              `A Noida center appointment has been assigned to you: ${name}, ${phone}, ${date} ${slot}`,
+              leadNotificationEmail({
+                name, phone, email, age,
+                concern: `${modeLabel} · ${formatLabel}${address ? ` · ${address}` : ""} — ${date} at ${slot} — ${paidLabel}${concern ? ` — "${concern}"` : ""}`,
+                source: "Assigned to you — Noida Center Booking",
+                amount: totalAmount,
+              })
+            );
+          } catch (mailErr) {
+            console.error("Noida appointment assignee email failed (non-fatal):", mailErr.message);
+          }
+        }
+      }
+    }
+
     if (email?.trim()) {
       try {
         await sendMail(
@@ -425,6 +455,7 @@ export const getNoidaAppointments = expressAsyncHandler(async (req, res, next) =
         .sort({ date: -1, slot: 1 })
         .skip((page - 1) * pageSize)
         .limit(pageSize)
+        .populate("assignedTo", "name email")
         .lean(),
       NoidaAppointment.countDocuments(filter),
     ]);
@@ -465,6 +496,63 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
       return next(new Error("Appointment not found."));
     }
     return res.status(200).json({ status: true, message: "Appointment updated.", data: appointment });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// Assigns (or unassigns, with adminId: null) a booking to a team member and
+// emails them the booking details.
+export const assignNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  const { adminId } = req.body;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    return next(new Error("Invalid appointment ID format."));
+  }
+
+  let admin = null;
+  if (adminId) {
+    if (!mongoose.Types.ObjectId.isValid(adminId)) {
+      res.status(400);
+      return next(new Error("Invalid team member ID."));
+    }
+    admin = await Admin.findById(adminId).select("name email");
+    if (!admin) {
+      res.status(404);
+      return next(new Error("Team member not found."));
+    }
+  }
+
+  try {
+    const appointment = await NoidaAppointment.findByIdAndUpdate(id, { assignedTo: adminId || null }, { new: true })
+      .populate("assignedTo", "name email");
+    if (!appointment) {
+      res.status(404);
+      return next(new Error("Appointment not found."));
+    }
+
+    if (admin?.email) {
+      const formatLabel = appointment.format === "home-visit" ? "Home Visit" : appointment.format === "online" ? "Online" : "In-person";
+      const modeLabel = appointment.sessionMode === "package" ? `Package (${appointment.packageName})` : appointment.sessionMode === "couple" ? "Couple" : "Individual";
+      try {
+        await sendMail(
+          admin.email,
+          `📅 Noida Booking Assigned to You: ${appointment.name} — ${appointment.date} ${appointment.slot}`,
+          `A Noida center appointment has been assigned to you: ${appointment.name}, ${appointment.phone}, ${appointment.date} ${appointment.slot}`,
+          leadNotificationEmail({
+            name: appointment.name, phone: appointment.phone, email: appointment.email,
+            concern: `${modeLabel} · ${formatLabel} — ${appointment.date} at ${appointment.slot}${appointment.concern ? ` — "${appointment.concern}"` : ""}`,
+            source: "Assigned to you — Noida Center Booking",
+          })
+        );
+      } catch (mailErr) {
+        console.error("Noida appointment assignment email failed (non-fatal):", mailErr.message);
+      }
+    }
+
+    return res.status(200).json({ status: true, message: admin ? "Appointment assigned." : "Appointment unassigned.", data: appointment });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }

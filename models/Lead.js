@@ -44,6 +44,11 @@ const leadSchema = new Schema({
     enum: ["new", "contacted", "converted", "lost"],
     default: "new",
   },
+  assignedTo: {
+    type: Schema.Types.ObjectId,
+    ref: "Admin",
+    default: null,
+  },
   created_at: {
     type: Date,
     default: Date.now,

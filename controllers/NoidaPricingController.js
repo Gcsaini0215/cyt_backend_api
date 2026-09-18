@@ -2,6 +2,7 @@ import expressAsyncHandler from "express-async-handler";
 import mongoose from "mongoose";
 import NoidaPricing from "../models/NoidaPricing.js";
 import NoidaPackage from "../models/NoidaPackage.js";
+import Admin from "../models/Admin.js";
 
 const MAX_PACKAGES = 3;
 
@@ -38,6 +39,7 @@ export const getPublicPricing = expressAsyncHandler(async (req, res, next) => {
 export const getPricing = expressAsyncHandler(async (req, res, next) => {
   try {
     const pricing = await getOrCreatePricing();
+    await pricing.populate("defaultAssignee", "name email");
     return res.status(200).json({ status: true, data: pricing });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
@@ -61,9 +63,25 @@ export const updatePricing = expressAsyncHandler(async (req, res, next) => {
       }
       update[key] = n;
     }
+    if (req.body.defaultAssignee !== undefined) {
+      const adminId = req.body.defaultAssignee;
+      if (adminId) {
+        if (!mongoose.Types.ObjectId.isValid(adminId)) {
+          res.status(400);
+          return next(new Error("Invalid team member ID."));
+        }
+        const exists = await Admin.exists({ _id: adminId });
+        if (!exists) {
+          res.status(404);
+          return next(new Error("Team member not found."));
+        }
+      }
+      update.defaultAssignee = adminId || null;
+    }
     const pricing = await getOrCreatePricing();
     Object.assign(pricing, update);
     await pricing.save();
+    await pricing.populate("defaultAssignee", "name email");
     return res.status(200).json({ status: true, message: "Pricing updated.", data: pricing });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));

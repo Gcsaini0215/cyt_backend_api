@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import crypto from "crypto";
 import Lead from "../models/Lead.js";
 import LeadActivity from "../models/LeadActivity.js";
+import Admin from "../models/Admin.js";
 import { leadNotificationEmail } from "../services/mailTemplates.js";
 import { sendMail } from "../helper/mailer.js";
 
@@ -98,7 +99,7 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
 
 export const getLeads = expressAsyncHandler(async (req, res, next) => {
   try {
-    const leads = await Lead.find({}).sort({ created_at: -1 });
+    const leads = await Lead.find({}).sort({ created_at: -1 }).populate("assignedTo", "name email");
     
     // Process leads to ensure location and message are available for older records if they exist in the 'data' field
     const processedLeads = leads.map(lead => {
@@ -254,6 +255,64 @@ export const updateLeadStatus = expressAsyncHandler(async (req, res, next) => {
       message: "Lead status updated",
       data: { lead, activity },
     });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// Assigns (or unassigns, with adminId: null) a lead to a team member and
+// emails them the lead details — the same notification the fixed inbox
+// already gets, just addressed to whoever now owns following it up.
+export const assignLead = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  const { adminId } = req.body;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    return next(new Error("Invalid Lead ID format."));
+  }
+
+  let admin = null;
+  if (adminId) {
+    if (!mongoose.Types.ObjectId.isValid(adminId)) {
+      res.status(400);
+      return next(new Error("Invalid team member ID."));
+    }
+    admin = await Admin.findById(adminId).select("name email");
+    if (!admin) {
+      res.status(404);
+      return next(new Error("Team member not found."));
+    }
+  }
+
+  try {
+    const lead = await Lead.findByIdAndUpdate(id, { assignedTo: adminId || null }, { new: true })
+      .populate("assignedTo", "name email");
+    if (!lead) {
+      res.status(404);
+      return next(new Error("Lead not found."));
+    }
+
+    if (admin?.email) {
+      try {
+        await sendMail(
+          admin.email,
+          `🔔 Lead Assigned to You: ${lead.name}`,
+          `A lead has been assigned to you: ${lead.name}, ${lead.phone}.`,
+          leadNotificationEmail({
+            name: lead.name,
+            phone: lead.phone,
+            email: lead.email,
+            concern: lead.concern,
+            source: "Assigned to you",
+          })
+        );
+      } catch (mailErr) {
+        console.error("Lead assignment email failed (non-fatal):", mailErr.message);
+      }
+    }
+
+    return res.status(200).json({ status: true, message: admin ? "Lead assigned." : "Lead unassigned.", data: lead });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }

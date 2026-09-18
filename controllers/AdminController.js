@@ -24,6 +24,14 @@ export const listAdmins = expressAsyncHandler(async (req, res) => {
   res.json({ status: true, data: admins });
 });
 
+// Minimal team roster (id/name/email only) for "Assign to" dropdowns —
+// open to any logged-in admin, unlike /team which is superadmin-only
+// because it exposes full role/account management data.
+export const listAssignableAdmins = expressAsyncHandler(async (req, res) => {
+  const admins = await Admin.find().select("name email").sort({ name: 1 }).lean();
+  res.json({ status: true, data: admins });
+});
+
 export const createAdmin = expressAsyncHandler(async (req, res) => {
   const { name, email, roleId } = req.body;
   if (!name || !email) {
