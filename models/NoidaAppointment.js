@@ -23,11 +23,12 @@ const noidaAppointmentSchema = new Schema({
   packageId:   { type: Schema.Types.ObjectId, ref: "NoidaPackage", default: null },
   packageName: { type: String, default: "" }, // snapshotted at booking time — survives the package later being edited/deleted
 
-  amount:      { type: Number, default: 0 },  // total charged, in rupees (base + platform fee)
+  amount:      { type: Number, default: 0 },  // total charged, in rupees (base + platform fee) — 0 when paid via credit
   platformFee: { type: Number, default: 0 },
-  paymentStatus: { type: String, enum: ["pending", "paid", "failed"], default: "pending" },
+  paymentStatus: { type: String, enum: ["pending", "paid", "failed", "package-credit"], default: "pending" },
   razorpayOrderId:   { type: String, default: "" },
   razorpayPaymentId: { type: String, default: "" },
+  creditUsed:  { type: Schema.Types.ObjectId, ref: "NoidaClientCredit", default: null }, // which credit record this session was deducted from, if any
 }, { timestamps: true });
 
 noidaAppointmentSchema.index({ date: 1, slot: 1 });

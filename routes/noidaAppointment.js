@@ -22,6 +22,12 @@ import {
   updatePackage,
   deletePackage,
 } from "../controllers/NoidaPricingController.js";
+import {
+  getClientCredits,
+  createClientCredit,
+  updateClientCredit,
+  deleteClientCredit,
+} from "../controllers/NoidaClientCreditController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
 import { leadRateLimit, phoneLookupRateLimit } from "../middlewares/rateLimitMiddleware.js";
 
@@ -49,5 +55,10 @@ router.get("/noida-packages", hasPermission("bookings"), getPackages);
 router.post("/noida-packages", hasPermission("bookings"), createPackage);
 router.patch("/noida-packages/:id", hasPermission("bookings"), updatePackage);
 router.delete("/noida-packages/:id", hasPermission("bookings"), deletePackage);
+
+router.get("/noida-client-credits", hasPermission("bookings"), getClientCredits);
+router.post("/noida-client-credits", hasPermission("bookings"), createClientCredit);
+router.patch("/noida-client-credits/:id", hasPermission("bookings"), updateClientCredit);
+router.delete("/noida-client-credits/:id", hasPermission("bookings"), deleteClientCredit);
 
 export default router;

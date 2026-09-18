@@ -5,10 +5,12 @@ import crypto from "crypto";
 import NoidaAppointment from "../models/NoidaAppointment.js";
 import NoidaFollowupSlot from "../models/NoidaFollowupSlot.js";
 import NoidaPackage from "../models/NoidaPackage.js";
+import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import Lead from "../models/Lead.js";
 import { sendMail } from "../helper/mailer.js";
 import { leadNotificationEmail, noidaAppointmentConfirmationEmail } from "../services/mailTemplates.js";
 import { getOrCreatePricing } from "./NoidaPricingController.js";
+import { getActiveCredit } from "./NoidaClientCreditController.js";
 
 const getRazorpayInstance = () => new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
@@ -156,17 +158,28 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
   }
 
   try {
+    const credit = await getActiveCredit(phone);
+    const creditInfo = credit
+      ? { available: true, sessionsRemaining: credit.totalSessions - credit.sessionsUsed, packageName: credit.packageName }
+      : { available: false, sessionsRemaining: 0, packageName: "" };
+
     const pastAppointment = await NoidaAppointment.findOne({ phone }).sort({ createdAt: -1 }).select("name").lean();
     if (pastAppointment?.name) {
-      return res.status(200).json({ status: true, data: { found: true, name: pastAppointment.name } });
+      return res.status(200).json({ status: true, data: { found: true, name: pastAppointment.name, credit: creditInfo } });
     }
 
     const pastLead = await Lead.findOne({ phone }).sort({ created_at: -1 }).select("name").lean();
     if (pastLead?.name) {
-      return res.status(200).json({ status: true, data: { found: true, name: pastLead.name } });
+      return res.status(200).json({ status: true, data: { found: true, name: pastLead.name, credit: creditInfo } });
     }
 
-    return res.status(200).json({ status: true, data: { found: false, name: null } });
+    // Not found in Lead/past bookings, but might still have credit if admin
+    // manually registered them (e.g. an existing/offline client).
+    if (credit) {
+      return res.status(200).json({ status: true, data: { found: true, name: credit.name, credit: creditInfo } });
+    }
+
+    return res.status(200).json({ status: true, data: { found: false, name: null, credit: creditInfo } });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
@@ -176,7 +189,8 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
 // chosen session mode/format/package and opens a Razorpay order for it.
 // The frontend never gets to say what the amount is.
 export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
-  const { sessionMode, format, packageId, address } = req.body;
+  const { sessionMode, format, packageId, address, phone } = req.body;
+  const type = normalizeType(req.body.type);
 
   if (!VALID_SESSION_MODES.includes(sessionMode)) {
     res.status(400);
@@ -189,6 +203,19 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
   if (format === "home-visit" && !address?.trim()) {
     res.status(400);
     return next(new Error("Please provide an address for the home visit."));
+  }
+
+  // Follow-up client with sessions left on a package (bought online or set
+  // up by admin for an existing client) — no payment needed, skip straight
+  // past Razorpay.
+  if (type === "followup" && /^\d{10}$/.test(phone || "")) {
+    const credit = await getActiveCredit(phone.trim());
+    if (credit) {
+      return res.status(200).json({
+        status: true,
+        data: { freeSession: true, sessionsRemaining: credit.totalSessions - credit.sessionsUsed, packageName: credit.packageName },
+      });
+    }
   }
 
   try {
@@ -245,18 +272,23 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     res.status(400);
     return next(new Error("Please provide an address for the home visit."));
   }
-  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-    res.status(400);
-    return next(new Error("Payment is required to confirm this booking."));
-  }
 
-  const expectedSignature = crypto
-    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-    .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-    .digest("hex");
-  if (razorpay_signature !== expectedSignature) {
-    res.status(400);
-    return next(new Error("Payment verification failed."));
+  // Server decides credit eligibility itself — never trusts a client flag.
+  const credit = type === "followup" ? await getActiveCredit(phone.trim()) : null;
+
+  if (!credit) {
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      res.status(400);
+      return next(new Error("Payment is required to confirm this booking."));
+    }
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest("hex");
+    if (razorpay_signature !== expectedSignature) {
+      res.status(400);
+      return next(new Error("Payment verification failed."));
+    }
   }
 
   const isOpen = await NoidaFollowupSlot.findOne({ date, slot, type });
@@ -272,9 +304,31 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
       return next(new Error("Sorry, that slot was just booked by someone else. Please pick another — your payment will be refunded."));
     }
 
-    // Recomputed fresh (never trusts a client-sent amount) — matches what the
-    // order was created for, since both calls read the same live pricing.
-    const { baseAmount, platformFee, totalAmount, packageName } = await computeBookingAmount({ sessionMode, format, packageId });
+    let baseAmount = 0, platformFee = 0, totalAmount = 0, packageName = "", creditUsedId = null;
+
+    if (credit) {
+      // Atomically claim one session — the sessionsUsed condition means only
+      // one concurrent request can win if two both raced in on the same credit.
+      const claimed = await NoidaClientCredit.findOneAndUpdate(
+        { _id: credit._id, sessionsUsed: credit.sessionsUsed },
+        { $inc: { sessionsUsed: 1 } },
+        { new: true }
+      );
+      if (!claimed) {
+        res.status(409);
+        return next(new Error("Your session credit was just claimed elsewhere. Please refresh and try again, or WhatsApp us."));
+      }
+      packageName = claimed.packageName;
+      creditUsedId = claimed._id;
+    } else {
+      // Recomputed fresh (never trusts a client-sent amount) — matches what the
+      // order was created for, since both calls read the same live pricing.
+      const computed = await computeBookingAmount({ sessionMode, format, packageId });
+      baseAmount = computed.baseAmount;
+      platformFee = computed.platformFee;
+      totalAmount = computed.totalAmount;
+      packageName = computed.packageName;
+    }
 
     const appointment = await NoidaAppointment.create({
       name: name.trim(),
@@ -292,13 +346,31 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
       packageName,
       amount: totalAmount,
       platformFee,
-      paymentStatus: "paid",
-      razorpayOrderId: razorpay_order_id,
-      razorpayPaymentId: razorpay_payment_id,
+      paymentStatus: credit ? "package-credit" : "paid",
+      razorpayOrderId: credit ? "" : razorpay_order_id,
+      razorpayPaymentId: credit ? "" : razorpay_payment_id,
+      creditUsed: creditUsedId,
     });
+
+    // A brand-new (paid, not credit-funded) package purchase — open a credit
+    // record so this client's future follow-ups skip payment automatically.
+    if (!credit && sessionMode === "package" && packageId) {
+      const pkg = await NoidaPackage.findById(packageId).lean();
+      if (pkg) {
+        await NoidaClientCredit.create({
+          phone: phone.trim(),
+          name: name.trim(),
+          packageName: pkg.name,
+          totalSessions: pkg.sessionsCount,
+          sessionsUsed: 1, // this booking is the first session of the bundle
+          source: "online-purchase",
+        });
+      }
+    }
 
     const formatLabel = format === "home-visit" ? "Home Visit" : format === "online" ? "Online" : "In-person";
     const modeLabel = sessionMode === "package" ? `Package (${packageName})` : sessionMode === "couple" ? "Couple" : "Individual";
+    const paidLabel = credit ? `used 1 package session (${packageName})` : `₹${totalAmount} paid`;
 
     try {
       await sendMail(
@@ -307,7 +379,7 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
         `New Noida center appointment: ${name}, ${phone}, ${date} ${slot}`,
         leadNotificationEmail({
           name, phone, email, age,
-          concern: `${modeLabel} · ${formatLabel}${address ? ` · ${address}` : ""} — ${date} at ${slot} — ₹${totalAmount} paid${concern ? ` — "${concern}"` : ""}`,
+          concern: `${modeLabel} · ${formatLabel}${address ? ` · ${address}` : ""} — ${date} at ${slot} — ${paidLabel}${concern ? ` — "${concern}"` : ""}`,
           source: "Noida Center Booking",
           amount: totalAmount,
         })
