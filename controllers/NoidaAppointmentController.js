@@ -695,6 +695,74 @@ export const deleteNoidaAppointment = expressAsyncHandler(async (req, res, next)
   }
 });
 
+// Admin-only: books a session directly against an existing client credit,
+// bypassing the public phone-lookup flow — for when the admin is scheduling
+// on the client's behalf (e.g. over a call) instead of the client
+// self-booking through the site. Always type "followup" since it draws
+// from a package credit, same as the public credit-based flow.
+export const adminBookCreditSession = expressAsyncHandler(async (req, res, next) => {
+  const { creditId, date, slot } = req.body;
+
+  if (!mongoose.Types.ObjectId.isValid(creditId)) {
+    res.status(400);
+    return next(new Error("Invalid credit ID."));
+  }
+  if (!isValidDateStr(date) || !slot?.trim()) {
+    res.status(400);
+    return next(new Error("Please select a valid date and time slot."));
+  }
+
+  try {
+    const credit = await NoidaClientCredit.findById(creditId);
+    if (!credit || !credit.active) {
+      res.status(404);
+      return next(new Error("Client credit not found or inactive."));
+    }
+    if (credit.sessionsUsed >= credit.totalSessions) {
+      res.status(400);
+      return next(new Error("This client has no sessions remaining on this credit."));
+    }
+
+    const isOpen = await NoidaFollowupSlot.findOne({ date, slot, type: "followup" });
+    if (!isOpen) {
+      res.status(400);
+      return next(new Error("That slot isn't open for booking on the selected date."));
+    }
+    const clash = await NoidaAppointment.findOne({ date, slot, status: "confirmed" });
+    if (clash) {
+      res.status(409);
+      return next(new Error("That slot is already booked."));
+    }
+
+    // Same optimistic-lock claim pattern as the public credit-based flow.
+    const claimed = await NoidaClientCredit.findOneAndUpdate(
+      { _id: credit._id, sessionsUsed: credit.sessionsUsed },
+      { $inc: { sessionsUsed: 1 } },
+      { new: true }
+    );
+    if (!claimed) {
+      res.status(409);
+      return next(new Error("That credit was just updated elsewhere. Please refresh and try again."));
+    }
+
+    const appointment = await NoidaAppointment.create({
+      name: credit.name,
+      phone: credit.phone,
+      date, slot,
+      type: "followup",
+      sessionMode: "individual",
+      format: "in-person",
+      packageName: credit.packageName,
+      paymentStatus: "package-credit",
+      creditUsed: credit._id,
+    });
+
+    return res.status(201).json({ status: true, message: "Session booked.", data: appointment });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
 // ── Slot management (admin) ─────────────────────────────────────────────
 // Admin opens up specific date+slot combinations, tagged "new" or
 // "followup"; clients on the matching tab can only pick from what's been

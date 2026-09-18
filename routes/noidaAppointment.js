@@ -15,6 +15,7 @@ import {
   deleteFollowupSlot,
   getUpcomingAppointment,
   rescheduleNoidaAppointment,
+  adminBookCreditSession,
 } from "../controllers/NoidaAppointmentController.js";
 import {
   getPublicPricing,
@@ -45,6 +46,7 @@ router.post("/noida-appointments", leadRateLimit, createNoidaAppointment);      
 router.get("/noida-appointments/upcoming", phoneLookupRateLimit, getUpcomingAppointment); // public — no auth
 router.patch("/noida-appointments/reschedule", leadRateLimit, rescheduleNoidaAppointment); // public — no auth, registered before the :id route below
 
+router.post("/noida-appointments/admin-book-credit", hasPermission("noidaCenter"), adminBookCreditSession);
 router.get("/noida-appointments", hasPermission("noidaCenter"), getNoidaAppointments);
 router.patch("/noida-appointments/:id", hasPermission("noidaCenter"), updateNoidaAppointment);
 router.patch("/noida-appointments/:id/assign", hasPermission("noidaCenter"), assignNoidaAppointment);
