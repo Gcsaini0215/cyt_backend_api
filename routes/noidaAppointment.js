@@ -40,25 +40,25 @@ router.get("/noida-appointments/pricing", leadRateLimit, getPublicPricing);     
 router.post("/noida-appointments/create-order", leadRateLimit, createNoidaOrder); // public — no auth
 router.post("/noida-appointments", leadRateLimit, createNoidaAppointment);       // public — no auth
 
-router.get("/noida-appointments", hasPermission("bookings"), getNoidaAppointments);
-router.patch("/noida-appointments/:id", hasPermission("bookings"), updateNoidaAppointment);
-router.delete("/noida-appointments/:id", hasPermission("bookings"), deleteNoidaAppointment);
+router.get("/noida-appointments", hasPermission("noidaCenter"), getNoidaAppointments);
+router.patch("/noida-appointments/:id", hasPermission("noidaCenter"), updateNoidaAppointment);
+router.delete("/noida-appointments/:id", hasPermission("noidaCenter"), deleteNoidaAppointment);
 
-router.get("/noida-followup-slots", hasPermission("bookings"), getFollowupSlots);
-router.post("/noida-followup-slots", hasPermission("bookings"), addFollowupSlots);
-router.post("/noida-followup-slots/bulk", hasPermission("bookings"), addFollowupSlotsBulk);
-router.delete("/noida-followup-slots/:id", hasPermission("bookings"), deleteFollowupSlot);
+router.get("/noida-followup-slots", hasPermission("noidaCenter"), getFollowupSlots);
+router.post("/noida-followup-slots", hasPermission("noidaCenter"), addFollowupSlots);
+router.post("/noida-followup-slots/bulk", hasPermission("noidaCenter"), addFollowupSlotsBulk);
+router.delete("/noida-followup-slots/:id", hasPermission("noidaCenter"), deleteFollowupSlot);
 
-router.get("/noida-pricing", hasPermission("bookings"), getPricing);
-router.patch("/noida-pricing", hasPermission("bookings"), updatePricing);
-router.get("/noida-packages", hasPermission("bookings"), getPackages);
-router.post("/noida-packages", hasPermission("bookings"), createPackage);
-router.patch("/noida-packages/:id", hasPermission("bookings"), updatePackage);
-router.delete("/noida-packages/:id", hasPermission("bookings"), deletePackage);
+router.get("/noida-pricing", hasPermission("noidaCenter"), getPricing);
+router.patch("/noida-pricing", hasPermission("noidaCenter"), updatePricing);
+router.get("/noida-packages", hasPermission("noidaCenter"), getPackages);
+router.post("/noida-packages", hasPermission("noidaCenter"), createPackage);
+router.patch("/noida-packages/:id", hasPermission("noidaCenter"), updatePackage);
+router.delete("/noida-packages/:id", hasPermission("noidaCenter"), deletePackage);
 
-router.get("/noida-client-credits", hasPermission("bookings"), getClientCredits);
-router.post("/noida-client-credits", hasPermission("bookings"), createClientCredit);
-router.patch("/noida-client-credits/:id", hasPermission("bookings"), updateClientCredit);
-router.delete("/noida-client-credits/:id", hasPermission("bookings"), deleteClientCredit);
+router.get("/noida-client-credits", hasPermission("noidaCenter"), getClientCredits);
+router.post("/noida-client-credits", hasPermission("noidaCenter"), createClientCredit);
+router.patch("/noida-client-credits/:id", hasPermission("noidaCenter"), updateClientCredit);
+router.delete("/noida-client-credits/:id", hasPermission("noidaCenter"), deleteClientCredit);
 
 export default router;
