@@ -18,6 +18,9 @@ import {
   rescheduleNoidaAppointment,
   adminBookCreditSession,
   adminCreateNoidaAppointment,
+  getPaymentProblems,
+  retryPaymentProblem,
+  resolvePaymentProblem,
   getNoidaPaymentQr,
   createLastMinuteRequest,
   getLastMinuteRequestStatus,
@@ -64,6 +67,9 @@ router.get("/noida-appointments/payment-qr", hasPermission("noidaCenter"), getNo
 router.get("/noida-appointments/last-minute-requests", hasPermission("noidaCenter"), getLastMinuteRequests);
 router.patch("/noida-appointments/last-minute-requests/:id/accept", hasPermission("noidaCenter"), acceptLastMinuteRequest);
 router.patch("/noida-appointments/last-minute-requests/:id/reject", hasPermission("noidaCenter"), rejectLastMinuteRequest);
+router.get("/noida-appointments/payment-problems", hasPermission("noidaCenter"), getPaymentProblems);
+router.post("/noida-appointments/payment-problems/:id/retry", hasPermission("noidaCenter"), retryPaymentProblem);
+router.patch("/noida-appointments/payment-problems/:id/resolve", hasPermission("noidaCenter"), resolvePaymentProblem);
 router.get("/noida-appointments", hasPermission("noidaCenter"), getNoidaAppointments);
 router.patch("/noida-appointments/:id", hasPermission("noidaCenter"), updateNoidaAppointment);
 router.patch("/noida-appointments/:id/assign", hasPermission("noidaCenter"), assignNoidaAppointment);

@@ -1195,7 +1195,7 @@ export const getNoidaAppointments = expressAsyncHandler(async (req, res, next) =
 
 export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const { status, adminNote } = req.body;
+  const { status, adminNote, attendance } = req.body;
 
   if (!mongoose.Types.ObjectId.isValid(id)) {
     res.status(400);
@@ -1205,11 +1205,19 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
     res.status(400);
     return next(new Error("Invalid status value."));
   }
+  if (attendance !== undefined && !["", "arrived", "completed", "no_show"].includes(attendance)) {
+    res.status(400);
+    return next(new Error("Invalid attendance value."));
+  }
 
   try {
     const update = {};
     if (status) update.status = status;
     if (adminNote !== undefined) update.adminNote = adminNote;
+    if (attendance !== undefined) {
+      update.attendance = attendance;
+      update.attendanceAt = attendance ? new Date() : null;
+    }
 
     const appointment = await NoidaAppointment.findByIdAndUpdate(id, update, { new: true });
     if (!appointment) {
@@ -1468,6 +1476,124 @@ export const deleteFollowupSlot = expressAsyncHandler(async (req, res, next) => 
     }
     await slot.deleteOne();
     return res.status(200).json({ status: true, message: "Slot removed." });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+
+// ── Payment problems (admin) ────────────────────────────────────────────────
+// Public bookings that were paid for but couldn't be finished, and what
+// happened to the money. "needsAction" is what staff must handle by hand.
+const STUCK_PROCESSING_MS = 10 * 60 * 1000;
+
+function problemView(doc) {
+  return {
+    _id: doc._id,
+    orderId: doc.orderId,
+    paymentId: doc.paymentId || "",
+    amount: doc.amount || 0,
+    status: doc.status,
+    failureReason: doc.failureReason || "",
+    refundId: doc.refundId || "",
+    resolved: !!doc.resolved,
+    resolvedNote: doc.resolvedNote || "",
+    resolvedAt: doc.resolvedAt || null,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+    name: doc.payload?.name || "",
+    phone: doc.payload?.phone || "",
+    date: doc.payload?.date || "",
+    slot: doc.payload?.slot || "",
+  };
+}
+
+export const getPaymentProblems = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const stuckBefore = new Date(Date.now() - STUCK_PROCESSING_MS);
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const [needs, recent] = await Promise.all([
+      NoidaPendingBooking.find({
+        resolved: { $ne: true },
+        $or: [{ status: "refund_failed" }, { status: "processing", updatedAt: { $lt: stuckBefore } }],
+      }).sort({ updatedAt: -1 }).limit(100).lean(),
+      NoidaPendingBooking.find({
+        updatedAt: { $gte: since },
+        $or: [{ status: "refunded" }, { resolved: true }],
+      }).sort({ updatedAt: -1 }).limit(100).lean(),
+    ]);
+    return res.status(200).json({
+      status: true,
+      data: { needsAction: needs.map(problemView), recent: recent.map(problemView) },
+    });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// Tries again: a failed refund is re-sent to Razorpay; an order stuck
+// mid-booking is re-run (books it, or refunds if the slot is gone).
+export const retryPaymentProblem = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    return next(new Error("Invalid ID format."));
+  }
+  try {
+    const doc = await NoidaPendingBooking.findById(id);
+    if (!doc) {
+      res.status(404);
+      return next(new Error("Payment record not found."));
+    }
+    if (!doc.paymentId) {
+      res.status(400);
+      return next(new Error("No payment is recorded against this order, so there is nothing to retry."));
+    }
+
+    let message;
+    if (doc.status === "refund_failed") {
+      const refund = await refundPayment(doc.paymentId, doc.failureReason || "Booking could not be completed");
+      const alreadyRefunded = !refund.ok && /fully refunded|already.*refund/i.test(refund.error || "");
+      if (refund.ok || alreadyRefunded) {
+        await NoidaPendingBooking.updateOne({ _id: doc._id }, { status: "refunded", refundId: refund.refundId || doc.refundId });
+        message = alreadyRefunded ? "Razorpay says this payment was already refunded — marked as refunded." : "Refund sent to Razorpay.";
+      } else {
+        res.status(502);
+        return next(new Error(`Refund still failing: ${refund.error}`));
+      }
+    } else if (doc.status === "processing") {
+      const out = await processPaidOrder({ orderId: doc.orderId, paymentId: doc.paymentId });
+      if (out.appointment) message = "Booking completed.";
+      else if (out.failure) message = out.failure.refunded ? "Slot is no longer available — payment refunded." : "Slot is no longer available and the refund failed again.";
+      else message = "Another process is already handling this order — check again in a minute.";
+    } else {
+      res.status(400);
+      return next(new Error("This order does not need a retry."));
+    }
+
+    const fresh = await NoidaPendingBooking.findById(id).lean();
+    return res.status(200).json({ status: true, message, data: problemView(fresh) });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+export const resolvePaymentProblem = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    return next(new Error("Invalid ID format."));
+  }
+  try {
+    const note = String(req.body?.note || "").trim().slice(0, 300);
+    const doc = await NoidaPendingBooking.findByIdAndUpdate(
+      id, { resolved: true, resolvedNote: note, resolvedAt: new Date() }, { new: true }
+    ).lean();
+    if (!doc) {
+      res.status(404);
+      return next(new Error("Payment record not found."));
+    }
+    return res.status(200).json({ status: true, message: "Marked as resolved.", data: problemView(doc) });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }

@@ -16,6 +16,10 @@ const noidaAppointmentSchema = new Schema({
   status:   { type: String, enum: ["confirmed", "cancelled"], default: "confirmed" },
   adminNote: { type: String, default: "" },
 
+  // Front-desk tracking on the day: "" (not yet) → arrived → completed, or no_show.
+  attendance:   { type: String, enum: ["", "arrived", "completed", "no_show"], default: "" },
+  attendanceAt: { type: Date, default: null },
+
   sessionMode: { type: String, enum: ["individual", "couple", "package"], default: "individual" },
   format:      { type: String, enum: ["in-person", "online", "home-visit"], default: "in-person" },
   address:     { type: String, default: "" }, // only meaningful when format === "home-visit"

@@ -32,6 +32,12 @@ const noidaPendingBookingSchema = new Schema({
   appointment: { type: Schema.Types.ObjectId, ref: "NoidaAppointment", default: null },
   failureReason: { type: String, default: "" },
   refundId: { type: String, default: "" },
+
+  // Staff marks a refund_failed / stuck order as dealt with (e.g. refunded by
+  // hand from the Razorpay dashboard) so it leaves the "needs action" list.
+  resolved: { type: Boolean, default: false },
+  resolvedNote: { type: String, default: "" },
+  resolvedAt: { type: Date, default: null },
 }, { timestamps: true });
 
 // Abandoned checkouts (never paid) and settled ones clean themselves up.
