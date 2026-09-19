@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import NoidaAppointment from "../models/NoidaAppointment.js";
+import NoidaLastMinuteRequest from "../models/NoidaLastMinuteRequest.js";
 import NoidaFollowupSlot from "../models/NoidaFollowupSlot.js";
 import NoidaPackage from "../models/NoidaPackage.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
@@ -54,10 +55,16 @@ async function computeBookingAmount({ sessionMode, format, packageId }) {
 
 // Both "new" and "followup" bookings now draw exclusively from admin-opened
 // slots (see NoidaFollowupSlot) — there's no more auto-generated fixed grid.
-// These two constants are the only leftover "business hours" concept, and
-// they only matter for the same-day notice cutoff below.
-const MIN_NOTICE_MINUTES = 60; // can't book a same-day slot starting sooner than this
 const MAX_DAYS_AHEAD = 60;
+
+// A same-day slot stays instantly bookable until it's this close to
+// starting — inside that window it's still shown (right up to start time)
+// but the public page switches to the request-and-wait flow instead of
+// letting anyone book it outright. See createLastMinuteRequest below.
+const LAST_MINUTE_WINDOW_MINUTES = 15;
+// Staff's deadline to accept a last-minute request, measured from when the
+// client sent it — not from the slot's own start time.
+const LAST_MINUTE_ACCEPT_SLA_MINUTES = 10;
 
 const pad2 = (n) => String(n).padStart(2, "0");
 
@@ -78,18 +85,24 @@ function normalizeType(t) {
   return t === "new" ? "new" : "followup";
 }
 
-// Drops slots starting within the same-day notice window. No-op for future dates.
-function dropPastNotice(slots, date, today, now) {
-  if (date !== today) return slots;
-  const nowMinutes = now.getHours() * 60 + now.getMinutes() + MIN_NOTICE_MINUTES;
-  return slots.filter((label) => {
-    const startLabel = label.split(" - ")[0];
-    const [time, ampm] = startLabel.split(" ");
-    let [h, m] = time.split(":").map(Number);
-    if (ampm === "PM" && h !== 12) h += 12;
-    if (ampm === "AM" && h === 12) h = 0;
-    return h * 60 + m >= nowMinutes;
-  });
+function slotStartMinutes(label) {
+  const startLabel = label.split(" - ")[0];
+  const [time, ampm] = startLabel.split(" ");
+  let [h, m] = time.split(":").map(Number);
+  if (ampm === "PM" && h !== 12) h += 12;
+  if (ampm === "AM" && h === 12) h = 0;
+  return h * 60 + m;
+}
+
+// For today's date: drops slots whose start time has already passed, and
+// flags the ones inside the last-minute window (still visible, right up to
+// start — just no longer instantly bookable). No-op for future dates.
+function annotateSameDaySlots(slots, date, today, now) {
+  if (date !== today) return slots.map((label) => ({ slot: label, lastMinute: false }));
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  return slots
+    .filter((label) => slotStartMinutes(label) > nowMinutes)
+    .map((label) => ({ slot: label, lastMinute: slotStartMinutes(label) - nowMinutes <= LAST_MINUTE_WINDOW_MINUTES }));
 }
 
 export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
@@ -110,16 +123,14 @@ export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
   }
 
   const saved = await NoidaFollowupSlot.find({ date, type }).select("slot").lean();
-  let slotLabels = saved.map((s) => s.slot);
-
-  slotLabels = dropPastNotice(slotLabels, date, today, now);
+  const annotated = annotateSameDaySlots(saved.map((s) => s.slot), date, today, now);
 
   // Physical slot occupancy is global — a "new" and a "followup" booking can't share a time.
   // Booked slots stay in the list (marked booked) rather than disappearing, so the client
   // can see the full picture of what's taken vs. open.
   const booked = await NoidaAppointment.find({ date, status: "confirmed" }).select("slot").lean();
   const bookedSet = new Set(booked.map((b) => b.slot));
-  const data = slotLabels.map((slot) => ({ slot, booked: bookedSet.has(slot) }));
+  const data = annotated.map(({ slot, lastMinute }) => ({ slot, booked: bookedSet.has(slot), lastMinute }));
 
   return res.status(200).json({ status: true, data });
 });
@@ -149,9 +160,9 @@ export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) =
 
   const data = [];
   for (const [date, slots] of byDate) {
-    const kept = dropPastNotice(slots, date, today, now);
-    for (const slot of kept) {
-      data.push({ date, slot, booked: bookedSet.has(`${date}|${slot}`) });
+    const annotated = annotateSameDaySlots(slots, date, today, now);
+    for (const { slot, lastMinute } of annotated) {
+      data.push({ date, slot, booked: bookedSet.has(`${date}|${slot}`), lastMinute });
     }
   }
   data.sort((a, b) => a.date === b.date ? 0 : a.date < b.date ? -1 : 1);
@@ -576,6 +587,20 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     return next(new Error("Please provide an address for the home visit."));
   }
 
+  // A slot this close to start needs staff to actually accept a request
+  // first — regardless of payment method, since it's about whether the
+  // center can take a walk-in this soon, not about payment risk.
+  const nowForWindow = istNow();
+  const isLastMinuteSlot = date === istDateStr(nowForWindow)
+    && slotStartMinutes(slot) - (nowForWindow.getHours() * 60 + nowForWindow.getMinutes()) <= LAST_MINUTE_WINDOW_MINUTES;
+  if (isLastMinuteSlot) {
+    const approved = await NoidaLastMinuteRequest.findOne({ phone: phone.trim(), date, slot, status: "accepted" });
+    if (!approved) {
+      res.status(400);
+      return next(new Error("This slot needs staff approval first — please send a request and wait for it to be accepted."));
+    }
+  }
+
   // Server decides credit eligibility itself — never trusts a client flag.
   const credit = type === "followup" ? await getActiveCredit(phone.trim()) : null;
 
@@ -617,6 +642,209 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     res.status(err.status || 500);
     return next(new Error(err.message || "Something went wrong"));
   }
+});
+
+// Once staff accepts, an unconsumed request would otherwise block the slot
+// for everyone else forever if the client just never comes back to pay —
+// give it the same grace window as the accept SLA itself.
+const LAST_MINUTE_BOOKING_GRACE_MINUTES = 10;
+
+// Flips a request to "expired" in place if its clock has run out but no one
+// has touched it yet — keeps status honest without needing a cron job.
+async function expireIfStale(request) {
+  if (!request) return request;
+  const deadline = request.status === "pending"
+    ? new Date(request.requestedAt.getTime() + LAST_MINUTE_ACCEPT_SLA_MINUTES * 60000)
+    : request.status === "accepted"
+    ? new Date(request.respondedAt.getTime() + LAST_MINUTE_BOOKING_GRACE_MINUTES * 60000)
+    : null;
+  if (deadline && Date.now() > deadline.getTime()) {
+    request.status = "expired";
+    await request.save();
+  }
+  return request;
+}
+
+// Public: a client hitting a slot inside the last-minute window sends one
+// of these instead of booking outright — staff has to accept it first (see
+// acceptLastMinuteRequest) before createNoidaAppointment will let them pay.
+export const createLastMinuteRequest = expressAsyncHandler(async (req, res, next) => {
+  const {
+    name, phone, email, concern, date, slot, age,
+    sessionMode, format, address, packageId,
+  } = req.body;
+  const type = normalizeType(req.body.type);
+
+  if (!name?.trim() || !phone?.trim()) {
+    res.status(400);
+    return next(new Error("Name and phone number are required."));
+  }
+  if (!/^\d{10}$/.test(phone.trim())) {
+    res.status(400);
+    return next(new Error("Please enter a valid 10-digit phone number."));
+  }
+  if (!isValidDateStr(date) || !slot?.trim()) {
+    res.status(400);
+    return next(new Error("Please select a valid date and time slot."));
+  }
+  if (!VALID_SESSION_MODES.includes(sessionMode) || !VALID_FORMATS.includes(format)) {
+    res.status(400);
+    return next(new Error("Please select a session type and format."));
+  }
+  if (format === "home-visit" && !address?.trim()) {
+    res.status(400);
+    return next(new Error("Please provide an address for the home visit."));
+  }
+
+  // Never trust the client's claim that this is a last-minute slot —
+  // recompute it the same way the slots list does.
+  const now = istNow();
+  const today = istDateStr(now);
+  const minutesToStart = slotStartMinutes(slot) - (now.getHours() * 60 + now.getMinutes());
+  if (date !== today || minutesToStart <= 0) {
+    res.status(400);
+    return next(new Error("That slot's time has already passed."));
+  }
+  if (minutesToStart > LAST_MINUTE_WINDOW_MINUTES) {
+    res.status(400);
+    return next(new Error("That slot doesn't need a request — please book it directly."));
+  }
+
+  const isOpenSlot = await NoidaFollowupSlot.findOne({ date, slot, type });
+  if (!isOpenSlot) {
+    res.status(400);
+    return next(new Error("That slot isn't open for booking."));
+  }
+  const alreadyBooked = await NoidaAppointment.findOne({ date, slot, status: "confirmed" });
+  if (alreadyBooked) {
+    res.status(409);
+    return next(new Error("Sorry, that slot was just booked by someone else."));
+  }
+
+  // Idempotent for the same client double-tapping "Send Request".
+  const ownExisting = await expireIfStale(
+    await NoidaLastMinuteRequest.findOne({ date, slot, phone: phone.trim(), status: { $in: ["pending", "accepted"] } })
+  );
+  if (ownExisting && ownExisting.status !== "expired") {
+    return res.status(200).json({ status: true, data: ownExisting });
+  }
+
+  const othersActive = await expireIfStale(
+    await NoidaLastMinuteRequest.findOne({ date, slot, status: { $in: ["pending", "accepted"] } })
+  );
+  if (othersActive && othersActive.status !== "expired") {
+    res.status(409);
+    return next(new Error("Someone else has already requested this slot — please try another."));
+  }
+
+  const request = await NoidaLastMinuteRequest.create({
+    name: name.trim(), age: age?.toString().trim() || "", phone: phone.trim(),
+    email: email?.trim() || "", concern: concern?.trim() || "",
+    date, slot, type, sessionMode, format,
+    address: format === "home-visit" ? address.trim() : "",
+    packageId: sessionMode === "package" ? packageId : null,
+  });
+
+  try {
+    await sendMail(
+      "chooseyourtherapist@gmail.com",
+      `⏱️ Last-minute request: ${name} — ${date} ${slot}`,
+      `${name} (${phone}) wants the ${date} ${slot} slot right now. Accept within ${LAST_MINUTE_ACCEPT_SLA_MINUTES} minutes from the admin panel or it will expire.`,
+      leadNotificationEmail({
+        name, phone, email, age,
+        concern: `Last-minute request for ${date} at ${slot}${concern ? ` — "${concern}"` : ""}`,
+        source: "Noida Center — Last-Minute Request",
+      })
+    );
+  } catch (mailErr) {
+    console.error("Last-minute request notification failed (non-fatal):", mailErr.message);
+  }
+
+  return res.status(201).json({ status: true, data: request });
+});
+
+// Public: polled by the client while waiting on staff to respond. Only
+// exposes status + the accept deadline — no name/phone/etc for a caller
+// who's just holding an id.
+export const getLastMinuteRequestStatus = expressAsyncHandler(async (req, res, next) => {
+  const request = await expireIfStale(await NoidaLastMinuteRequest.findById(req.params.id));
+  if (!request) {
+    res.status(404);
+    return next(new Error("Request not found."));
+  }
+  const deadline = request.status === "pending"
+    ? request.requestedAt.getTime() + LAST_MINUTE_ACCEPT_SLA_MINUTES * 60000
+    : request.status === "accepted"
+    ? request.respondedAt.getTime() + LAST_MINUTE_BOOKING_GRACE_MINUTES * 60000
+    : null;
+  return res.status(200).json({
+    status: true,
+    data: {
+      status: request.status,
+      expiresInSeconds: deadline ? Math.max(0, Math.round((deadline - Date.now()) / 1000)) : null,
+    },
+  });
+});
+
+// Admin: pending + recently-resolved requests for the staff panel.
+export const getLastMinuteRequests = expressAsyncHandler(async (req, res, next) => {
+  const cutoff = new Date(Date.now() - 3 * 60 * 60 * 1000); // last 3 hours of history
+  const requests = await NoidaLastMinuteRequest.find({ createdAt: { $gte: cutoff } }).sort({ createdAt: -1 }).lean();
+  await Promise.all(
+    requests
+      .filter((r) => r.status === "pending" || r.status === "accepted")
+      .map(async (r) => {
+        const fresh = await expireIfStale(await NoidaLastMinuteRequest.findById(r._id));
+        r.status = fresh.status;
+      })
+  );
+  return res.status(200).json({ status: true, data: requests });
+});
+
+// Admin: accept a pending request — must still be inside its SLA, and the
+// slot must not have been snapped up by a walk-in/other booking meanwhile.
+export const acceptLastMinuteRequest = expressAsyncHandler(async (req, res, next) => {
+  const request = await NoidaLastMinuteRequest.findById(req.params.id);
+  if (!request) {
+    res.status(404);
+    return next(new Error("Request not found."));
+  }
+  await expireIfStale(request);
+  if (request.status !== "pending") {
+    res.status(400);
+    return next(new Error(`This request is no longer pending (${request.status}).`));
+  }
+  const clash = await NoidaAppointment.findOne({ date: request.date, slot: request.slot, status: "confirmed" });
+  if (clash) {
+    request.status = "rejected";
+    await request.save();
+    res.status(409);
+    return next(new Error("That slot was just booked by someone else."));
+  }
+  request.status = "accepted";
+  request.respondedAt = new Date();
+  request.respondedBy = req.user._id;
+  await request.save();
+  return res.status(200).json({ status: true, message: "Request accepted.", data: request });
+});
+
+// Admin: explicitly decline a pending request (frees the slot up immediately
+// instead of making the client wait out the full SLA for nothing).
+export const rejectLastMinuteRequest = expressAsyncHandler(async (req, res, next) => {
+  const request = await NoidaLastMinuteRequest.findById(req.params.id);
+  if (!request) {
+    res.status(404);
+    return next(new Error("Request not found."));
+  }
+  if (request.status !== "pending") {
+    res.status(400);
+    return next(new Error(`This request is no longer pending (${request.status}).`));
+  }
+  request.status = "rejected";
+  request.respondedAt = new Date();
+  request.respondedBy = req.user._id;
+  await request.save();
+  return res.status(200).json({ status: true, message: "Request declined.", data: request });
 });
 
 // Admin-only (reception): books an appointment on the client's behalf,

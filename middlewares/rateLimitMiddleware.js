@@ -61,3 +61,17 @@ export const phoneLookupRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// The public last-minute-request waiting screen polls this every few
+// seconds for up to 10 minutes — needs a much looser cap than a one-shot
+// lookup, but still bounded per IP.
+export const pollingRateLimit = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 150, // ~1 poll every 2s for the full window
+  message: {
+    status: false,
+    message: "Too many requests. Please wait a moment and try again.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

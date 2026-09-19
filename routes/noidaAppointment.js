@@ -19,6 +19,11 @@ import {
   adminBookCreditSession,
   adminCreateNoidaAppointment,
   getNoidaPaymentQr,
+  createLastMinuteRequest,
+  getLastMinuteRequestStatus,
+  getLastMinuteRequests,
+  acceptLastMinuteRequest,
+  rejectLastMinuteRequest,
 } from "../controllers/NoidaAppointmentController.js";
 import {
   getPublicPricing,
@@ -36,7 +41,7 @@ import {
   deleteClientCredit,
 } from "../controllers/NoidaClientCreditController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
-import { leadRateLimit, phoneLookupRateLimit } from "../middlewares/rateLimitMiddleware.js";
+import { leadRateLimit, phoneLookupRateLimit, pollingRateLimit } from "../middlewares/rateLimitMiddleware.js";
 
 const router = Router();
 
@@ -50,9 +55,15 @@ router.post("/noida-appointments", leadRateLimit, createNoidaAppointment);      
 router.get("/noida-appointments/upcoming", phoneLookupRateLimit, getUpcomingAppointment); // public — no auth
 router.patch("/noida-appointments/reschedule", leadRateLimit, rescheduleNoidaAppointment); // public — no auth, registered before the :id route below
 
+router.post("/noida-appointments/last-minute-requests", leadRateLimit, createLastMinuteRequest); // public — no auth
+router.get("/noida-appointments/last-minute-requests/:id/status", pollingRateLimit, getLastMinuteRequestStatus); // public — no auth, polled
+
 router.post("/noida-appointments/admin-book-credit", hasPermission("noidaCenter"), adminBookCreditSession);
 router.post("/noida-appointments/admin-create", hasPermission("noidaCenter"), adminCreateNoidaAppointment);
 router.get("/noida-appointments/payment-qr", hasPermission("noidaCenter"), getNoidaPaymentQr);
+router.get("/noida-appointments/last-minute-requests", hasPermission("noidaCenter"), getLastMinuteRequests);
+router.patch("/noida-appointments/last-minute-requests/:id/accept", hasPermission("noidaCenter"), acceptLastMinuteRequest);
+router.patch("/noida-appointments/last-minute-requests/:id/reject", hasPermission("noidaCenter"), rejectLastMinuteRequest);
 router.get("/noida-appointments", hasPermission("noidaCenter"), getNoidaAppointments);
 router.patch("/noida-appointments/:id", hasPermission("noidaCenter"), updateNoidaAppointment);
 router.patch("/noida-appointments/:id/assign", hasPermission("noidaCenter"), assignNoidaAppointment);
