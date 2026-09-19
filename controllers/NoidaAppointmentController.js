@@ -437,7 +437,7 @@ export const createNoidaQrOrder = expressAsyncHandler(async (req, res, next) => 
     const razorpay = getRazorpayInstance();
     const qr = await razorpay.qrCode.create({
       type: "upi_qr",
-      name: "Choose Your Therapist — Noida Center",
+      name: "CYT Noida Center",
       usage: "single_use",
       fixed_amount: true,
       payment_amount: Math.round(totalAmount * 100), // paise
@@ -459,7 +459,8 @@ export const createNoidaQrOrder = expressAsyncHandler(async (req, res, next) => 
       },
     });
   } catch (err) {
-    return next(new Error(err.message || "Could not generate QR code. Please try again."));
+    console.error("createNoidaQrOrder failed:", JSON.stringify(err?.error || err?.message || err));
+    return next(new Error(err?.error?.description || err.message || "Could not generate QR code. Please try again."));
   }
 });
 
