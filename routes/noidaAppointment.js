@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   getAvailableSlots,
+  getPublicSlotsMatrix,
   createNoidaOrder,
   createNoidaAppointment,
   lookupClientByPhone,
@@ -18,6 +19,8 @@ import {
   adminBookCreditSession,
   adminCreateNoidaAppointment,
   getNoidaPaymentQr,
+  createNoidaQrOrder,
+  getNoidaQrStatus,
 } from "../controllers/NoidaAppointmentController.js";
 import {
   getPublicPricing,
@@ -35,15 +38,18 @@ import {
   deleteClientCredit,
 } from "../controllers/NoidaClientCreditController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
-import { leadRateLimit, phoneLookupRateLimit } from "../middlewares/rateLimitMiddleware.js";
+import { leadRateLimit, phoneLookupRateLimit, qrStatusRateLimit } from "../middlewares/rateLimitMiddleware.js";
 
 const router = Router();
 
 router.get("/noida-appointments/slots", leadRateLimit, getAvailableSlots);       // public — no auth
+router.get("/noida-appointments/slots-matrix", leadRateLimit, getPublicSlotsMatrix); // public — no auth
 router.get("/noida-appointments/lookup", phoneLookupRateLimit, lookupClientByPhone); // public — no auth
 router.get("/noida-appointments/followup-dates", leadRateLimit, getFollowupDates); // public — no auth
 router.get("/noida-appointments/pricing", leadRateLimit, getPublicPricing);      // public — no auth
 router.post("/noida-appointments/create-order", leadRateLimit, createNoidaOrder); // public — no auth
+router.post("/noida-appointments/create-qr-order", leadRateLimit, createNoidaQrOrder); // public — no auth
+router.get("/noida-appointments/qr-status/:qrCodeId", qrStatusRateLimit, getNoidaQrStatus); // public — no auth, polled
 router.post("/noida-appointments", leadRateLimit, createNoidaAppointment);       // public — no auth
 router.get("/noida-appointments/upcoming", phoneLookupRateLimit, getUpcomingAppointment); // public — no auth
 router.patch("/noida-appointments/reschedule", leadRateLimit, rescheduleNoidaAppointment); // public — no auth, registered before the :id route below

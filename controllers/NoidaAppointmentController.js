@@ -124,6 +124,41 @@ export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
   return res.status(200).json({ status: true, data });
 });
 
+// Public: full date x time availability in one call — same underlying data
+// as getAvailableSlots (one date at a time) and getFollowupDates (which
+// dates have anything open), just combined so the public booking page can
+// render its slots-first table without firing a request per date.
+export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) => {
+  const type = normalizeType(req.query.type);
+  const now = istNow();
+  const today = istDateStr(now);
+  const maxDate = new Date(now);
+  maxDate.setDate(maxDate.getDate() + MAX_DAYS_AHEAD);
+
+  const [allSlots, booked] = await Promise.all([
+    NoidaFollowupSlot.find({ date: { $gte: today, $lte: istDateStr(maxDate) }, type }).select("date slot").lean(),
+    NoidaAppointment.find({ date: { $gte: today }, status: "confirmed" }).select("date slot").lean(),
+  ]);
+
+  const bookedSet = new Set(booked.map((b) => `${b.date}|${b.slot}`));
+  const byDate = new Map();
+  for (const s of allSlots) {
+    if (!byDate.has(s.date)) byDate.set(s.date, []);
+    byDate.get(s.date).push(s.slot);
+  }
+
+  const data = [];
+  for (const [date, slots] of byDate) {
+    const kept = dropPastNotice(slots, date, today, now);
+    for (const slot of kept) {
+      data.push({ date, slot, booked: bookedSet.has(`${date}|${slot}`) });
+    }
+  }
+  data.sort((a, b) => a.date === b.date ? 0 : a.date < b.date ? -1 : 1);
+
+  return res.status(200).json({ status: true, data });
+});
+
 // Public: which dates currently have at least one open (unbooked) slot for
 // the given type — lets the booking page show only dates worth offering,
 // instead of blindly rendering N days and querying each one.
@@ -364,6 +399,107 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
+// Alternative to createNoidaOrder for customers who'd rather scan a UPI QR
+// than go through the Razorpay checkout modal. Creates a real Razorpay
+// Dynamic QR Code (fixed-amount, single-use) — Razorpay itself refuses any
+// payment that doesn't match the amount, so there's nothing to re-validate
+// on our side once a payment shows up captured against this QR's id.
+export const createNoidaQrOrder = expressAsyncHandler(async (req, res, next) => {
+  const { sessionMode, format, packageId, address, phone } = req.body;
+  const type = normalizeType(req.body.type);
+
+  if (!VALID_SESSION_MODES.includes(sessionMode)) {
+    res.status(400);
+    return next(new Error("Invalid session mode."));
+  }
+  if (!VALID_FORMATS.includes(format)) {
+    res.status(400);
+    return next(new Error("Invalid session format."));
+  }
+  if (format === "home-visit" && !address?.trim()) {
+    res.status(400);
+    return next(new Error("Please provide an address for the home visit."));
+  }
+
+  if (type === "followup" && /^\d{10}$/.test(phone || "")) {
+    const credit = await getActiveCredit(phone.trim());
+    if (credit) {
+      return res.status(200).json({
+        status: true,
+        data: { freeSession: true, sessionsRemaining: credit.totalSessions - credit.sessionsUsed, packageName: credit.packageName },
+      });
+    }
+  }
+
+  try {
+    const { baseAmount, platformFee, totalAmount, packageName } = await computeBookingAmount({ sessionMode, format, packageId });
+
+    const razorpay = getRazorpayInstance();
+    const qr = await razorpay.qrCode.create({
+      type: "upi_qr",
+      name: "Choose Your Therapist — Noida Center",
+      usage: "single_use",
+      fixed_amount: true,
+      payment_amount: Math.round(totalAmount * 100), // paise
+      description: "Noida Center Appointment",
+      close_by: Math.floor(Date.now() / 1000) + 20 * 60, // Razorpay requires close_by to be at least 15 min out — pad to 20 for safety margin
+      notes: { phone: phone?.trim() || "", sessionMode, format },
+    });
+
+    return res.status(200).json({
+      status: true,
+      data: {
+        qrCodeId: qr.id,
+        qrImageUrl: qr.image_url,
+        baseAmount,
+        platformFee,
+        amount: totalAmount,
+        packageName,
+        expiresAt: qr.close_by,
+      },
+    });
+  } catch (err) {
+    return next(new Error(err.message || "Could not generate QR code. Please try again."));
+  }
+});
+
+// Polled by the public QR payment screen every few seconds. Always asks
+// Razorpay directly whether a payment has landed against this QR code —
+// never trusts anything the client claims about having paid.
+export const getNoidaQrStatus = expressAsyncHandler(async (req, res, next) => {
+  const { qrCodeId } = req.params;
+  if (!qrCodeId?.trim()) {
+    res.status(400);
+    return next(new Error("QR code id is required."));
+  }
+
+  try {
+    const razorpay = getRazorpayInstance();
+    const result = await razorpay.qrCode.fetchAllPayments(qrCodeId);
+    const items = result?.items || [];
+    const captured = items.find((p) => p.status === "captured");
+
+    if (captured) {
+      // A captured payment is worthless to a second booking attempt once
+      // it's been spent — let the caller know up front if that's already
+      // happened, so the UI doesn't dead-end on a generic payment error.
+      const alreadyUsed = await NoidaAppointment.findOne({ razorpayPaymentId: captured.id }).select("_id").lean();
+      return res.status(200).json({
+        status: true,
+        data: { paid: true, paymentId: captured.id, amount: captured.amount / 100, alreadyUsed: !!alreadyUsed },
+      });
+    }
+
+    const qr = await razorpay.qrCode.fetch(qrCodeId);
+    return res.status(200).json({
+      status: true,
+      data: { paid: false, expired: qr.status === "closed" },
+    });
+  } catch (err) {
+    return next(new Error(err.message || "Could not check payment status."));
+  }
+});
+
 // Shared by both the public pay-first flow and the admin reception-booking
 // flow — caller has already verified payment (Razorpay signature) or
 // established there's an active credit before calling this. `paymentMethod`
@@ -516,7 +652,7 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
   const {
     name, phone, email, concern, date, slot, age,
     sessionMode, format, address, packageId,
-    razorpay_order_id, razorpay_payment_id, razorpay_signature,
+    razorpay_order_id, razorpay_payment_id, razorpay_signature, qr_code_id,
   } = req.body;
   const type = normalizeType(req.body.type);
 
@@ -544,18 +680,49 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
   // Server decides credit eligibility itself — never trusts a client flag.
   const credit = type === "followup" ? await getActiveCredit(phone.trim()) : null;
 
+  let paymentMethod = "razorpay";
+  let verifiedOrderId = razorpay_order_id || "";
+  let verifiedPaymentId = razorpay_payment_id || "";
+
   if (!credit) {
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    if (razorpay_order_id && razorpay_payment_id && razorpay_signature) {
+      const expectedSignature = crypto
+        .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+        .digest("hex");
+      if (razorpay_signature !== expectedSignature) {
+        res.status(400);
+        return next(new Error("Payment verification failed."));
+      }
+      paymentMethod = "razorpay";
+    } else if (qr_code_id) {
+      // Never trust the client's "I paid" claim — ask Razorpay directly
+      // whether a payment actually landed against this QR code.
+      let items;
+      try {
+        const razorpay = getRazorpayInstance();
+        const result = await razorpay.qrCode.fetchAllPayments(qr_code_id);
+        items = result?.items || [];
+      } catch (err) {
+        res.status(400);
+        return next(new Error("Could not verify QR payment. Please try again."));
+      }
+      const captured = items.find((p) => p.status === "captured");
+      if (!captured) {
+        res.status(400);
+        return next(new Error("Payment not confirmed yet for this QR code."));
+      }
+      const reused = await NoidaAppointment.findOne({ razorpayPaymentId: captured.id }).select("_id").lean();
+      if (reused) {
+        res.status(400);
+        return next(new Error("This payment has already been used for a booking."));
+      }
+      paymentMethod = "qr";
+      verifiedOrderId = qr_code_id;
+      verifiedPaymentId = captured.id;
+    } else {
       res.status(400);
       return next(new Error("Payment is required to confirm this booking."));
-    }
-    const expectedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest("hex");
-    if (razorpay_signature !== expectedSignature) {
-      res.status(400);
-      return next(new Error("Payment verification failed."));
     }
   }
 
@@ -569,9 +736,9 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     const appointment = await finalizeNoidaBooking({
       name, phone, email, concern, date, slot, type, age,
       sessionMode, format, address, packageId, credit,
-      paymentMethod: "razorpay",
-      razorpayOrderId: razorpay_order_id,
-      razorpayPaymentId: razorpay_payment_id,
+      paymentMethod,
+      razorpayOrderId: verifiedOrderId,
+      razorpayPaymentId: verifiedPaymentId,
     });
     return res.status(201).json({
       status: true,
