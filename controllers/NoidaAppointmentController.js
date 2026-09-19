@@ -94,15 +94,17 @@ function slotStartMinutes(label) {
   return h * 60 + m;
 }
 
-// For today's date: drops slots whose start time has already passed, and
-// flags the ones inside the last-minute window (still visible, right up to
-// start — just no longer instantly bookable). No-op for future dates.
+// For today's date: flags slots whose start time has already passed (kept in
+// the list so the table stays complete until the day actually ends — the
+// client shows them as inert), and the ones inside the last-minute window
+// (still visible, right up to start — just no longer instantly bookable).
 function annotateSameDaySlots(slots, date, today, now) {
-  if (date !== today) return slots.map((label) => ({ slot: label, lastMinute: false }));
+  if (date !== today) return slots.map((label) => ({ slot: label, lastMinute: false, past: false }));
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  return slots
-    .filter((label) => slotStartMinutes(label) > nowMinutes)
-    .map((label) => ({ slot: label, lastMinute: slotStartMinutes(label) - nowMinutes <= LAST_MINUTE_WINDOW_MINUTES }));
+  return slots.map((label) => {
+    const minutesToStart = slotStartMinutes(label) - nowMinutes;
+    return { slot: label, past: minutesToStart <= 0, lastMinute: minutesToStart > 0 && minutesToStart <= LAST_MINUTE_WINDOW_MINUTES };
+  });
 }
 
 export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
@@ -130,7 +132,7 @@ export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
   // can see the full picture of what's taken vs. open.
   const booked = await NoidaAppointment.find({ date, status: "confirmed" }).select("slot").lean();
   const bookedSet = new Set(booked.map((b) => b.slot));
-  const data = annotated.map(({ slot, lastMinute }) => ({ slot, booked: bookedSet.has(slot), lastMinute }));
+  const data = annotated.map(({ slot, lastMinute, past }) => ({ slot, booked: bookedSet.has(slot), lastMinute, past }));
 
   return res.status(200).json({ status: true, data });
 });
@@ -161,8 +163,8 @@ export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) =
   const data = [];
   for (const [date, slots] of byDate) {
     const annotated = annotateSameDaySlots(slots, date, today, now);
-    for (const { slot, lastMinute } of annotated) {
-      data.push({ date, slot, booked: bookedSet.has(`${date}|${slot}`), lastMinute });
+    for (const { slot, lastMinute, past } of annotated) {
+      data.push({ date, slot, booked: bookedSet.has(`${date}|${slot}`), lastMinute, past });
     }
   }
   data.sort((a, b) => a.date === b.date ? 0 : a.date < b.date ? -1 : 1);
