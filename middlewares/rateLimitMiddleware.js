@@ -61,17 +61,3 @@ export const phoneLookupRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-
-// The public QR payment screen polls this every few seconds while a
-// customer is scanning/paying — needs a much looser cap than a one-shot
-// lookup, but still bounded per IP.
-export const qrStatusRateLimit = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 150, // ~1 poll every 2s for the full window
-  message: {
-    status: false,
-    message: "Too many requests. Please wait a moment and try again.",
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
