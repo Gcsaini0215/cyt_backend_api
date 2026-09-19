@@ -41,7 +41,7 @@ import {
   deleteClientCredit,
 } from "../controllers/NoidaClientCreditController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
-import { leadRateLimit, phoneLookupRateLimit, pollingRateLimit } from "../middlewares/rateLimitMiddleware.js";
+import { leadRateLimit, phoneLookupRateLimit, pollingRateLimit, lastMinuteRequestRateLimit } from "../middlewares/rateLimitMiddleware.js";
 
 const router = Router();
 
@@ -55,7 +55,7 @@ router.post("/noida-appointments", leadRateLimit, createNoidaAppointment);      
 router.get("/noida-appointments/upcoming", phoneLookupRateLimit, getUpcomingAppointment); // public — no auth
 router.patch("/noida-appointments/reschedule", leadRateLimit, rescheduleNoidaAppointment); // public — no auth, registered before the :id route below
 
-router.post("/noida-appointments/last-minute-requests", leadRateLimit, createLastMinuteRequest); // public — no auth
+router.post("/noida-appointments/last-minute-requests", lastMinuteRequestRateLimit, createLastMinuteRequest); // public — no auth
 router.get("/noida-appointments/last-minute-requests/:id/status", pollingRateLimit, getLastMinuteRequestStatus); // public — no auth, polled
 
 router.post("/noida-appointments/admin-book-credit", hasPermission("noidaCenter"), adminBookCreditSession);

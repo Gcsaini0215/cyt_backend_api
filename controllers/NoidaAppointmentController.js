@@ -4,6 +4,7 @@ import Razorpay from "razorpay";
 import crypto from "crypto";
 import NoidaAppointment from "../models/NoidaAppointment.js";
 import NoidaLastMinuteRequest from "../models/NoidaLastMinuteRequest.js";
+import NoidaPendingBooking from "../models/NoidaPendingBooking.js";
 import NoidaFollowupSlot from "../models/NoidaFollowupSlot.js";
 import NoidaPackage from "../models/NoidaPackage.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
@@ -386,6 +387,19 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
     }
   }
 
+  // Newer clients send the full booking with the order. Refuse up front if
+  // that slot can't be booked, so nobody is charged for a slot that's gone —
+  // and remember what they were booking so the webhook can finish (or refund) it.
+  const { name, age, email, concern, date, slot } = req.body;
+  const bookingSent = !!(name?.trim() && /^\d{10}$/.test(phone || "") && isValidDateStr(date) && slot?.trim());
+  if (bookingSent) {
+    const blocked = await slotUnavailableReason({ date, slot, type, phone: phone.trim() });
+    if (blocked) {
+      res.status(blocked.status);
+      return next(new Error(blocked.message));
+    }
+  }
+
   try {
     const { baseAmount, platformFee, totalAmount, packageName } = await computeBookingAmount({ sessionMode, format, packageId });
 
@@ -395,6 +409,25 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
       currency: "INR",
       receipt: `noida_${Date.now()}`,
     });
+
+    if (bookingSent) {
+      try {
+        await NoidaPendingBooking.create({
+          orderId: order.id,
+          amount: totalAmount,
+          payload: {
+            name: name.trim(), age: age?.toString().trim() || "", phone: phone.trim(),
+            email: email?.trim() || "", concern: concern?.trim() || "",
+            date, slot: slot.trim(), type, sessionMode, format,
+            address: format === "home-visit" ? address.trim() : "",
+            packageId: sessionMode === "package" ? packageId : null,
+          },
+        });
+      } catch (pendingErr) {
+        // Non-fatal: without it the browser callback still books as before.
+        console.error("Could not save pending Noida booking:", pendingErr.message);
+      }
+    }
 
     return res.status(200).json({
       status: true,
@@ -560,6 +593,131 @@ async function finalizeNoidaBooking({
   return appointment;
 }
 
+// A slot this close to start (or already started today) needs staff to have
+// accepted a request first — regardless of payment method, since it's about
+// whether the center can take a walk-in this soon, not about payment risk.
+function isLastMinuteSlot(date, slot) {
+  const now = istNow();
+  return date === istDateStr(now) && slotStartMinutes(slot) - (now.getHours() * 60 + now.getMinutes()) <= LAST_MINUTE_WINDOW_MINUTES;
+}
+
+// Why a public client can't book this slot right now, or null if they can.
+// Used both before taking payment (so nobody is charged for a taken slot) and
+// again after payment, since a slot can vanish while checkout is open.
+async function slotUnavailableReason({ date, slot, type, phone }) {
+  const isOpen = await NoidaFollowupSlot.findOne({ date, slot, type });
+  if (!isOpen) return { status: 400, message: "That slot isn't open for booking on the selected date." };
+  const booked = await NoidaAppointment.findOne({ date, slot, status: "confirmed" });
+  if (booked) return { status: 409, message: "Sorry, that slot was just booked by someone else. Please pick another." };
+  if (isLastMinuteSlot(date, slot)) {
+    const approved = await NoidaLastMinuteRequest.findOne({ phone, date, slot, status: "accepted" });
+    if (!approved) return { status: 400, message: "This slot needs staff approval first — please send a request and wait for it to be accepted." };
+  }
+  return null;
+}
+
+// Turns a verified Razorpay payment into a booking. Idempotent on the payment
+// id, so the browser callback and the webhook can both call it safely.
+async function completePaidBooking({ payload, orderId, paymentId }) {
+  const existing = await NoidaAppointment.findOne({ razorpayPaymentId: paymentId });
+  if (existing) return existing;
+  const blocked = await slotUnavailableReason({ date: payload.date, slot: payload.slot, type: payload.type, phone: payload.phone });
+  if (blocked) {
+    const err = new Error(blocked.message);
+    err.status = blocked.status;
+    throw err;
+  }
+  return finalizeNoidaBooking({
+    ...payload, credit: null,
+    paymentMethod: "razorpay", razorpayOrderId: orderId, razorpayPaymentId: paymentId,
+  });
+}
+
+async function refundPayment(paymentId, reason) {
+  try {
+    const refund = await getRazorpayInstance().payments.refund(paymentId, {
+      speed: "optimum",
+      notes: { reason: String(reason || "Booking could not be completed").slice(0, 200) },
+    });
+    return { ok: true, refundId: refund.id };
+  } catch (err) {
+    console.error("Noida auto-refund failed:", JSON.stringify(err?.error || err?.message || err));
+    return { ok: false, error: err?.error?.description || err?.message || "refund failed" };
+  }
+}
+
+function paidBookingFailureMessage({ refunded, reason, amount, paymentId }) {
+  const amt = amount ? ` of ₹${amount}` : "";
+  const why = reason || "We couldn't complete your booking.";
+  return refunded
+    ? `${why} Your payment${amt} has been refunded automatically — it should reach your account in 5–7 working days.`
+    : `${why} We couldn't refund your payment${amt} automatically, but our team has been alerted and will refund it shortly. Payment ID: ${paymentId}.`;
+}
+
+// A client has paid but the booking can't happen: refund them, and tell staff
+// either way (loudly when the automatic refund itself failed).
+async function handlePaidBookingFailure({ pending, payload, orderId, paymentId, amount, err }) {
+  const reason = err?.message || "Booking could not be completed.";
+  const refund = await refundPayment(paymentId, reason);
+  if (pending) {
+    await NoidaPendingBooking.updateOne(
+      { _id: pending._id },
+      { status: refund.ok ? "refunded" : "refund_failed", failureReason: reason, refundId: refund.refundId || "", paymentId }
+    );
+  }
+  try {
+    await sendMail(
+      "chooseyourtherapist@gmail.com",
+      `${refund.ok ? "Auto-refunded" : "REFUND NEEDED"}: Noida booking payment — ${payload?.name || "unknown"}`,
+      `${refund.ok ? "A payment was refunded automatically" : "A payment could NOT be refunded automatically and needs a manual refund"}. ${payload?.name} (${payload?.phone}) wanted ${payload?.date} ${payload?.slot}. Reason: ${reason}. Payment ${paymentId}, order ${orderId}.${refund.ok ? "" : ` Refund error: ${refund.error}`}`,
+      `<div style="font-family:sans-serif;font-size:14px;line-height:1.6">
+        <h3 style="margin:0 0 8px;color:${refund.ok ? "#166534" : "#b91c1c"}">${refund.ok ? "Payment auto-refunded" : "Manual refund needed"}</h3>
+        <div><b>Client:</b> ${payload?.name || "—"} · ${payload?.phone || "—"}</div>
+        <div><b>Wanted:</b> ${payload?.date || "—"} ${payload?.slot || ""}</div>
+        <div><b>Why it failed:</b> ${reason}</div>
+        <div><b>Payment ID:</b> ${paymentId}</div>
+        <div><b>Order ID:</b> ${orderId}</div>
+        ${refund.ok ? `<div><b>Refund ID:</b> ${refund.refundId}</div>` : `<div style="color:#b91c1c"><b>Refund error:</b> ${refund.error} — please refund this payment from the Razorpay dashboard.</div>`}
+      </div>`
+    );
+  } catch (mailErr) {
+    console.error("Payment-issue alert email failed (non-fatal):", mailErr.message);
+  }
+  return { refunded: refund.ok, message: paidBookingFailureMessage({ refunded: refund.ok, reason, amount, paymentId }) };
+}
+
+const PROCESSING_STALE_MS = 2 * 60 * 1000;
+
+// Claims a pending paid order and books it — exactly once, however many
+// times or from however many places (browser callback, webhook, retries)
+// it's asked. Returns { appointment } | { failure } | { skipped, pending }.
+export async function processPaidOrder({ orderId, paymentId }) {
+  const claimed = await NoidaPendingBooking.findOneAndUpdate(
+    {
+      orderId,
+      $or: [
+        { status: "pending" },
+        { status: "processing", updatedAt: { $lt: new Date(Date.now() - PROCESSING_STALE_MS) } }, // a previous attempt died midway
+      ],
+    },
+    { status: "processing", paymentId },
+    { new: true }
+  );
+  if (!claimed) {
+    return { skipped: true, pending: await NoidaPendingBooking.findOne({ orderId }) };
+  }
+
+  const payload = claimed.toObject().payload;
+  try {
+    const appointment = await completePaidBooking({ payload, orderId, paymentId });
+    await NoidaPendingBooking.updateOne({ _id: claimed._id }, { status: "completed", appointment: appointment._id });
+    return { appointment };
+  } catch (err) {
+    const failure = await handlePaidBookingFailure({ pending: claimed, payload, orderId, paymentId, amount: claimed.amount, err });
+    return { failure: { ...failure, status: err.status || 500 } };
+  }
+}
+
 export const createNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
   const {
     name, phone, email, concern, date, slot, age,
@@ -589,61 +747,93 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     return next(new Error("Please provide an address for the home visit."));
   }
 
-  // A slot this close to start needs staff to actually accept a request
-  // first — regardless of payment method, since it's about whether the
-  // center can take a walk-in this soon, not about payment risk.
-  const nowForWindow = istNow();
-  const isLastMinuteSlot = date === istDateStr(nowForWindow)
-    && slotStartMinutes(slot) - (nowForWindow.getHours() * 60 + nowForWindow.getMinutes()) <= LAST_MINUTE_WINDOW_MINUTES;
-  if (isLastMinuteSlot) {
-    const approved = await NoidaLastMinuteRequest.findOne({ phone: phone.trim(), date, slot, status: "accepted" });
-    if (!approved) {
-      res.status(400);
-      return next(new Error("This slot needs staff approval first — please send a request and wait for it to be accepted."));
-    }
-  }
-
   // Server decides credit eligibility itself — never trusts a client flag.
   const credit = type === "followup" ? await getActiveCredit(phone.trim()) : null;
 
-  if (!credit) {
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-      res.status(400);
-      return next(new Error("Payment is required to confirm this booking."));
+  // ── Package-credit booking: no payment involved.
+  if (credit) {
+    const blocked = await slotUnavailableReason({ date, slot, type, phone: phone.trim() });
+    if (blocked) {
+      res.status(blocked.status);
+      return next(new Error(blocked.message));
     }
-    const expectedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest("hex");
-    if (razorpay_signature !== expectedSignature) {
-      res.status(400);
-      return next(new Error("Payment verification failed."));
+    try {
+      const appointment = await finalizeNoidaBooking({
+        name, phone, email, concern, date, slot, type, age,
+        sessionMode, format, address, packageId, credit,
+        paymentMethod: "razorpay",
+      });
+      return res.status(201).json({ status: true, message: "Appointment booked successfully.", data: appointment });
+    } catch (err) {
+      res.status(err.status || 500);
+      return next(new Error(err.message || "Something went wrong"));
     }
   }
 
-  const isOpen = await NoidaFollowupSlot.findOne({ date, slot, type });
-  if (!isOpen) {
+  // ── Paid booking. Verify the payment first — everything after this point
+  // has taken the client's money, so a booking that can't go through has to
+  // refund it rather than just error out.
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
     res.status(400);
-    return next(new Error("That slot isn't open for booking on the selected date."));
+    return next(new Error("Payment is required to confirm this booking."));
+  }
+  const expectedSignature = crypto
+    .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+    .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+    .digest("hex");
+  if (razorpay_signature !== expectedSignature) {
+    res.status(400);
+    return next(new Error("Payment verification failed."));
   }
 
-  try {
-    const appointment = await finalizeNoidaBooking({
-      name, phone, email, concern, date, slot, type, age,
-      sessionMode, format, address, packageId, credit,
-      paymentMethod: "razorpay",
-      razorpayOrderId: razorpay_order_id,
-      razorpayPaymentId: razorpay_payment_id,
-    });
-    return res.status(201).json({
-      status: true,
-      message: "Appointment booked successfully.",
-      data: appointment,
-    });
-  } catch (err) {
-    res.status(err.status || 500);
-    return next(new Error(err.message || "Something went wrong"));
+  const hasPending = await NoidaPendingBooking.exists({ orderId: razorpay_order_id });
+  let outcome;
+  if (hasPending) {
+    // Shared with the webhook: whichever gets there first books it, the other sees it done.
+    outcome = await processPaidOrder({ orderId: razorpay_order_id, paymentId: razorpay_payment_id });
+  } else {
+    // Order created before this flow existed, or its pending record couldn't be saved.
+    const payload = { name, phone, email, concern, date, slot, type, age, sessionMode, format, address, packageId };
+    try {
+      const appointment = await completePaidBooking({ payload, orderId: razorpay_order_id, paymentId: razorpay_payment_id });
+      outcome = { appointment };
+    } catch (err) {
+      const failure = await handlePaidBookingFailure({ pending: null, payload, orderId: razorpay_order_id, paymentId: razorpay_payment_id, amount: 0, err });
+      outcome = { failure: { ...failure, status: err.status || 500 } };
+    }
   }
+
+  // The other side (webhook) already had this order — wait briefly for it to settle.
+  if (outcome.skipped) {
+    let pending = outcome.pending;
+    for (let i = 0; i < 12 && pending?.status === "processing"; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      pending = await NoidaPendingBooking.findOne({ orderId: razorpay_order_id });
+    }
+    if (pending?.status === "completed" && pending.appointment) {
+      const appointment = await NoidaAppointment.findById(pending.appointment);
+      if (appointment) return res.status(201).json({ status: true, message: "Appointment booked successfully.", data: appointment });
+    }
+    if (pending?.status === "refunded" || pending?.status === "refund_failed") {
+      const failure = paidBookingFailureMessage({ refunded: pending.status === "refunded", reason: pending.failureReason, amount: pending.amount, paymentId: razorpay_payment_id });
+      return res.status(409).json({ status: false, message: failure, paymentHandled: true, refunded: pending.status === "refunded", data: null });
+    }
+    return res.status(409).json({
+      status: false,
+      paymentHandled: true,
+      message: "We've received your payment and are confirming your booking — you'll get a confirmation shortly. If you don't, WhatsApp us with payment ID " + razorpay_payment_id + ".",
+      data: null,
+    });
+  }
+
+  if (outcome.failure) {
+    return res.status(outcome.failure.status).json({
+      status: false, message: outcome.failure.message,
+      paymentHandled: true, refunded: outcome.failure.refunded, data: null,
+    });
+  }
+
+  return res.status(201).json({ status: true, message: "Appointment booked successfully.", data: outcome.appointment });
 });
 
 // Once staff accepts, an unconsumed request would otherwise block the slot
@@ -698,6 +888,12 @@ export const createLastMinuteRequest = expressAsyncHandler(async (req, res, next
     return next(new Error("Please provide an address for the home visit."));
   }
 
+  // Honeypot: the real form never fills this hidden field, bots usually do.
+  if (req.body.website) {
+    res.status(400);
+    return next(new Error("Could not send request."));
+  }
+
   // Never trust the client's claim that this is a last-minute slot —
   // recompute it the same way the slots list does.
   const now = istNow();
@@ -737,6 +933,41 @@ export const createLastMinuteRequest = expressAsyncHandler(async (req, res, next
   if (othersActive && othersActive.status !== "expired") {
     res.status(409);
     return next(new Error("Someone else has already requested this slot — please try another."));
+  }
+
+  // Abuse controls — a request costs nothing to send but takes staff time.
+  const nowMs = Date.now();
+  const pendingCutoff = new Date(nowMs - LAST_MINUTE_ACCEPT_SLA_MINUTES * 60000);
+  const acceptedCutoff = new Date(nowMs - LAST_MINUTE_BOOKING_GRACE_MINUTES * 60000);
+  const since = new Date(nowMs - 24 * 60 * 60 * 1000);
+  const [activeElsewhere, sentToday, noShows, pendingTotal] = await Promise.all([
+    NoidaLastMinuteRequest.exists({
+      phone: phone.trim(),
+      $or: [
+        { status: "pending", requestedAt: { $gt: pendingCutoff } },
+        { status: "accepted", respondedAt: { $gt: acceptedCutoff } },
+      ],
+    }),
+    NoidaLastMinuteRequest.countDocuments({ phone: phone.trim(), createdAt: { $gte: since } }),
+    // Staff accepted, the client never came back to pay — that's a no-show.
+    NoidaLastMinuteRequest.countDocuments({ phone: phone.trim(), status: "expired", respondedAt: { $ne: null }, createdAt: { $gte: since } }),
+    NoidaLastMinuteRequest.countDocuments({ status: "pending", requestedAt: { $gt: pendingCutoff } }),
+  ]);
+  if (activeElsewhere) {
+    res.status(409);
+    return next(new Error("You already have a request in progress — please wait for it to finish before sending another."));
+  }
+  if (sentToday >= 4) {
+    res.status(429);
+    return next(new Error("You've sent several requests today. Please WhatsApp us and we'll help directly."));
+  }
+  if (noShows >= 2) {
+    res.status(429);
+    return next(new Error("Earlier approved requests weren't completed, so new ones are paused for today. Please WhatsApp us."));
+  }
+  if (pendingTotal >= 10) {
+    res.status(429);
+    return next(new Error("The center is handling a lot of requests right now. Please WhatsApp us."));
   }
 
   const request = await NoidaLastMinuteRequest.create({

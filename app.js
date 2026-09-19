@@ -28,6 +28,7 @@ import probonoRouter from "./routes/probono.js";
 import traineeRouter from "./routes/trainee.js";
 import receptionRouter from "./routes/reception.js";
 import noidaAppointmentRouter from "./routes/noidaAppointment.js";
+import { razorpayWebhook } from "./controllers/RazorpayWebhookController.js";
 import { notFound, errorHandler } from "./middlewares/errorMiddleware.js";
 import path, { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -70,6 +71,11 @@ app.use(cors({
 app.options("*", cors());
 
 global.appRoot = path.resolve(__dirname);
+
+// Razorpay signs the exact bytes it sends, so this route has to see the raw
+// body — it must be registered before express.json() consumes it.
+app.post("/api/razorpay/webhook", express.raw({ type: "*/*", limit: "1mb" }), razorpayWebhook);
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 

@@ -62,6 +62,19 @@ export const phoneLookupRateLimit = rateLimit({
   legacyHeaders: false,
 });
 
+// Sending a last-minute request costs the sender nothing but pulls staff
+// away from the desk, so it gets a much tighter per-IP cap than other forms.
+export const lastMinuteRequestRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 6, // 6 requests per IP per hour
+  message: {
+    status: false,
+    message: "Too many requests from this connection. Please WhatsApp us and we'll help directly.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // The public last-minute-request waiting screen polls this every few
 // seconds for up to 10 minutes — needs a much looser cap than a one-shot
 // lookup, but still bounded per IP.
