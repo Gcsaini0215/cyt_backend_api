@@ -4,7 +4,7 @@ import NoidaPricing from "../models/NoidaPricing.js";
 import NoidaPackage from "../models/NoidaPackage.js";
 import Admin from "../models/Admin.js";
 
-const MAX_PACKAGES = 3;
+const MAX_PACKAGES = 10;
 
 export async function getOrCreatePricing() {
   let doc = await NoidaPricing.findOne({});
@@ -28,6 +28,14 @@ export const getPublicPricing = expressAsyncHandler(async (req, res, next) => {
         couple_homevisit: pricing.couple_homevisit,
         platformFee: pricing.platformFee,
         packages,
+        customPackage: pricing.customPackage?.enabled && pricing.customPackage.perSessionPrice > 0
+          ? {
+              enabled: true,
+              perSessionPrice: pricing.customPackage.perSessionPrice,
+              minSessions: pricing.customPackage.minSessions,
+              maxSessions: pricing.customPackage.maxSessions,
+            }
+          : { enabled: false },
       },
     });
   } catch (err) {
@@ -62,6 +70,25 @@ export const updatePricing = expressAsyncHandler(async (req, res, next) => {
         return next(new Error(`${key} must be a non-negative number.`));
       }
       update[key] = n;
+    }
+    if (req.body.customPackage !== undefined) {
+      const c = req.body.customPackage || {};
+      const perSessionPrice = Number(c.perSessionPrice);
+      const minSessions = Math.floor(Number(c.minSessions));
+      const maxSessions = Math.floor(Number(c.maxSessions));
+      if (![perSessionPrice, minSessions, maxSessions].every(Number.isFinite) || perSessionPrice < 0) {
+        res.status(400);
+        return next(new Error("Custom package needs a price per session and a minimum and maximum number of sessions."));
+      }
+      if (minSessions < 1 || maxSessions < minSessions || maxSessions > 60) {
+        res.status(400);
+        return next(new Error("Sessions must be between 1 and 60, and the maximum can't be below the minimum."));
+      }
+      if (c.enabled && perSessionPrice <= 0) {
+        res.status(400);
+        return next(new Error("Set a price per session before turning the custom package on."));
+      }
+      update.customPackage = { enabled: !!c.enabled, perSessionPrice, minSessions, maxSessions };
     }
     if (req.body.defaultAssignee !== undefined) {
       const adminId = req.body.defaultAssignee;

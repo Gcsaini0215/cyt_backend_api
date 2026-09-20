@@ -24,6 +24,7 @@ const noidaPendingBookingSchema = new Schema({
     format:      { type: String, default: "in-person" },
     address:     { type: String, default: "" },
     packageId:   { type: Schema.Types.ObjectId, ref: "NoidaPackage", default: null },
+    customSessions: { type: Number, default: 0 }, // set instead of packageId for a custom package
   },
 
   // pending → processing (someone is working on it) → completed | refunded | refund_failed

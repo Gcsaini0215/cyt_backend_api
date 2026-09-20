@@ -15,6 +15,16 @@ const noidaPricingSchema = new Schema({
   couple_homevisit:     { type: Number, default: 2499 },
   platformFee:          { type: Number, default: 20 },
 
+  // "Custom package": the client picks how many sessions they want (within
+  // min..max) and pays sessions x perSessionPrice — for anyone who needs fewer
+  // or more than the fixed packages.
+  customPackage: {
+    enabled:         { type: Boolean, default: false },
+    perSessionPrice: { type: Number, default: 0 },
+    minSessions:     { type: Number, default: 2 },
+    maxSessions:     { type: Number, default: 20 },
+  },
+
   // Auto-assigned + emailed the moment a new booking comes in, before any
   // admin manually reassigns it — lets one team member own first response
   // without someone having to notice and assign it by hand.

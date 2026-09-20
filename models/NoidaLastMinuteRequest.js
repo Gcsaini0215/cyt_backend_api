@@ -21,6 +21,7 @@ const noidaLastMinuteRequestSchema = new Schema({
   format:      { type: String, enum: ["in-person", "online", "home-visit"], default: "in-person" },
   address:     { type: String, default: "" },
   packageId:   { type: Schema.Types.ObjectId, ref: "NoidaPackage", default: null },
+  customSessions: { type: Number, default: 0 },
 
   status: { type: String, enum: ["pending", "accepted", "rejected", "expired"], default: "pending" },
   requestedAt: { type: Date, default: Date.now },
