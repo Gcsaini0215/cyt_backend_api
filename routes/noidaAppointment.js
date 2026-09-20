@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { validateCoupon, getCoupons, createCoupon, updateCoupon, deleteCoupon } from "../controllers/NoidaCouponController.js";
 import {
   getAvailableSlots,
   getPublicSlotsMatrix,
@@ -56,6 +57,7 @@ router.get("/noida-appointments/lookup", phoneLookupRateLimit, lookupClientByPho
 router.get("/noida-appointments/followup-dates", leadRateLimit, getFollowupDates); // public — no auth
 router.get("/noida-appointments/pricing", leadRateLimit, getPublicPricing);      // public — no auth
 router.post("/noida-appointments/create-order", leadRateLimit, createNoidaOrder); // public — no auth
+router.post("/noida-appointments/coupon/validate", leadRateLimit, validateCoupon);   // public — no auth
 router.post("/noida-appointments", leadRateLimit, createNoidaAppointment);       // public — no auth
 router.get("/noida-appointments/upcoming", phoneLookupRateLimit, getUpcomingAppointment); // public — no auth
 router.patch("/noida-appointments/reschedule", leadRateLimit, rescheduleNoidaAppointment); // public — no auth, registered before the :id route below
@@ -83,6 +85,11 @@ router.get("/noida-followup-slots", hasPermission("noidaCenter"), getFollowupSlo
 router.post("/noida-followup-slots", hasPermission("noidaCenter"), addFollowupSlots);
 router.post("/noida-followup-slots/bulk", hasPermission("noidaCenter"), addFollowupSlotsBulk);
 router.delete("/noida-followup-slots/:id", hasPermission("noidaCenter"), deleteFollowupSlot);
+
+router.get("/noida-coupons", hasPermission("noidaCenter"), getCoupons);
+router.post("/noida-coupons", hasPermission("noidaCenter"), createCoupon);
+router.patch("/noida-coupons/:id", hasPermission("noidaCenter"), updateCoupon);
+router.delete("/noida-coupons/:id", hasPermission("noidaCenter"), deleteCoupon);
 
 router.get("/noida-pricing", hasPermission("noidaCenter"), getPricing);
 router.patch("/noida-pricing", hasPermission("noidaCenter"), updatePricing);

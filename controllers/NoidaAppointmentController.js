@@ -7,6 +7,7 @@ import NoidaLastMinuteRequest from "../models/NoidaLastMinuteRequest.js";
 import NoidaPendingBooking from "../models/NoidaPendingBooking.js";
 import NoidaFollowupSlot from "../models/NoidaFollowupSlot.js";
 import NoidaPackage from "../models/NoidaPackage.js";
+import { resolveCoupon, normalizeCouponCode } from "../helper/noidaCoupon.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import Lead from "../models/Lead.js";
 import Admin from "../models/Admin.js";
@@ -33,7 +34,7 @@ function priceFieldFor(sessionMode, format) {
 
 // Single source of truth for what a booking costs — never trust a client-supplied
 // amount. Returns { baseAmount, platformFee, totalAmount, packageName }.
-export async function computeBookingAmount({ sessionMode, format, packageId, customSessions }) {
+export async function computeBookingAmount({ sessionMode, format, packageId, customSessions, couponCode, phone, lockedDiscount }) {
   const pricing = await getOrCreatePricing();
   let baseAmount;
   let packageName = "";
@@ -64,8 +65,27 @@ export async function computeBookingAmount({ sessionMode, format, packageId, cus
     baseAmount = pricing[priceFieldFor(sessionMode, format)];
   }
 
+  // A coupon takes money off the session/package price — never the platform fee.
+  // `lockedDiscount` is the figure fixed when a paid order was created: the
+  // client already paid that price, so it is honoured even if the coupon has
+  // since run out or expired.
+  let discountAmount = 0;
+  let appliedCode = "";
+  if (couponCode) {
+    if (lockedDiscount > 0) {
+      discountAmount = Math.min(Math.floor(lockedDiscount), baseAmount);
+      appliedCode = normalizeCouponCode(couponCode);
+    } else {
+      const r = await resolveCoupon({ code: couponCode, phone, baseAmount, isPackage: sessionMode === "package" });
+      discountAmount = r.discountAmount;
+      appliedCode = r.coupon.code;
+    }
+  }
+
   const platformFee = pricing.platformFee;
-  return { baseAmount, platformFee, totalAmount: baseAmount + platformFee, packageName, sessionsCount };
+  const totalAmount = baseAmount - discountAmount + platformFee;
+  if (totalAmount < 1) throw new Error("That coupon would make this booking free, which isn't supported. Please ask us for a smaller discount.");
+  return { baseAmount, platformFee, totalAmount, packageName, sessionsCount, discountAmount, couponCode: appliedCode };
 }
 
 // A well-formed ObjectId or null — the clients send "" / undefined for custom packages.
@@ -375,7 +395,7 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
 // chosen session mode/format/package and opens a Razorpay order for it.
 // The frontend never gets to say what the amount is.
 export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
-  const { sessionMode, format, packageId, customSessions, address, phone } = req.body;
+  const { sessionMode, format, packageId, customSessions, couponCode, address, phone } = req.body;
   const type = normalizeType(req.body.type);
 
   if (!VALID_SESSION_MODES.includes(sessionMode)) {
@@ -418,7 +438,7 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
   }
 
   try {
-    const { baseAmount, platformFee, totalAmount, packageName } = await computeBookingAmount({ sessionMode, format, packageId, customSessions });
+    const { baseAmount, platformFee, totalAmount, packageName, discountAmount, couponCode: appliedCoupon } = await computeBookingAmount({ sessionMode, format, packageId, customSessions, couponCode, phone });
 
     const razorpay = getRazorpayInstance();
     const order = await razorpay.orders.create({
@@ -439,6 +459,7 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
             address: format === "home-visit" ? address.trim() : "",
             packageId: sessionMode === "package" ? asPackageId(packageId) : null,
             customSessions: sessionMode === "package" && !asPackageId(packageId) ? Number(customSessions) || 0 : 0,
+            couponCode: appliedCoupon, discountAmount,
           },
         });
       } catch (pendingErr) {
@@ -454,6 +475,7 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
         keyId: process.env.RAZORPAY_KEY_ID,
         baseAmount,
         platformFee,
+        discountAmount,
         amount: totalAmount,
         packageName,
       },
@@ -469,7 +491,7 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
 // is one of "razorpay" | "cash" | "qr" (ignored when credit is set).
 async function finalizeNoidaBooking({
   name, phone, email, concern, date, slot, type, age,
-  sessionMode, format, address, packageId, customSessions,
+  sessionMode, format, address, packageId, customSessions, couponCode, discountAmount: lockedDiscount,
   credit, paymentMethod, razorpayOrderId, razorpayPaymentId, bookedByAdmin,
 }) {
   const alreadyBooked = await NoidaAppointment.findOne({ date, slot, status: "confirmed" });
@@ -480,6 +502,7 @@ async function finalizeNoidaBooking({
   }
 
   let baseAmount = 0, platformFee = 0, totalAmount = 0, packageName = "", creditUsedId = null, sessionsCount = 0;
+  let discountAmount = 0, appliedCoupon = "";
 
   if (credit) {
     // Atomically claim one session — the sessionsUsed condition means only
@@ -499,7 +522,9 @@ async function finalizeNoidaBooking({
   } else {
     // Recomputed fresh (never trusts a client-sent amount) — matches what the
     // order was created for, since both calls read the same live pricing.
-    const computed = await computeBookingAmount({ sessionMode, format, packageId, customSessions });
+    const computed = await computeBookingAmount({ sessionMode, format, packageId, customSessions, couponCode, phone, lockedDiscount });
+    discountAmount = computed.discountAmount;
+    appliedCoupon = computed.couponCode;
     sessionsCount = computed.sessionsCount;
     baseAmount = computed.baseAmount;
     platformFee = computed.platformFee;
@@ -521,6 +546,8 @@ async function finalizeNoidaBooking({
     address: format === "home-visit" ? address.trim() : "",
     packageId: sessionMode === "package" ? asPackageId(packageId) : null,
     packageName,
+    couponCode: appliedCoupon,
+    discountAmount,
     amount: totalAmount,
     platformFee,
     paymentStatus: credit ? "package-credit" : "paid",
@@ -737,7 +764,7 @@ export async function processPaidOrder({ orderId, paymentId }) {
 export const createNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
   const {
     name, phone, email, concern, date, slot, age,
-    sessionMode, format, address, packageId, customSessions,
+    sessionMode, format, address, packageId, customSessions, couponCode,
     razorpay_order_id, razorpay_payment_id, razorpay_signature,
   } = req.body;
   const type = normalizeType(req.body.type);
@@ -809,7 +836,7 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     outcome = await processPaidOrder({ orderId: razorpay_order_id, paymentId: razorpay_payment_id });
   } else {
     // Order created before this flow existed, or its pending record couldn't be saved.
-    const payload = { name, phone, email, concern, date, slot, type, age, sessionMode, format, address, packageId, customSessions };
+    const payload = { name, phone, email, concern, date, slot, type, age, sessionMode, format, address, packageId, customSessions, couponCode };
     try {
       const appointment = await completePaidBooking({ payload, orderId: razorpay_order_id, paymentId: razorpay_payment_id });
       outcome = { appointment };
@@ -1105,7 +1132,7 @@ export const rejectLastMinuteRequest = expressAsyncHandler(async (req, res, next
 export const adminCreateNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
   const {
     name, phone, email, concern, date, slot, age,
-    sessionMode, format, address, packageId, customSessions, paymentMethod,
+    sessionMode, format, address, packageId, customSessions, couponCode, paymentMethod,
   } = req.body;
   const type = normalizeType(req.body.type);
 
@@ -1146,7 +1173,7 @@ export const adminCreateNoidaAppointment = expressAsyncHandler(async (req, res, 
   try {
     const appointment = await finalizeNoidaBooking({
       name, phone, email, concern, date, slot, type, age,
-      sessionMode, format, address, packageId, customSessions, credit,
+      sessionMode, format, address, packageId, customSessions, couponCode, credit,
       paymentMethod: credit ? undefined : paymentMethod,
       bookedByAdmin: req.user._id,
     });

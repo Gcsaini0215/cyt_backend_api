@@ -31,6 +31,9 @@ const noidaAppointmentSchema = new Schema({
   packageId:   { type: Schema.Types.ObjectId, ref: "NoidaPackage", default: null },
   packageName: { type: String, default: "" }, // snapshotted at booking time — survives the package later being edited/deleted
 
+  couponCode:     { type: String, default: "" },   // discount code used, if any
+  discountAmount: { type: Number, default: 0 },    // rupees taken off the session/package price
+
   amount:      { type: Number, default: 0 },  // total charged, in rupees (base + platform fee) — 0 when paid via credit
   platformFee: { type: Number, default: 0 },
   paymentStatus: { type: String, enum: ["pending", "paid", "failed", "package-credit"], default: "pending" },
