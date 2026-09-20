@@ -181,6 +181,7 @@ export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
 // dates have anything open), just combined so the public booking page can
 // render its slots-first table without firing a request per date.
 export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) => {
+  await ensureBackfilled();
   const type = normalizeType(req.query.type);
   const now = istNow();
   const today = istDateStr(now);
@@ -189,10 +190,12 @@ export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) =
 
   const [allSlots, booked] = await Promise.all([
     NoidaFollowupSlot.find({ date: { $gte: today, $lte: istDateStr(maxDate) }, type }).select("date slot").lean(),
-    NoidaAppointment.find({ date: { $gte: today }, status: "confirmed" }).select("date slot").lean(),
+    NoidaAppointment.find({ date: { $gte: today }, status: "confirmed" }).select("date slot clientCode").lean(),
   ]);
 
-  const bookedSet = new Set(booked.map((b) => `${b.date}|${b.slot}`));
+  // Only the opaque client number goes public — never a name or phone.
+  const codeByKey = new Map(booked.map((b) => [`${b.date}|${b.slot}`, b.clientCode || ""]));
+  const bookedSet = new Set(codeByKey.keys());
   const byDate = new Map();
   for (const s of allSlots) {
     if (!byDate.has(s.date)) byDate.set(s.date, []);
@@ -203,7 +206,8 @@ export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) =
   for (const [date, slots] of byDate) {
     const annotated = annotateSameDaySlots(slots, date, today, now);
     for (const { slot, lastMinute, past } of annotated) {
-      data.push({ date, slot, booked: bookedSet.has(`${date}|${slot}`), lastMinute, past });
+      const isBooked = bookedSet.has(`${date}|${slot}`);
+      data.push({ date, slot, booked: isBooked, lastMinute, past, ...(isBooked && codeByKey.get(`${date}|${slot}`) ? { clientCode: codeByKey.get(`${date}|${slot}`) } : {}) });
     }
   }
   data.sort((a, b) => a.date === b.date ? 0 : a.date < b.date ? -1 : 1);
