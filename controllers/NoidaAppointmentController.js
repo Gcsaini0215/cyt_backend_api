@@ -1518,12 +1518,26 @@ export const getFollowupSlots = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
+// Every session is 60 minutes; only the start time varies. Labels look like
+// "2:30 PM - 3:30 PM".
+const SLOT_LABEL_RE = /^(1[0-2]|[1-9]):[0-5]\d (AM|PM) - (1[0-2]|[1-9]):[0-5]\d (AM|PM)$/;
+function isValidSlotLabel(label) {
+  if (typeof label !== "string" || !SLOT_LABEL_RE.test(label)) return false;
+  const [from, to] = label.split(" - ");
+  return (slotStartMinutes(to) - slotStartMinutes(from) + 1440) % 1440 === 60;
+}
+const INVALID_SLOT_MESSAGE = "Each slot must be 60 minutes long, like 2:30 PM - 3:30 PM.";
+
 export const addFollowupSlots = expressAsyncHandler(async (req, res, next) => {
   const { date, slots } = req.body;
   const type = normalizeType(req.body.type);
   if (!isValidDateStr(date) || !Array.isArray(slots) || slots.length === 0) {
     res.status(400);
     return next(new Error("A date and at least one slot are required."));
+  }
+  if (!slots.every(isValidSlotLabel)) {
+    res.status(400);
+    return next(new Error(INVALID_SLOT_MESSAGE));
   }
 
   try {
@@ -1555,6 +1569,10 @@ export const addFollowupSlotsBulk = expressAsyncHandler(async (req, res, next) =
   if (!dates.every(isValidDateStr)) {
     res.status(400);
     return next(new Error("One or more dates are invalid."));
+  }
+  if (!slots.every(isValidSlotLabel)) {
+    res.status(400);
+    return next(new Error(INVALID_SLOT_MESSAGE));
   }
 
   try {
