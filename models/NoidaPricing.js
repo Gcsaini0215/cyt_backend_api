@@ -25,6 +25,9 @@ const noidaPricingSchema = new Schema({
     maxSessions:     { type: Number, default: 20 },
   },
 
+  // Which live therapists clients can ask for when booking at CYT Noida (picked by the admin).
+  therapists: [{ type: Schema.Types.ObjectId, ref: "Therapists" }],
+
   // Auto-assigned + emailed the moment a new booking comes in, before any
   // admin manually reassigns it — lets one team member own first response
   // without someone having to notice and assign it by hand.

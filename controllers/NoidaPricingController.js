@@ -3,6 +3,8 @@ import mongoose from "mongoose";
 import NoidaPricing from "../models/NoidaPricing.js";
 import NoidaPackage from "../models/NoidaPackage.js";
 import Admin from "../models/Admin.js";
+import Therapists from "../models/Therapists.js";
+import { getOfferedTherapists, getTherapistOptions, LIVE_THERAPIST_FILTER } from "../helper/noidaTherapist.js";
 
 const MAX_PACKAGES = 10;
 
@@ -184,6 +186,63 @@ export const deletePackage = expressAsyncHandler(async (req, res, next) => {
       return next(new Error("Package not found."));
     }
     return res.status(200).json({ status: true, message: "Package deleted." });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+
+// Public: the therapists a client can ask for at CYT Noida.
+export const getPublicNoidaTherapists = expressAsyncHandler(async (req, res, next) => {
+  try {
+    return res.status(200).json({ status: true, data: await getOfferedTherapists() });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// Admin: who could be offered (live therapists) and who currently is.
+export const getNoidaTherapistOptions = expressAsyncHandler(async (req, res, next) => {
+  try {
+    return res.status(200).json({ status: true, data: await getTherapistOptions() });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+const MAX_OFFERED_THERAPISTS = 12;
+
+export const updateNoidaTherapists = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const raw = Array.isArray(req.body.therapistIds) ? req.body.therapistIds : null;
+    if (!raw) {
+      res.status(400);
+      return next(new Error("therapistIds must be a list."));
+    }
+    const ids = [...new Set(raw.map(String))];
+    if (ids.length > MAX_OFFERED_THERAPISTS) {
+      res.status(400);
+      return next(new Error(`You can offer up to ${MAX_OFFERED_THERAPISTS} therapists.`));
+    }
+    if (!ids.every((id) => mongoose.Types.ObjectId.isValid(id))) {
+      res.status(400);
+      return next(new Error("One of the therapists is invalid."));
+    }
+    const pricing = await getOrCreatePricing();
+    const already = new Set((pricing.therapists || []).map(String));
+    // Someone already on the list may have gone off-air — they can stay or be removed,
+    // but a new addition has to be live right now.
+    const additions = ids.filter((id) => !already.has(id));
+    if (additions.length) {
+      const liveCount = await Therapists.countDocuments({ _id: { $in: additions }, ...LIVE_THERAPIST_FILTER });
+      if (liveCount !== additions.length) {
+        res.status(400);
+        return next(new Error("Only therapists who are live on the website can be offered."));
+      }
+    }
+    pricing.therapists = ids;
+    await pricing.save();
+    return res.status(200).json({ status: true, message: "Therapists saved.", data: await getTherapistOptions() });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }

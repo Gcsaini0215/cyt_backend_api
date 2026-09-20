@@ -9,6 +9,7 @@ import NoidaFollowupSlot from "../models/NoidaFollowupSlot.js";
 import NoidaPackage from "../models/NoidaPackage.js";
 import { resolveCoupon, normalizeCouponCode } from "../helper/noidaCoupon.js";
 import { ensureClientCode, ensureBackfilled } from "../helper/noidaClient.js";
+import { resolveOfferedTherapist } from "../helper/noidaTherapist.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import Lead from "../models/Lead.js";
 import Admin from "../models/Admin.js";
@@ -400,7 +401,7 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
 // chosen session mode/format/package and opens a Razorpay order for it.
 // The frontend never gets to say what the amount is.
 export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
-  const { sessionMode, format, packageId, customSessions, couponCode, address, phone } = req.body;
+  const { sessionMode, format, packageId, customSessions, couponCode, therapistId, address, phone } = req.body;
   const type = normalizeType(req.body.type);
 
   if (!VALID_SESSION_MODES.includes(sessionMode)) {
@@ -443,6 +444,10 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
   }
 
   try {
+    if (therapistId && !(await resolveOfferedTherapist(therapistId))) {
+      res.status(400);
+      return next(new Error("That therapist isn't available for booking right now. Please pick another or choose no preference."));
+    }
     const { baseAmount, platformFee, totalAmount, packageName, discountAmount, couponCode: appliedCoupon } = await computeBookingAmount({ sessionMode, format, packageId, customSessions, couponCode, phone });
 
     const razorpay = getRazorpayInstance();
@@ -465,6 +470,7 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
             packageId: sessionMode === "package" ? asPackageId(packageId) : null,
             customSessions: sessionMode === "package" && !asPackageId(packageId) ? Number(customSessions) || 0 : 0,
             couponCode: appliedCoupon, discountAmount,
+            therapistId: therapistId && mongoose.Types.ObjectId.isValid(therapistId) ? therapistId : null,
           },
         });
       } catch (pendingErr) {
@@ -496,7 +502,7 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
 // is one of "razorpay" | "cash" | "qr" (ignored when credit is set).
 async function finalizeNoidaBooking({
   name, phone, email, concern, date, slot, type, age,
-  sessionMode, format, address, packageId, customSessions, couponCode, discountAmount: lockedDiscount,
+  sessionMode, format, address, packageId, customSessions, couponCode, discountAmount: lockedDiscount, therapistId,
   credit, paymentMethod, razorpayOrderId, razorpayPaymentId, bookedByAdmin,
 }) {
   const alreadyBooked = await NoidaAppointment.findOne({ date, slot, status: "confirmed" });
@@ -538,12 +544,17 @@ async function finalizeNoidaBooking({
   }
 
   const clientCode = await ensureClientCode({ phone: phone.trim(), name: name.trim() });
+  // The client's preferred therapist — looked up leniently: a booking that is already
+  // paid for is never refused just because a therapist went off-air meanwhile.
+  const therapist = therapistId ? await resolveOfferedTherapist(therapistId) : null;
 
   const appointment = await NoidaAppointment.create({
     name: name.trim(),
     age: age?.toString().trim() || "",
     phone: phone.trim(),
     clientCode,
+    therapist: therapist ? therapist._id : null,
+    therapistName: therapist ? therapist.name : "",
     email: email?.trim() || "",
     concern: concern?.trim() || "",
     date,
@@ -772,7 +783,7 @@ export async function processPaidOrder({ orderId, paymentId }) {
 export const createNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
   const {
     name, phone, email, concern, date, slot, age,
-    sessionMode, format, address, packageId, customSessions, couponCode,
+    sessionMode, format, address, packageId, customSessions, couponCode, therapistId,
     razorpay_order_id, razorpay_payment_id, razorpay_signature,
   } = req.body;
   const type = normalizeType(req.body.type);
@@ -811,7 +822,7 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     try {
       const appointment = await finalizeNoidaBooking({
         name, phone, email, concern, date, slot, type, age,
-        sessionMode, format, address, packageId, credit,
+        sessionMode, format, address, packageId, therapistId, credit,
         paymentMethod: "razorpay",
       });
       return res.status(201).json({ status: true, message: "Appointment booked successfully.", data: appointment });
@@ -844,7 +855,7 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     outcome = await processPaidOrder({ orderId: razorpay_order_id, paymentId: razorpay_payment_id });
   } else {
     // Order created before this flow existed, or its pending record couldn't be saved.
-    const payload = { name, phone, email, concern, date, slot, type, age, sessionMode, format, address, packageId, customSessions, couponCode };
+    const payload = { name, phone, email, concern, date, slot, type, age, sessionMode, format, address, packageId, customSessions, couponCode, therapistId };
     try {
       const appointment = await completePaidBooking({ payload, orderId: razorpay_order_id, paymentId: razorpay_payment_id });
       outcome = { appointment };
@@ -1140,7 +1151,7 @@ export const rejectLastMinuteRequest = expressAsyncHandler(async (req, res, next
 export const adminCreateNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
   const {
     name, phone, email, concern, date, slot, age,
-    sessionMode, format, address, packageId, customSessions, couponCode, paymentMethod,
+    sessionMode, format, address, packageId, customSessions, couponCode, therapistId, paymentMethod,
   } = req.body;
   const type = normalizeType(req.body.type);
 
@@ -1181,7 +1192,7 @@ export const adminCreateNoidaAppointment = expressAsyncHandler(async (req, res, 
   try {
     const appointment = await finalizeNoidaBooking({
       name, phone, email, concern, date, slot, type, age,
-      sessionMode, format, address, packageId, customSessions, couponCode, credit,
+      sessionMode, format, address, packageId, customSessions, couponCode, therapistId, credit,
       paymentMethod: credit ? undefined : paymentMethod,
       bookedByAdmin: req.user._id,
     });
@@ -1227,6 +1238,7 @@ function buildAppointmentFilter(q) {
   if (q.status) filter.status = q.status;
   if (q.type) filter.type = q.type;
   if (q.format) filter.format = q.format;
+  if (q.therapist && mongoose.Types.ObjectId.isValid(q.therapist)) filter.therapist = q.therapist;
   if (q.date) filter.date = q.date;
 
   const range = {};
@@ -1591,7 +1603,7 @@ export const getFollowupSlots = expressAsyncHandler(async (req, res, next) => {
     const slots = await NoidaFollowupSlot.find(filter).sort({ date: 1, slot: 1 }).lean();
     const dates = [...new Set(slots.map((s) => s.date))];
     const booked = await NoidaAppointment.find({ status: "confirmed", archived: { $ne: true }, date: { $in: dates } })
-      .select("date slot name clientCode age phone email concern type sessionMode format address packageName paymentStatus paymentMethod amount couponCode discountAmount attendance adminNote bookedByAdmin previousDate previousSlot createdAt")
+      .select("date slot name clientCode therapistName age phone email concern type sessionMode format address packageName paymentStatus paymentMethod amount couponCode discountAmount attendance adminNote bookedByAdmin previousDate previousSlot createdAt")
       .lean();
     const byKey = new Map(booked.map((b) => [`${b.date}|${b.slot}`, b]));
 

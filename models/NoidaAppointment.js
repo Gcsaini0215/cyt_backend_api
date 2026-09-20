@@ -8,6 +8,8 @@ const noidaAppointmentSchema = new Schema({
   name:     { type: String, required: true },
   age:      { type: String, default: "" },
   phone:    { type: String, required: true },
+  therapist:     { type: Schema.Types.ObjectId, ref: "Therapists", default: null }, // the therapist the client asked for, if any
+  therapistName: { type: String, default: "" },                                     // snapshot — survives the therapist later going off-air
   clientCode: { type: String, default: "" },   // the client's permanent number, e.g. CYTN-0007 (same for every booking of this phone)
   email:    { type: String, default: "" },
   concern:  { type: String, default: "" },

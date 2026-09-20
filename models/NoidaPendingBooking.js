@@ -25,6 +25,7 @@ const noidaPendingBookingSchema = new Schema({
     address:     { type: String, default: "" },
     packageId:   { type: Schema.Types.ObjectId, ref: "NoidaPackage", default: null },
     customSessions: { type: Number, default: 0 }, // set instead of packageId for a custom package
+    therapistId:    { type: Schema.Types.ObjectId, ref: "Therapists", default: null },
     couponCode:     { type: String, default: "" },
     discountAmount: { type: Number, default: 0 }, // fixed when the order was created, so the price paid is the price honoured
   },

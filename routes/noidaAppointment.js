@@ -39,6 +39,9 @@ import {
   createPackage,
   updatePackage,
   deletePackage,
+  getPublicNoidaTherapists,
+  getNoidaTherapistOptions,
+  updateNoidaTherapists,
 } from "../controllers/NoidaPricingController.js";
 import {
   getClientCredits,
@@ -56,6 +59,7 @@ router.get("/noida-appointments/slots-matrix", leadRateLimit, getPublicSlotsMatr
 router.get("/noida-appointments/lookup", phoneLookupRateLimit, lookupClientByPhone); // public — no auth
 router.get("/noida-appointments/followup-dates", leadRateLimit, getFollowupDates); // public — no auth
 router.get("/noida-appointments/pricing", leadRateLimit, getPublicPricing);      // public — no auth
+router.get("/noida-appointments/therapists", leadRateLimit, getPublicNoidaTherapists); // public — no auth
 router.post("/noida-appointments/create-order", leadRateLimit, createNoidaOrder); // public — no auth
 router.post("/noida-appointments/coupon/validate", leadRateLimit, validateCoupon);   // public — no auth
 router.post("/noida-appointments", leadRateLimit, createNoidaAppointment);       // public — no auth
@@ -90,6 +94,9 @@ router.get("/noida-coupons", hasPermission("noidaCenter"), getCoupons);
 router.post("/noida-coupons", hasPermission("noidaCenter"), createCoupon);
 router.patch("/noida-coupons/:id", hasPermission("noidaCenter"), updateCoupon);
 router.delete("/noida-coupons/:id", hasPermission("noidaCenter"), deleteCoupon);
+
+router.get("/noida-therapists/options", hasPermission("noidaCenter"), getNoidaTherapistOptions);
+router.patch("/noida-therapists", hasPermission("noidaCenter"), updateNoidaTherapists);
 
 router.get("/noida-pricing", hasPermission("noidaCenter"), getPricing);
 router.patch("/noida-pricing", hasPermission("noidaCenter"), updatePricing);
