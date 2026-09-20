@@ -290,7 +290,7 @@ export const rescheduleNoidaAppointment = expressAsyncHandler(async (req, res, n
         leadNotificationEmail({
           name: appointment.name, phone, email: appointment.email,
           concern: `Rescheduled from ${previousDate} ${previousSlot} to ${newDate} ${newSlot}${appointment.concern ? ` — "${appointment.concern}"` : ""}`,
-          source: notifyTarget ? "Assigned to you — Noida Reschedule" : "Noida Center Reschedule",
+          source: notifyTarget ? "Assigned to you — Noida Reschedule" : "CYT Noida Reschedule",
         })
       );
     } catch (mailErr) {
@@ -301,7 +301,7 @@ export const rescheduleNoidaAppointment = expressAsyncHandler(async (req, res, n
       try {
         await sendMail(
           appointment.email.trim(),
-          "Your Noida Center Appointment Has Been Rescheduled",
+          "CYT Noida Appointment Has Been Rescheduled",
           `Your appointment is now confirmed for ${newDate} at ${newSlot}.`,
           noidaAppointmentConfirmationEmail({ name: appointment.name, date: newDate, slot: newSlot, concern: appointment.concern })
         );
@@ -535,12 +535,12 @@ async function finalizeNoidaBooking({
   try {
     await sendMail(
       "chooseyourtherapist@gmail.com",
-      `Noida Center Booking (${type === "followup" ? "Follow-up" : "New"}): ${name} — ${date} ${slot}`,
-      `New Noida center appointment: ${name}, ${phone}, ${date} ${slot}`,
+      `CYT Noida Booking (${type === "followup" ? "Follow-up" : "New"}): ${name} — ${date} ${slot}`,
+      `New CYT Noida appointment: ${name}, ${phone}, ${date} ${slot}`,
       leadNotificationEmail({
         name, phone, email, age,
         concern: `${modeLabel} · ${formatLabel}${address ? ` · ${address}` : ""} — ${date} at ${slot} — ${paidLabel}${concern ? ` — "${concern}"` : ""}`,
-        source: bookedByAdmin ? "Noida Center Booking (Reception)" : "Noida Center Booking",
+        source: bookedByAdmin ? "CYT Noida Booking (Reception)" : "CYT Noida Booking",
         amount: totalAmount,
       })
     );
@@ -562,11 +562,11 @@ async function finalizeNoidaBooking({
           await sendMail(
             assignee.email,
             `📅 Noida Booking Assigned to You: ${name} — ${date} ${slot}`,
-            `A Noida center appointment has been assigned to you: ${name}, ${phone}, ${date} ${slot}`,
+            `A CYT Noida appointment has been assigned to you: ${name}, ${phone}, ${date} ${slot}`,
             leadNotificationEmail({
               name, phone, email, age,
               concern: `${modeLabel} · ${formatLabel}${address ? ` · ${address}` : ""} — ${date} at ${slot} — ${paidLabel}${concern ? ` — "${concern}"` : ""}`,
-              source: "Assigned to you — Noida Center Booking",
+              source: "Assigned to you — CYT Noida Booking",
               amount: totalAmount,
             })
           );
@@ -581,7 +581,7 @@ async function finalizeNoidaBooking({
     try {
       await sendMail(
         email.trim(),
-        "Your Noida Center Appointment is Confirmed",
+        "CYT Noida Appointment is Confirmed",
         `Your appointment is confirmed for ${date} at ${slot}.`,
         noidaAppointmentConfirmationEmail({ name, date, slot, concern })
       );
@@ -986,7 +986,7 @@ export const createLastMinuteRequest = expressAsyncHandler(async (req, res, next
       leadNotificationEmail({
         name, phone, email, age,
         concern: `Last-minute request for ${date} at ${slot}${concern ? ` — "${concern}"` : ""}`,
-        source: "Noida Center — Last-Minute Request",
+        source: "CYT Noida — Last-Minute Request",
       })
     );
   } catch (mailErr) {
@@ -1155,7 +1155,7 @@ export const getNoidaPaymentQr = expressAsyncHandler(async (req, res, next) => {
       res.status(400);
       return next(new Error("UPI payment info is not configured yet — set it up first."));
     }
-    const qrImage = await generateQrCode({ upiID: upi.upi_id, name: upi.name, amount, note: "Noida Center Session" });
+    const qrImage = await generateQrCode({ upiID: upi.upi_id, name: upi.name, amount, note: "CYT Noida Session" });
     return res.status(200).json({ status: true, data: { qrImage, upiId: upi.upi_id, name: upi.name, amount } });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
@@ -1333,10 +1333,10 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
         await sendMail(
           appointment.email,
           "Your appointment at Choose Your Therapist has been cancelled",
-          `Hi ${appointment.name}, your appointment on ${appointment.date} (${appointment.slot}) at our Noida center has been cancelled. If you'd like to rebook, visit chooseyourtherapist.in/noida-appointment or WhatsApp us.`,
+          `Hi ${appointment.name}, your appointment on ${appointment.date} (${appointment.slot}) at CYT Noida has been cancelled. If you'd like to rebook, visit chooseyourtherapist.in/noida-appointment or WhatsApp us.`,
           `<div style="font-family:sans-serif;font-size:14px;line-height:1.6">
             <p>Hi ${appointment.name},</p>
-            <p>Your appointment on <b>${appointment.date}</b> (${appointment.slot}) at our Noida center has been cancelled.</p>
+            <p>Your appointment on <b>${appointment.date}</b> (${appointment.slot}) at CYT Noida has been cancelled.</p>
             <p>If you'd like to rebook, visit <a href="https://chooseyourtherapist.in/noida-appointment">chooseyourtherapist.in/noida-appointment</a> or reply on WhatsApp.</p>
           </div>`
         );
@@ -1390,11 +1390,11 @@ export const assignNoidaAppointment = expressAsyncHandler(async (req, res, next)
         await sendMail(
           admin.email,
           `📅 Noida Booking Assigned to You: ${appointment.name} — ${appointment.date} ${appointment.slot}`,
-          `A Noida center appointment has been assigned to you: ${appointment.name}, ${appointment.phone}, ${appointment.date} ${appointment.slot}`,
+          `A CYT Noida appointment has been assigned to you: ${appointment.name}, ${appointment.phone}, ${appointment.date} ${appointment.slot}`,
           leadNotificationEmail({
             name: appointment.name, phone: appointment.phone, email: appointment.email,
             concern: `${modeLabel} · ${formatLabel} — ${appointment.date} at ${appointment.slot}${appointment.concern ? ` — "${appointment.concern}"` : ""}`,
-            source: "Assigned to you — Noida Center Booking",
+            source: "Assigned to you — CYT Noida Booking",
           })
         );
       } catch (mailErr) {
