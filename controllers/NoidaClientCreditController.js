@@ -1,6 +1,7 @@
 import expressAsyncHandler from "express-async-handler";
 import mongoose from "mongoose";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
+import { ensureClientCode, ensureBackfilled, clientCodesFor } from "../helper/noidaClient.js";
 
 // Shared helper — the one active credit record for a phone with sessions
 // left, or null. Used by both the public booking flow (to skip payment)
@@ -14,8 +15,10 @@ export const getClientCredits = expressAsyncHandler(async (req, res, next) => {
   try {
     const filter = {};
     if (req.query.phone) filter.phone = req.query.phone.trim();
+    await ensureBackfilled();
     const credits = await NoidaClientCredit.find(filter).sort({ createdAt: -1 }).lean();
-    return res.status(200).json({ status: true, data: credits });
+    const codes = await clientCodesFor(credits.map((c) => c.phone));
+    return res.status(200).json({ status: true, data: credits.map((c) => ({ ...c, clientCode: codes.get(String(c.phone).trim()) || "" })) });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
@@ -41,7 +44,8 @@ export const createClientCredit = expressAsyncHandler(async (req, res, next) => 
       notes: notes?.trim() || "",
       source: "admin-manual",
     });
-    return res.status(201).json({ status: true, message: "Client credit created.", data: credit });
+    const clientCode = await ensureClientCode({ phone: credit.phone, name: credit.name });
+    return res.status(201).json({ status: true, message: "Client credit created.", data: { ...credit.toObject(), clientCode } });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }

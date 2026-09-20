@@ -8,6 +8,7 @@ import NoidaPendingBooking from "../models/NoidaPendingBooking.js";
 import NoidaFollowupSlot from "../models/NoidaFollowupSlot.js";
 import NoidaPackage from "../models/NoidaPackage.js";
 import { resolveCoupon, normalizeCouponCode } from "../helper/noidaCoupon.js";
+import { ensureClientCode, ensureBackfilled } from "../helper/noidaClient.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import Lead from "../models/Lead.js";
 import Admin from "../models/Admin.js";
@@ -532,10 +533,13 @@ async function finalizeNoidaBooking({
     packageName = computed.packageName;
   }
 
+  const clientCode = await ensureClientCode({ phone: phone.trim(), name: name.trim() });
+
   const appointment = await NoidaAppointment.create({
     name: name.trim(),
     age: age?.toString().trim() || "",
     phone: phone.trim(),
+    clientCode,
     email: email?.trim() || "",
     concern: concern?.trim() || "",
     date,
@@ -1239,7 +1243,7 @@ function buildAppointmentFilter(q) {
   const term = String(q.search || "").trim().slice(0, 60);
   if (term) {
     const rx = new RegExp(escapeRegex(term), "i");
-    filter.$or = [{ name: rx }, { phone: rx }, { email: rx }];
+    filter.$or = [{ name: rx }, { phone: rx }, { email: rx }, { clientCode: rx }];
   }
 
   const sort = q.when === "upcoming" ? { date: 1, slot: 1 } : { date: -1, slot: 1 };
@@ -1248,6 +1252,7 @@ function buildAppointmentFilter(q) {
 
 export const getNoidaAppointments = expressAsyncHandler(async (req, res, next) => {
   try {
+    await ensureBackfilled();
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize) || 30));
     const { filter, sort } = buildAppointmentFilter(req.query);
@@ -1278,6 +1283,7 @@ export const getNoidaAppointments = expressAsyncHandler(async (req, res, next) =
 // Everything the current filters match (capped) — the admin turns it into a CSV.
 export const exportNoidaAppointments = expressAsyncHandler(async (req, res, next) => {
   try {
+    await ensureBackfilled();
     const { filter, sort } = buildAppointmentFilter(req.query);
     const rows = await NoidaAppointment.find(filter)
       .sort(sort)
@@ -1525,6 +1531,7 @@ export const adminBookCreditSession = expressAsyncHandler(async (req, res, next)
     const appointment = await NoidaAppointment.create({
       name: credit.name,
       phone: credit.phone,
+      clientCode: await ensureClientCode({ phone: credit.phone, name: credit.name }),
       date, slot,
       type: "followup",
       sessionMode: "individual",
@@ -1547,15 +1554,26 @@ export const adminBookCreditSession = expressAsyncHandler(async (req, res, next)
 
 export const getFollowupSlots = expressAsyncHandler(async (req, res, next) => {
   try {
+    await ensureBackfilled();
     const filter = {};
     if (req.query.date) filter.date = req.query.date;
     if (req.query.type) filter.type = normalizeType(req.query.type);
 
     const slots = await NoidaFollowupSlot.find(filter).sort({ date: 1, slot: 1 }).lean();
-    const booked = await NoidaAppointment.find({ status: "confirmed" }).select("date slot").lean();
-    const bookedSet = new Set(booked.map((b) => `${b.date}|${b.slot}`));
+    const dates = [...new Set(slots.map((s) => s.date))];
+    const booked = await NoidaAppointment.find({ status: "confirmed", archived: { $ne: true }, date: { $in: dates } })
+      .select("date slot name clientCode age phone email concern type sessionMode format address packageName paymentStatus paymentMethod amount couponCode discountAmount attendance adminNote bookedByAdmin previousDate previousSlot createdAt")
+      .lean();
+    const byKey = new Map(booked.map((b) => [`${b.date}|${b.slot}`, b]));
 
-    const data = slots.map((s) => ({ ...s, booked: bookedSet.has(`${s.date}|${s.slot}`) }));
+    // Who holds a booked slot travels with it — this endpoint is admin-only, and the
+    // reception screen shows the name in the box and the full details on tap.
+    const data = slots.map((s) => {
+      const b = byKey.get(`${s.date}|${s.slot}`);
+      if (!b) return { ...s, booked: false };
+      const { date, slot, bookedByAdmin, ...rest } = b;
+      return { ...s, booked: true, booking: { ...rest, bookedByAdmin: !!bookedByAdmin } };
+    });
     return res.status(200).json({ status: true, data });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));

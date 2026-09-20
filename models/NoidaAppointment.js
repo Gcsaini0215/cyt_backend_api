@@ -8,6 +8,7 @@ const noidaAppointmentSchema = new Schema({
   name:     { type: String, required: true },
   age:      { type: String, default: "" },
   phone:    { type: String, required: true },
+  clientCode: { type: String, default: "" },   // the client's permanent number, e.g. CYTN-0007 (same for every booking of this phone)
   email:    { type: String, default: "" },
   concern:  { type: String, default: "" },
   date:     { type: String, required: true },   // "YYYY-MM-DD", center-local day, not a Date object — avoids TZ drift
