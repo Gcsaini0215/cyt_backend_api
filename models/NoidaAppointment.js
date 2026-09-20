@@ -16,6 +16,10 @@ const noidaAppointmentSchema = new Schema({
   status:   { type: String, enum: ["confirmed", "cancelled"], default: "confirmed" },
   adminNote: { type: String, default: "" },
 
+  // Cancelled bookings can be tucked away instead of deleted.
+  archived:   { type: Boolean, default: false },
+  archivedAt: { type: Date, default: null },
+
   // Front-desk tracking on the day: "" (not yet) → arrived → completed, or no_show.
   attendance:   { type: String, enum: ["", "arrived", "completed", "no_show"], default: "" },
   attendanceAt: { type: Date, default: null },

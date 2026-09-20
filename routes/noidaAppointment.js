@@ -18,6 +18,8 @@ import {
   rescheduleNoidaAppointment,
   adminBookCreditSession,
   adminCreateNoidaAppointment,
+  exportNoidaAppointments,
+  getNoidaAppointmentsSummary,
   getPaymentProblems,
   retryPaymentProblem,
   resolvePaymentProblem,
@@ -67,6 +69,8 @@ router.get("/noida-appointments/payment-qr", hasPermission("noidaCenter"), getNo
 router.get("/noida-appointments/last-minute-requests", hasPermission("noidaCenter"), getLastMinuteRequests);
 router.patch("/noida-appointments/last-minute-requests/:id/accept", hasPermission("noidaCenter"), acceptLastMinuteRequest);
 router.patch("/noida-appointments/last-minute-requests/:id/reject", hasPermission("noidaCenter"), rejectLastMinuteRequest);
+router.get("/noida-appointments/summary", hasPermission("noidaCenter"), getNoidaAppointmentsSummary);
+router.get("/noida-appointments/export", hasPermission("noidaCenter"), exportNoidaAppointments);
 router.get("/noida-appointments/payment-problems", hasPermission("noidaCenter"), getPaymentProblems);
 router.post("/noida-appointments/payment-problems/:id/retry", hasPermission("noidaCenter"), retryPaymentProblem);
 router.patch("/noida-appointments/payment-problems/:id/resolve", hasPermission("noidaCenter"), resolvePaymentProblem);

@@ -1162,21 +1162,59 @@ export const getNoidaPaymentQr = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
+const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Shared by the list, the CSV export and the summary: turns the admin's
+// query-string filters into a Mongo filter (+ the sort that suits the view).
+function buildAppointmentFilter(q) {
+  const today = istDateStr(istNow());
+  const filter = {};
+  if (q.archived === "1") filter.archived = true;
+  else filter.archived = { $ne: true };
+
+  if (q.status) filter.status = q.status;
+  if (q.type) filter.type = q.type;
+  if (q.format) filter.format = q.format;
+  if (q.date) filter.date = q.date;
+
+  const range = {};
+  if (q.from && isValidDateStr(q.from)) range.$gte = q.from;
+  if (q.to && isValidDateStr(q.to)) range.$lte = q.to;
+  if (q.when === "upcoming") range.$gte = range.$gte && range.$gte > today ? range.$gte : today;
+  if (q.when === "past") range.$lt = today;
+  if (Object.keys(range).length && !q.date) filter.date = range;
+
+  if (q.payment === "paid") filter.paymentStatus = "paid";
+  else if (q.payment === "pending") filter.paymentStatus = "pending";
+  else if (q.payment === "credit") filter.paymentStatus = "package-credit";
+  else if (q.payment === "cash") filter.paymentMethod = "cash";
+
+  if (q.attendance === "none") filter.attendance = { $in: ["", null] };
+  else if (["arrived", "completed", "no_show"].includes(q.attendance)) filter.attendance = q.attendance;
+
+  const term = String(q.search || "").trim().slice(0, 60);
+  if (term) {
+    const rx = new RegExp(escapeRegex(term), "i");
+    filter.$or = [{ name: rx }, { phone: rx }, { email: rx }];
+  }
+
+  const sort = q.when === "upcoming" ? { date: 1, slot: 1 } : { date: -1, slot: 1 };
+  return { filter, sort };
+}
+
 export const getNoidaAppointments = expressAsyncHandler(async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize) || 30));
-    const filter = {};
-    if (req.query.date) filter.date = req.query.date;
-    if (req.query.status) filter.status = req.query.status;
-    if (req.query.type) filter.type = req.query.type;
+    const { filter, sort } = buildAppointmentFilter(req.query);
 
     const [items, total] = await Promise.all([
       NoidaAppointment.find(filter)
-        .sort({ date: -1, slot: 1 })
+        .sort(sort)
         .skip((page - 1) * pageSize)
         .limit(pageSize)
         .populate("assignedTo", "name email")
+        .populate("bookedByAdmin", "name")
         .lean(),
       NoidaAppointment.countDocuments(filter),
     ]);
@@ -1193,9 +1231,59 @@ export const getNoidaAppointments = expressAsyncHandler(async (req, res, next) =
   }
 });
 
+// Everything the current filters match (capped) — the admin turns it into a CSV.
+export const exportNoidaAppointments = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const { filter, sort } = buildAppointmentFilter(req.query);
+    const rows = await NoidaAppointment.find(filter)
+      .sort(sort)
+      .limit(5000)
+      .populate("assignedTo", "name")
+      .lean();
+    return res.status(200).json({ status: true, data: rows });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// The four numbers at the top of the admin's appointments page.
+export const getNoidaAppointmentsSummary = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const now = istNow();
+    const today = istDateStr(now);
+    const plus = (n) => { const d = new Date(now); d.setDate(d.getDate() + n); return istDateStr(d); };
+    const notArchived = { archived: { $ne: true } };
+    const live = { ...notArchived, status: "confirmed" };
+
+    const [todayRows, upcoming7, pendingPayment, incomeAgg] = await Promise.all([
+      NoidaAppointment.find({ ...live, date: today }).select("attendance").lean(),
+      NoidaAppointment.countDocuments({ ...live, date: { $gt: today, $lte: plus(7) } }),
+      NoidaAppointment.countDocuments({ ...live, date: { $gte: today }, paymentStatus: "pending" }),
+      NoidaAppointment.aggregate([
+        { $match: { ...live, paymentStatus: "paid", date: { $gte: plus(-6), $lte: today } } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+    ]);
+
+    return res.status(200).json({
+      status: true,
+      data: {
+        today: todayRows.length,
+        todayArrived: todayRows.filter((r) => r.attendance === "arrived" || r.attendance === "completed").length,
+        upcoming7,
+        pendingPayment,
+        income7: incomeAgg[0]?.total || 0,
+        dates: { today, tomorrow: plus(1), plus7: plus(7), minus6: plus(-6) },
+      },
+    });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
 export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const { status, adminNote, attendance } = req.body;
+  const { status, adminNote, attendance, archived, notifyClient } = req.body;
 
   if (!mongoose.Types.ObjectId.isValid(id)) {
     res.status(400);
@@ -1218,13 +1306,46 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
       update.attendance = attendance;
       update.attendanceAt = attendance ? new Date() : null;
     }
+    if (archived !== undefined) {
+      const current = await NoidaAppointment.findById(id).select("status").lean();
+      if (!current) {
+        res.status(404);
+        return next(new Error("Appointment not found."));
+      }
+      // Only a cancelled booking can be tucked away — a live one still holds its slot.
+      if (archived && (status || current.status) !== "cancelled") {
+        res.status(400);
+        return next(new Error("Cancel the appointment first, then archive it."));
+      }
+      update.archived = !!archived;
+      update.archivedAt = archived ? new Date() : null;
+    }
 
     const appointment = await NoidaAppointment.findByIdAndUpdate(id, update, { new: true });
     if (!appointment) {
       res.status(404);
       return next(new Error("Appointment not found."));
     }
-    return res.status(200).json({ status: true, message: "Appointment updated.", data: appointment });
+
+    let notified = false;
+    if (status === "cancelled" && notifyClient && appointment.email) {
+      try {
+        await sendMail(
+          appointment.email,
+          "Your appointment at Choose Your Therapist has been cancelled",
+          `Hi ${appointment.name}, your appointment on ${appointment.date} (${appointment.slot}) at our Noida center has been cancelled. If you'd like to rebook, visit chooseyourtherapist.in/noida-appointment or WhatsApp us.`,
+          `<div style="font-family:sans-serif;font-size:14px;line-height:1.6">
+            <p>Hi ${appointment.name},</p>
+            <p>Your appointment on <b>${appointment.date}</b> (${appointment.slot}) at our Noida center has been cancelled.</p>
+            <p>If you'd like to rebook, visit <a href="https://chooseyourtherapist.in/noida-appointment">chooseyourtherapist.in/noida-appointment</a> or reply on WhatsApp.</p>
+          </div>`
+        );
+        notified = true;
+      } catch (mailErr) {
+        console.error("Cancellation email failed (non-fatal):", mailErr.message);
+      }
+    }
+    return res.status(200).json({ status: true, message: "Appointment updated.", data: appointment, notified });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
