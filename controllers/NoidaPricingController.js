@@ -4,7 +4,7 @@ import NoidaPricing from "../models/NoidaPricing.js";
 import NoidaPackage from "../models/NoidaPackage.js";
 import Admin from "../models/Admin.js";
 import Therapists from "../models/Therapists.js";
-import { getOfferedTherapists, getTherapistOptions, LIVE_THERAPIST_FILTER } from "../helper/noidaTherapist.js";
+import { getOfferedTherapists, getTherapistOptions, isTherapistChoiceEnabled, LIVE_THERAPIST_FILTER } from "../helper/noidaTherapist.js";
 
 const MAX_PACKAGES = 10;
 
@@ -195,7 +195,8 @@ export const deletePackage = expressAsyncHandler(async (req, res, next) => {
 // Public: the therapists a client can ask for at CYT Noida.
 export const getPublicNoidaTherapists = expressAsyncHandler(async (req, res, next) => {
   try {
-    return res.status(200).json({ status: true, data: await getOfferedTherapists() });
+    const enabled = await isTherapistChoiceEnabled();
+    return res.status(200).json({ status: true, enabled, data: enabled ? await getOfferedTherapists() : [] });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
@@ -204,7 +205,7 @@ export const getPublicNoidaTherapists = expressAsyncHandler(async (req, res, nex
 // Admin: who could be offered (live therapists) and who currently is.
 export const getNoidaTherapistOptions = expressAsyncHandler(async (req, res, next) => {
   try {
-    return res.status(200).json({ status: true, data: await getTherapistOptions() });
+    return res.status(200).json({ status: true, enabled: await isTherapistChoiceEnabled(), data: await getTherapistOptions() });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
@@ -214,12 +215,23 @@ const MAX_OFFERED_THERAPISTS = 12;
 
 export const updateNoidaTherapists = expressAsyncHandler(async (req, res, next) => {
   try {
-    const raw = Array.isArray(req.body.therapistIds) ? req.body.therapistIds : null;
-    if (!raw) {
+    const hasList = req.body.therapistIds !== undefined;
+    const hasSwitch = req.body.enabled !== undefined;
+    if (!hasList && !hasSwitch) {
+      res.status(400);
+      return next(new Error("Send therapistIds and/or enabled."));
+    }
+    if (hasList && !Array.isArray(req.body.therapistIds)) {
       res.status(400);
       return next(new Error("therapistIds must be a list."));
     }
-    const ids = [...new Set(raw.map(String))];
+    const pricingDoc = await getOrCreatePricing();
+    if (hasSwitch) pricingDoc.therapistChoice = !!req.body.enabled;
+    if (!hasList) {
+      await pricingDoc.save();
+      return res.status(200).json({ status: true, message: pricingDoc.therapistChoice ? "Therapist choice is on." : "Therapist choice is off.", enabled: pricingDoc.therapistChoice, data: await getTherapistOptions() });
+    }
+    const ids = [...new Set(req.body.therapistIds.map(String))];
     if (ids.length > MAX_OFFERED_THERAPISTS) {
       res.status(400);
       return next(new Error(`You can offer up to ${MAX_OFFERED_THERAPISTS} therapists.`));
@@ -228,7 +240,7 @@ export const updateNoidaTherapists = expressAsyncHandler(async (req, res, next) 
       res.status(400);
       return next(new Error("One of the therapists is invalid."));
     }
-    const pricing = await getOrCreatePricing();
+    const pricing = pricingDoc;
     const already = new Set((pricing.therapists || []).map(String));
     // Someone already on the list may have gone off-air — they can stay or be removed,
     // but a new addition has to be live right now.
@@ -242,7 +254,7 @@ export const updateNoidaTherapists = expressAsyncHandler(async (req, res, next) 
     }
     pricing.therapists = ids;
     await pricing.save();
-    return res.status(200).json({ status: true, message: "Therapists saved.", data: await getTherapistOptions() });
+    return res.status(200).json({ status: true, message: "Therapists saved.", enabled: pricing.therapistChoice !== false, data: await getTherapistOptions() });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
