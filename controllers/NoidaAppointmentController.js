@@ -1375,10 +1375,35 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
       update.archivedAt = archived ? new Date() : null;
     }
 
+    const before = status ? await NoidaAppointment.findById(id).select("status date slot type").lean() : null;
+    if (status === "confirmed" && before && before.status === "cancelled") {
+      // Bringing a cancelled booking back — only if nobody else has taken the slot since.
+      const taken = await NoidaAppointment.exists({ _id: { $ne: id }, date: before.date, slot: before.slot, status: "confirmed" });
+      if (taken) {
+        res.status(409);
+        return next(new Error("Someone else has booked that slot since — it can't be re-confirmed."));
+      }
+    }
+
     const appointment = await NoidaAppointment.findByIdAndUpdate(id, update, { new: true });
     if (!appointment) {
       res.status(404);
       return next(new Error("Appointment not found."));
+    }
+
+    // A booking cancelled by the admin closes its slot for good (reopen it from Manage
+    // Slots); bringing the booking back reopens the slot so it shows up in the tables again.
+    let slotClosed = false;
+    if (status === "cancelled" && before && before.status !== "cancelled" && req.body.closeSlot !== false) {
+      const r = await NoidaFollowupSlot.deleteMany({ date: appointment.date, slot: appointment.slot });
+      slotClosed = r.deletedCount > 0;
+    }
+    if (status === "confirmed" && before && before.status === "cancelled") {
+      await NoidaFollowupSlot.updateOne(
+        { date: appointment.date, slot: appointment.slot, type: appointment.type },
+        { $setOnInsert: { date: appointment.date, slot: appointment.slot, type: appointment.type } },
+        { upsert: true }
+      );
     }
 
     let notified = false;
@@ -1399,7 +1424,7 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
         console.error("Cancellation email failed (non-fatal):", mailErr.message);
       }
     }
-    return res.status(200).json({ status: true, message: "Appointment updated.", data: appointment, notified });
+    return res.status(200).json({ status: true, message: "Appointment updated.", data: appointment, notified, slotClosed });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
