@@ -191,12 +191,11 @@ export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) =
 
   const [allSlots, booked] = await Promise.all([
     NoidaFollowupSlot.find({ date: { $gte: today, $lte: istDateStr(maxDate) }, type }).select("date slot").lean(),
-    NoidaAppointment.find({ date: { $gte: today }, status: "confirmed" }).select("date slot clientCode").lean(),
+    NoidaAppointment.find({ date: { $gte: today }, status: "confirmed" }).select("date slot").lean(),
   ]);
 
-  // Only the opaque client number goes public — never a name or phone.
-  const codeByKey = new Map(booked.map((b) => [`${b.date}|${b.slot}`, b.clientCode || ""]));
-  const bookedSet = new Set(codeByKey.keys());
+  // Public: only whether a slot is taken — no name, phone or client number.
+  const bookedSet = new Set(booked.map((b) => `${b.date}|${b.slot}`));
   const byDate = new Map();
   for (const s of allSlots) {
     if (!byDate.has(s.date)) byDate.set(s.date, []);
@@ -208,7 +207,7 @@ export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) =
     const annotated = annotateSameDaySlots(slots, date, today, now);
     for (const { slot, lastMinute, past } of annotated) {
       const isBooked = bookedSet.has(`${date}|${slot}`);
-      data.push({ date, slot, booked: isBooked, lastMinute, past, ...(isBooked && codeByKey.get(`${date}|${slot}`) ? { clientCode: codeByKey.get(`${date}|${slot}`) } : {}) });
+      data.push({ date, slot, booked: isBooked, lastMinute, past });
     }
   }
   data.sort((a, b) => a.date === b.date ? 0 : a.date < b.date ? -1 : 1);
