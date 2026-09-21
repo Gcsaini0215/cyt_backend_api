@@ -20,6 +20,8 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}   # same as the frontend deploy — a non-default SSH port made this step fail
+          timeout: 60s
           source: "."                     # ✅ project root
           target: "/root/cyt_backend_api"  # ✅ full path to backend folder
           strip_components: 0             # ✅ do NOT strip anything
@@ -30,6 +32,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}   # same as the frontend deploy — a non-default SSH port made this step fail
           script: |
             echo "📂 Switching to project directory..."
             cd /root/cyt_backend_api || { echo "❌ Folder not found"; exit 1; }
