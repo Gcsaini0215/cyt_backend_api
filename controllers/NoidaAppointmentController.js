@@ -12,6 +12,7 @@ import { ensureClientCode, ensureBackfilled } from "../helper/noidaClient.js";
 import { resolveOfferedTherapist } from "../helper/noidaTherapist.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import Lead from "../models/Lead.js";
+import ReceptionClient from "../models/ReceptionClient.js";
 import Admin from "../models/Admin.js";
 import UPIInfo from "../models/UPIInfo.js";
 import { sendMail } from "../helper/mailer.js";
@@ -384,7 +385,17 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
       return res.status(200).json({ status: true, data: { found: true, name: pastLead.name, credit: creditInfo } });
     }
 
-    // Not found in Lead/past bookings, but might still have credit if admin
+    // Not in Noida's own history — check the general walk-in "Reception" client list too
+    // (a separate, non-Noida booking system). Its phone field is free-typed (spaces, +91,
+    // etc.), so match on the trailing 10 digits rather than the raw string.
+    const receptionRx = new RegExp(phone.split("").join("\\D*") + "$");
+    const receptionClients = await ReceptionClient.find({ phone: { $regex: receptionRx } }).select("name phone").limit(5).lean();
+    const receptionMatch = receptionClients.find((c) => String(c.phone || "").replace(/\D/g, "").slice(-10) === phone);
+    if (receptionMatch?.name) {
+      return res.status(200).json({ status: true, data: { found: true, name: receptionMatch.name, credit: creditInfo } });
+    }
+
+    // Not found anywhere by name, but might still have credit if admin
     // manually registered them (e.g. an existing/offline client).
     if (credit) {
       return res.status(200).json({ status: true, data: { found: true, name: credit.name, credit: creditInfo } });
