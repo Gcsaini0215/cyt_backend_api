@@ -8,7 +8,7 @@ import NoidaPendingBooking from "../models/NoidaPendingBooking.js";
 import NoidaFollowupSlot from "../models/NoidaFollowupSlot.js";
 import NoidaPackage from "../models/NoidaPackage.js";
 import { resolveCoupon, normalizeCouponCode } from "../helper/noidaCoupon.js";
-import { ensureClientCode, ensureBackfilled } from "../helper/noidaClient.js";
+import { ensureClientCode, ensureBackfilled, phoneTailRegex, samePhone } from "../helper/noidaClient.js";
 import { resolveOfferedTherapist } from "../helper/noidaTherapist.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import Lead from "../models/Lead.js";
@@ -388,9 +388,8 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
     // Not in Noida's own history — check the general walk-in "Reception" client list too
     // (a separate, non-Noida booking system). Its phone field is free-typed (spaces, +91,
     // etc.), so match on the trailing 10 digits rather than the raw string.
-    const receptionRx = new RegExp(phone.split("").join("\\D*") + "$");
-    const receptionClients = await ReceptionClient.find({ phone: { $regex: receptionRx } }).select("name phone").limit(5).lean();
-    const receptionMatch = receptionClients.find((c) => String(c.phone || "").replace(/\D/g, "").slice(-10) === phone);
+    const receptionClients = await ReceptionClient.find({ phone: { $regex: phoneTailRegex(phone) } }).select("name phone").limit(5).lean();
+    const receptionMatch = receptionClients.find((c) => samePhone(c.phone, phone));
     if (receptionMatch?.name) {
       return res.status(200).json({ status: true, data: { found: true, name: receptionMatch.name, credit: creditInfo } });
     }
@@ -523,9 +522,25 @@ async function finalizeNoidaBooking({
   }
 
   let baseAmount = 0, platformFee = 0, totalAmount = 0, packageName = "", creditUsedId = null, sessionsCount = 0;
-  let discountAmount = 0, appliedCoupon = "";
+  let discountAmount = 0, appliedCoupon = "", receptionCreditClientId = "";
 
-  if (credit) {
+  if (credit && credit.source === "reception") {
+    // Same idea, but the session lives on a walk-in Reception client's package
+    // (a separate collection with a free-form `id` string, not an ObjectId) — so this
+    // booking and an in-clinic visit draw from the same pool and can't double-spend it.
+    const claimed = await ReceptionClient.findOneAndUpdate(
+      { id: credit._id, "package.used": credit.sessionsUsed },
+      { $inc: { "package.used": 1 } },
+      { new: true }
+    );
+    if (!claimed) {
+      const err = new Error("That session credit was just claimed elsewhere. Please refresh and try again.");
+      err.status = 409;
+      throw err;
+    }
+    packageName = claimed.package?.label || claimed.package?.plan || "Package";
+    receptionCreditClientId = claimed.id;
+  } else if (credit) {
     // Atomically claim one session — the sessionsUsed condition means only
     // one concurrent request can win if two both raced in on the same credit.
     const claimed = await NoidaClientCredit.findOneAndUpdate(
@@ -584,6 +599,7 @@ async function finalizeNoidaBooking({
     razorpayOrderId: razorpayOrderId || "",
     razorpayPaymentId: razorpayPaymentId || "",
     creditUsed: creditUsedId,
+    receptionCreditClientId,
     bookedByAdmin: bookedByAdmin || null,
   });
 

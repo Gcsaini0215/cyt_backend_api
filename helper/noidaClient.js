@@ -6,6 +6,18 @@ import NoidaClientCredit from "../models/NoidaClientCredit.js";
 const PREFIX = "CT-";
 const format = (n) => PREFIX + String(n).padStart(4, "0");
 
+// A 10-digit phone matched against a free-typed phone string (spaces, +91, dashes, etc.) —
+// used wherever a client is looked up by phone across systems whose phone fields aren't
+// stored the same way (e.g. the walk-in Reception client list, which is a plain string the
+// front desk types by hand). `phoneTailRegex` narrows a DB query to candidates; `samePhone`
+// then confirms the trailing 10 digits actually match (the regex alone can over-match).
+export function phoneTailRegex(phone) {
+  return new RegExp(String(phone).split("").join("\\D*") + "$");
+}
+export function samePhone(candidate, phone) {
+  return String(candidate || "").replace(/\D/g, "").slice(-10) === String(phone || "").trim();
+}
+
 async function nextNumber() {
   const c = await NoidaCounter.findOneAndUpdate({ _id: "client" }, { $inc: { seq: 1 } }, { new: true, upsert: true });
   return c.seq;

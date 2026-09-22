@@ -1,14 +1,44 @@
 import expressAsyncHandler from "express-async-handler";
 import mongoose from "mongoose";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
-import { ensureClientCode, ensureBackfilled, clientCodesFor } from "../helper/noidaClient.js";
+import ReceptionClient from "../models/ReceptionClient.js";
+import { ensureClientCode, ensureBackfilled, clientCodesFor, phoneTailRegex, samePhone } from "../helper/noidaClient.js";
 
-// Shared helper — the one active credit record for a phone with sessions
-// left, or null. Used by both the public booking flow (to skip payment)
-// and the public lookup (to tell the client they have sessions left).
+// Shared helper — the one active credit record for a phone with sessions left, or null.
+// Used by both the public booking flow (to skip payment) and the public lookup (to tell
+// the client they have sessions left). Checks Noida's own credit records first (bought
+// online, or set up by admin) — if none, falls back to a walk-in "Reception" client's
+// package (a separate, in-clinic booking system) that still has sessions remaining, so a
+// client who paid for an offline package can also use it for a Noida follow-up booking.
+// Either source comes back in the same shape; `source` tells finalizeNoidaBooking which
+// collection to atomically deduct the session from.
 export async function getActiveCredit(phone) {
   const credits = await NoidaClientCredit.find({ phone, active: true }).sort({ createdAt: 1 }).lean();
-  return credits.find((c) => c.sessionsUsed < c.totalSessions) || null;
+  const noidaCredit = credits.find((c) => c.sessionsUsed < c.totalSessions);
+  if (noidaCredit) return { ...noidaCredit, source: "noida-credit" };
+
+  // Newest first — a client re-registered after finishing an earlier package should be
+  // matched on their current one, not a stale, fully-used record from an older visit.
+  const receptionClients = await ReceptionClient.find({ phone: { $regex: phoneTailRegex(phone) } })
+    .sort({ createdAt: -1 }).select("id name phone package createdAt").lean();
+  const receptionMatch = receptionClients.find((c) => {
+    if (!samePhone(c.phone, phone)) return false;
+    const pkg = c.package;
+    return pkg && Number(pkg.total) > 0 && Number(pkg.used || 0) < Number(pkg.total);
+  });
+  if (receptionMatch) {
+    return {
+      _id: receptionMatch.id,
+      phone: receptionMatch.phone,
+      name: receptionMatch.name,
+      packageName: receptionMatch.package.label || receptionMatch.package.plan || "Package",
+      totalSessions: Number(receptionMatch.package.total),
+      sessionsUsed: Number(receptionMatch.package.used || 0),
+      source: "reception",
+    };
+  }
+
+  return null;
 }
 
 export const getClientCredits = expressAsyncHandler(async (req, res, next) => {
