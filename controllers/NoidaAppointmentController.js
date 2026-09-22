@@ -426,15 +426,12 @@ export const getNoidaClientsList = expressAsyncHandler(async (req, res, next) =>
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize) || 30));
     const today = istDateStr(istNow());
+    const searchRe = search ? new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null;
 
-    const match = {};
-    if (search) {
-      const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-      match.$or = [{ name: re }, { phone: re }, { clientCode: re }];
-    }
-
-    const [agg] = await NoidaAppointment.aggregate([
-      { $match: match },
+    // One row per phone that's ever booked through Noida, however many bookings they have.
+    const noidaMatch = searchRe ? { $or: [{ name: searchRe }, { phone: searchRe }, { clientCode: searchRe }] } : {};
+    const noidaGroups = await NoidaAppointment.aggregate([
+      { $match: noidaMatch },
       { $sort: { createdAt: -1 } },
       {
         $group: {
@@ -444,17 +441,50 @@ export const getNoidaClientsList = expressAsyncHandler(async (req, res, next) =>
           totalBookings: { $sum: 1 },
           upcoming: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "confirmed"] }, { $gte: ["$date", today] }] }, 1, 0] } },
           lastVisitDate: { $max: "$date" },
-          lastBookedAt: { $max: "$createdAt" },
+          lastActivityAt: { $max: "$createdAt" },
         },
       },
-      { $sort: { lastBookedAt: -1 } },
-      { $facet: { rows: [{ $skip: (page - 1) * pageSize }, { $limit: pageSize }], count: [{ $count: "n" }] } },
     ]);
+    const noidaTails = new Set(noidaGroups.map((g) => String(g._id || "").replace(/\D/g, "").slice(-10)).filter(Boolean));
 
-    const rows = agg?.rows || [];
-    const total = agg?.count?.[0]?.n || 0;
-    const phones = rows.map((r) => r._id).filter(Boolean);
-    const tails = phones.map((p) => String(p).replace(/\D/g, "").slice(-10)).filter(Boolean);
+    // Walk-in Reception clients who've never booked through Noida — bring them into this
+    // same client-centric list (the whole point of the request), but never as a second row
+    // for someone already counted above, and never twice for the same number even if they
+    // somehow have more than one Reception record. Reception's phone field is free-typed
+    // (spaces, +91, etc.), so match on the trailing 10 digits, same as everywhere else here.
+    const receptionMatch = searchRe ? { $or: [{ name: searchRe }, { phone: searchRe }] } : {};
+    const allReception = await ReceptionClient.find(receptionMatch)
+      .select("name phone package attendance followUps payments createdAt")
+      .limit(5000)
+      .lean();
+    const receptionOnlyByTail = new Map();
+    allReception.forEach((rc) => {
+      const tail = String(rc.phone || "").replace(/\D/g, "").slice(-10);
+      if (tail.length !== 10 || noidaTails.has(tail) || receptionOnlyByTail.has(tail)) return;
+      const lastAttendance = (rc.attendance || []).reduce((max, a) => (a.date && a.date > max ? a.date : max), "");
+      const lastPayment = (rc.payments || []).reduce((max, p) => (p.date && p.date > max ? p.date : max), "");
+      const upcomingFollowUps = (rc.followUps || []).filter((f) => f.date && f.date >= today).length;
+      receptionOnlyByTail.set(tail, {
+        _id: tail,
+        name: rc.name || "",
+        clientCode: "",
+        totalBookings: (rc.attendance || []).length,
+        upcoming: upcomingFollowUps,
+        lastVisitDate: lastAttendance || lastPayment || "",
+        lastActivityAt: rc.createdAt ? new Date(rc.createdAt) : new Date(0),
+        _receptionOnly: true,
+        _rcPackage: rc.package || null,
+      });
+    });
+
+    const merged = [...noidaGroups, ...receptionOnlyByTail.values()]
+      .sort((a, b) => new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0));
+
+    const total = merged.length;
+    const pageRows = merged.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
+
+    const phones = pageRows.filter((r) => !r._receptionOnly).map((r) => r._id).filter(Boolean);
+    const tails = pageRows.map((r) => String(r._id || "").replace(/\D/g, "").slice(-10)).filter(Boolean);
 
     const [credits, receptionClients] = await Promise.all([
       phones.length ? NoidaClientCredit.find({ phone: { $in: phones }, active: true }).select("phone totalSessions sessionsUsed").lean() : [],
@@ -464,13 +494,28 @@ export const getNoidaClientsList = expressAsyncHandler(async (req, res, next) =>
     const receptionByTail = new Map();
     receptionClients.forEach((rc) => {
       const tail = String(rc.phone || "").replace(/\D/g, "").slice(-10);
-      if (tail && !receptionByTail.has(tail)) receptionByTail.set(tail, rc); // first = newest, since no sort needed here (flag only)
+      if (tail && !receptionByTail.has(tail)) receptionByTail.set(tail, rc);
     });
 
-    const data = rows.map((r) => {
+    const data = pageRows.map((r) => {
+      const tail = String(r._id || "").replace(/\D/g, "").slice(-10);
+      if (r._receptionOnly) {
+        const pkg = r._rcPackage;
+        return {
+          phone: tail,
+          name: r.name || "",
+          clientCode: "",
+          totalBookings: r.totalBookings,
+          upcoming: r.upcoming,
+          lastVisitDate: r.lastVisitDate || "",
+          hasCredit: false,
+          hasReceptionPackage: !!(pkg && Number(pkg.total || 0) - Number(pkg.used || 0) > 0),
+          source: "reception",
+        };
+      }
       const phone = r._id || "";
       const credit = creditByPhone.get(phone);
-      const rc = receptionByTail.get(phone.replace(/\D/g, "").slice(-10));
+      const rc = receptionByTail.get(tail);
       return {
         phone,
         name: r.name || rc?.name || "",
@@ -480,6 +525,7 @@ export const getNoidaClientsList = expressAsyncHandler(async (req, res, next) =>
         lastVisitDate: r.lastVisitDate || "",
         hasCredit: !!(credit && credit.totalSessions > credit.sessionsUsed),
         hasReceptionPackage: !!(rc?.package && Number(rc.package.total || 0) - Number(rc.package.used || 0) > 0),
+        source: "noida",
       };
     });
 
