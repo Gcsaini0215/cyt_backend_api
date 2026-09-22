@@ -33,6 +33,7 @@ import {
   getNoidaClientsList,
   getNoidaClientProfile,
   deleteNoidaClient,
+  getNoidaRecentActivity,
 } from "../controllers/NoidaAppointmentController.js";
 import {
   getPublicPricing,
@@ -86,6 +87,7 @@ router.patch("/noida-appointments/payment-problems/:id/resolve", hasPermission("
 router.get("/noida-appointments/clients", hasPermission("noidaCenter"), getNoidaClientsList);
 router.get("/noida-appointments/client-profile", hasPermission("noidaCenter"), getNoidaClientProfile);
 router.delete("/noida-appointments/clients/:phone", hasPermission("noidaCenter"), deleteNoidaClient);
+router.get("/noida-appointments/recent-activity", hasPermission("noidaCenter"), getNoidaRecentActivity);
 router.get("/noida-appointments", hasPermission("noidaCenter"), getNoidaAppointments);
 router.patch("/noida-appointments/:id", hasPermission("noidaCenter"), updateNoidaAppointment);
 router.patch("/noida-appointments/:id/assign", hasPermission("noidaCenter"), assignNoidaAppointment);

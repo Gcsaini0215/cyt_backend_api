@@ -423,8 +423,11 @@ export const getNoidaClientsList = expressAsyncHandler(async (req, res, next) =>
   try {
     await ensureBackfilled();
     const search = (req.query.search || "").trim();
+    const isExport = req.query.export === "1";
     const page = Math.max(1, parseInt(req.query.page) || 1);
-    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize) || 30));
+    const pageSize = isExport ? 3000 : Math.min(100, Math.max(1, parseInt(req.query.pageSize) || 30));
+    const sort = ["bookings", "name"].includes(req.query.sort) ? req.query.sort : "recent";
+    const filter = ["credit", "package", "upcoming"].includes(req.query.filter) ? req.query.filter : "";
     const today = istDateStr(istNow());
     const searchRe = search ? new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null;
 
@@ -477,37 +480,20 @@ export const getNoidaClientsList = expressAsyncHandler(async (req, res, next) =>
       });
     });
 
-    const merged = [...noidaGroups, ...receptionOnlyByTail.values()]
-      .sort((a, b) => new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0));
+    let merged = [...noidaGroups, ...receptionOnlyByTail.values()];
+    if (sort === "bookings") merged.sort((a, b) => (b.totalBookings || 0) - (a.totalBookings || 0));
+    else if (sort === "name") merged.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+    else merged.sort((a, b) => new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0));
 
-    const total = merged.length;
-    const pageRows = merged.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
-
-    const phones = pageRows.filter((r) => !r._receptionOnly).map((r) => r._id).filter(Boolean);
-    const tails = pageRows.map((r) => String(r._id || "").replace(/\D/g, "").slice(-10)).filter(Boolean);
-
-    const [credits, receptionClients] = await Promise.all([
-      phones.length ? NoidaClientCredit.find({ phone: { $in: phones }, active: true }).select("phone totalSessions sessionsUsed").lean() : [],
-      tails.length ? ReceptionClient.find({ phone: { $regex: new RegExp(`(${tails.join("|")})$`) } }).select("id name phone package").lean() : [],
-    ]);
-    const creditByPhone = new Map(credits.map((c) => [c.phone, c]));
-    const receptionByTail = new Map();
-    receptionClients.forEach((rc) => {
-      const tail = String(rc.phone || "").replace(/\D/g, "").slice(-10);
-      if (tail && !receptionByTail.has(tail)) receptionByTail.set(tail, rc);
-    });
-
-    const data = pageRows.map((r) => {
+    // Turns one merged row into the shape the client sees, given its enriched
+    // credit/Reception-package lookup results (Maps keyed the same way below).
+    const format = (r, creditByPhone, receptionByTail) => {
       const tail = String(r._id || "").replace(/\D/g, "").slice(-10);
       if (r._receptionOnly) {
         const pkg = r._rcPackage;
         return {
-          phone: tail,
-          name: r.name || "",
-          clientCode: "",
-          totalBookings: r.totalBookings,
-          upcoming: r.upcoming,
-          lastVisitDate: r.lastVisitDate || "",
+          phone: tail, name: r.name || "", clientCode: "",
+          totalBookings: r.totalBookings, upcoming: r.upcoming, lastVisitDate: r.lastVisitDate || "",
           hasCredit: false,
           hasReceptionPackage: !!(pkg && Number(pkg.total || 0) - Number(pkg.used || 0) > 0),
           source: "reception",
@@ -517,17 +503,45 @@ export const getNoidaClientsList = expressAsyncHandler(async (req, res, next) =>
       const credit = creditByPhone.get(phone);
       const rc = receptionByTail.get(tail);
       return {
-        phone,
-        name: r.name || rc?.name || "",
-        clientCode: r.clientCode || "",
-        totalBookings: r.totalBookings,
-        upcoming: r.upcoming,
-        lastVisitDate: r.lastVisitDate || "",
+        phone, name: r.name || rc?.name || "", clientCode: r.clientCode || "",
+        totalBookings: r.totalBookings, upcoming: r.upcoming, lastVisitDate: r.lastVisitDate || "",
         hasCredit: !!(credit && credit.totalSessions > credit.sessionsUsed),
         hasReceptionPackage: !!(rc?.package && Number(rc.package.total || 0) - Number(rc.package.used || 0) > 0),
         source: "noida",
       };
-    });
+    };
+    const enrich = async (rows) => {
+      const phones = rows.filter((r) => !r._receptionOnly).map((r) => r._id).filter(Boolean);
+      const tails = rows.map((r) => String(r._id || "").replace(/\D/g, "").slice(-10)).filter(Boolean);
+      const [credits, receptionClients] = await Promise.all([
+        phones.length ? NoidaClientCredit.find({ phone: { $in: phones }, active: true }).select("phone totalSessions sessionsUsed").lean() : [],
+        tails.length ? ReceptionClient.find({ phone: { $regex: new RegExp(`(${tails.join("|")})$`) } }).select("id name phone package").lean() : [],
+      ]);
+      const creditByPhone = new Map(credits.map((c) => [c.phone, c]));
+      const receptionByTail = new Map();
+      receptionClients.forEach((rc) => {
+        const tail = String(rc.phone || "").replace(/\D/g, "").slice(-10);
+        if (tail && !receptionByTail.has(tail)) receptionByTail.set(tail, rc);
+      });
+      return { creditByPhone, receptionByTail };
+    };
+
+    let total, pageRows, data;
+    if (filter) {
+      // hasCredit/hasReceptionPackage/upcoming only exist once enriched, so a filter on
+      // them has to run against the FULL list before paginating, not just one page of it.
+      const { creditByPhone, receptionByTail } = await enrich(merged);
+      const filtered = merged
+        .map((r) => format(r, creditByPhone, receptionByTail))
+        .filter((c) => (filter === "credit" ? c.hasCredit : filter === "package" ? c.hasReceptionPackage : c.upcoming > 0));
+      total = filtered.length;
+      data = filtered.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
+    } else {
+      total = merged.length;
+      pageRows = merged.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
+      const { creditByPhone, receptionByTail } = await enrich(pageRows);
+      data = pageRows.map((r) => format(r, creditByPhone, receptionByTail));
+    }
 
     return res.status(200).json({ status: true, data, total, page, pages: Math.ceil(total / pageSize) || 1 });
   } catch (err) {
@@ -1571,7 +1585,7 @@ export const getNoidaAppointmentsSummary = expressAsyncHandler(async (req, res, 
     const live = { ...notArchived, status: "confirmed" };
 
     const [todayRows, upcoming7, pendingPayment, incomeAgg] = await Promise.all([
-      NoidaAppointment.find({ ...live, date: today }).select("attendance").lean(),
+      NoidaAppointment.find({ ...live, date: today }).select("attendance paymentMethod paymentStatus amount type").lean(),
       NoidaAppointment.countDocuments({ ...live, date: { $gt: today, $lte: plus(7) } }),
       NoidaAppointment.countDocuments({ ...live, date: { $gte: today }, paymentStatus: "pending" }),
       NoidaAppointment.aggregate([
@@ -1580,17 +1594,68 @@ export const getNoidaAppointmentsSummary = expressAsyncHandler(async (req, res, 
       ]),
     ]);
 
+    // Reception desk's own "today" picture — how much came in and how, plus no-shows —
+    // separate from the 7-day figures above (which serve the main admin dashboard).
+    const todayRevenueByMethod = { cash: 0, qr: 0, razorpay: 0, credit: 0 };
+    todayRows.forEach((r) => {
+      if (r.paymentStatus === "paid" && todayRevenueByMethod[r.paymentMethod] !== undefined) {
+        todayRevenueByMethod[r.paymentMethod] += Number(r.amount) || 0;
+      }
+    });
+    const todayRevenue = Object.values(todayRevenueByMethod).reduce((s, v) => s + v, 0);
+    const todayNoShow = todayRows.filter((r) => r.attendance === "no_show").length;
+    const todayNew = todayRows.filter((r) => r.type === "new").length;
+    const todayFollowup = todayRows.filter((r) => r.type === "followup").length;
+
     return res.status(200).json({
       status: true,
       data: {
         today: todayRows.length,
         todayArrived: todayRows.filter((r) => r.attendance === "arrived" || r.attendance === "completed").length,
+        todayNoShow,
+        todayNew,
+        todayFollowup,
+        todayRevenue,
+        todayRevenueByMethod,
         upcoming7,
         pendingPayment,
         income7: incomeAgg[0]?.total || 0,
         dates: { today, tomorrow: plus(1), plus7: plus(7), minus6: plus(-6) },
       },
     });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// GET /noida-appointments/recent-activity?limit=
+// A lightweight "what just happened" feed for the reception desk — no separate audit-log
+// collection, just the most recently touched NoidaAppointment rows (booked, rescheduled or
+// cancelled), newest first. Doesn't cover client/credit deletions, only bookings.
+export const getNoidaRecentActivity = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 25));
+    const rows = await NoidaAppointment.find({})
+      .sort({ updatedAt: -1 })
+      .limit(limit)
+      .populate("bookedByAdmin", "name")
+      .select("name phone clientCode date slot type status archived attendance rescheduleCount createdAt updatedAt bookedByAdmin")
+      .lean();
+
+    const data = rows.map((r) => ({
+      _id: r._id,
+      name: r.name,
+      phone: r.phone,
+      clientCode: r.clientCode || "",
+      date: r.date,
+      slot: r.slot,
+      type: r.type,
+      action: r.archived ? "cancelled" : r.rescheduleCount > 0 ? "rescheduled" : "booked",
+      by: r.bookedByAdmin?.name || "",
+      at: r.updatedAt || r.createdAt,
+    }));
+
+    return res.status(200).json({ status: true, data });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
