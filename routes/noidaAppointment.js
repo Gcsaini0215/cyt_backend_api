@@ -30,6 +30,8 @@ import {
   getLastMinuteRequests,
   acceptLastMinuteRequest,
   rejectLastMinuteRequest,
+  getNoidaClientsList,
+  getNoidaClientProfile,
 } from "../controllers/NoidaAppointmentController.js";
 import {
   getPublicPricing,
@@ -80,6 +82,8 @@ router.get("/noida-appointments/export", hasPermission("noidaCenter"), exportNoi
 router.get("/noida-appointments/payment-problems", hasPermission("noidaCenter"), getPaymentProblems);
 router.post("/noida-appointments/payment-problems/:id/retry", hasPermission("noidaCenter"), retryPaymentProblem);
 router.patch("/noida-appointments/payment-problems/:id/resolve", hasPermission("noidaCenter"), resolvePaymentProblem);
+router.get("/noida-appointments/clients", hasPermission("noidaCenter"), getNoidaClientsList);
+router.get("/noida-appointments/client-profile", hasPermission("noidaCenter"), getNoidaClientProfile);
 router.get("/noida-appointments", hasPermission("noidaCenter"), getNoidaAppointments);
 router.patch("/noida-appointments/:id", hasPermission("noidaCenter"), updateNoidaAppointment);
 router.patch("/noida-appointments/:id/assign", hasPermission("noidaCenter"), assignNoidaAppointment);

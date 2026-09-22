@@ -414,6 +414,142 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
   }
 });
 
+// GET /noida-appointments/clients?search=&page=&pageSize=
+// A client-centric view over NoidaAppointment history — one row per phone number
+// (grouped across all their bookings), for the reception desk's "Clients" tab and
+// its search box. Cheap flags only (hasCredit / hasReceptionPackage); the full
+// picture is a separate call (getNoidaClientProfile) so this list stays fast.
+export const getNoidaClientsList = expressAsyncHandler(async (req, res, next) => {
+  try {
+    await ensureBackfilled();
+    const search = (req.query.search || "").trim();
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize) || 30));
+    const today = istDateStr(istNow());
+
+    const match = {};
+    if (search) {
+      const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      match.$or = [{ name: re }, { phone: re }, { clientCode: re }];
+    }
+
+    const [agg] = await NoidaAppointment.aggregate([
+      { $match: match },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: "$phone",
+          name: { $first: "$name" },           // most recent booking's name
+          clientCode: { $first: "$clientCode" },
+          totalBookings: { $sum: 1 },
+          upcoming: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "confirmed"] }, { $gte: ["$date", today] }] }, 1, 0] } },
+          lastVisitDate: { $max: "$date" },
+          lastBookedAt: { $max: "$createdAt" },
+        },
+      },
+      { $sort: { lastBookedAt: -1 } },
+      { $facet: { rows: [{ $skip: (page - 1) * pageSize }, { $limit: pageSize }], count: [{ $count: "n" }] } },
+    ]);
+
+    const rows = agg?.rows || [];
+    const total = agg?.count?.[0]?.n || 0;
+    const phones = rows.map((r) => r._id).filter(Boolean);
+    const tails = phones.map((p) => String(p).replace(/\D/g, "").slice(-10)).filter(Boolean);
+
+    const [credits, receptionClients] = await Promise.all([
+      phones.length ? NoidaClientCredit.find({ phone: { $in: phones }, active: true }).select("phone totalSessions sessionsUsed").lean() : [],
+      tails.length ? ReceptionClient.find({ phone: { $regex: new RegExp(`(${tails.join("|")})$`) } }).select("id name phone package").lean() : [],
+    ]);
+    const creditByPhone = new Map(credits.map((c) => [c.phone, c]));
+    const receptionByTail = new Map();
+    receptionClients.forEach((rc) => {
+      const tail = String(rc.phone || "").replace(/\D/g, "").slice(-10);
+      if (tail && !receptionByTail.has(tail)) receptionByTail.set(tail, rc); // first = newest, since no sort needed here (flag only)
+    });
+
+    const data = rows.map((r) => {
+      const phone = r._id || "";
+      const credit = creditByPhone.get(phone);
+      const rc = receptionByTail.get(phone.replace(/\D/g, "").slice(-10));
+      return {
+        phone,
+        name: r.name || rc?.name || "",
+        clientCode: r.clientCode || "",
+        totalBookings: r.totalBookings,
+        upcoming: r.upcoming,
+        lastVisitDate: r.lastVisitDate || "",
+        hasCredit: !!(credit && credit.totalSessions > credit.sessionsUsed),
+        hasReceptionPackage: !!(rc?.package && Number(rc.package.total || 0) - Number(rc.package.used || 0) > 0),
+      };
+    });
+
+    return res.status(200).json({ status: true, data, total, page, pages: Math.ceil(total / pageSize) || 1 });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// GET /noida-appointments/client-profile?phone=
+// Everything known about one client, merged across every source: their full Noida
+// booking history, their live credit (native or fallen-back-to-Reception), and — if
+// this phone also walked in to the separate Reception system — that package,
+// payments, attendance and session notes too.
+export const getNoidaClientProfile = expressAsyncHandler(async (req, res, next) => {
+  const phone = (req.query.phone || "").trim();
+  if (!/^\d{10}$/.test(phone)) {
+    return res.status(400).json({ status: false, message: "A valid 10-digit phone number is required." });
+  }
+  try {
+    const [appointments, credit, receptionClients] = await Promise.all([
+      NoidaAppointment.find({ phone })
+        .sort({ createdAt: -1 })
+        .populate("assignedTo", "name")
+        .populate("bookedByAdmin", "name")
+        .lean(),
+      getActiveCredit(phone),
+      ReceptionClient.find({ phone: { $regex: phoneTailRegex(phone) } }).sort({ createdAt: -1 }).lean(),
+    ]);
+
+    const receptionClient = receptionClients.find((c) => samePhone(c.phone, phone)) || null;
+    const name = credit?.name || appointments[0]?.name || receptionClient?.name || "";
+    const clientCode = appointments.find((a) => a.clientCode)?.clientCode || "";
+
+    return res.status(200).json({
+      status: true,
+      data: {
+        phone,
+        name,
+        clientCode,
+        appointments,
+        credit: credit
+          ? {
+              available: true,
+              sessionsRemaining: credit.totalSessions - credit.sessionsUsed,
+              totalSessions: credit.totalSessions,
+              sessionsUsed: credit.sessionsUsed,
+              packageName: credit.packageName,
+              source: credit.source,
+            }
+          : { available: false, sessionsRemaining: 0, packageName: "" },
+        reception: receptionClient
+          ? {
+              id: receptionClient.id,
+              name: receptionClient.name,
+              status: receptionClient.status || "idle",
+              package: receptionClient.package || null,
+              payments: receptionClient.payments || [],
+              attendance: receptionClient.attendance || [],
+              notes: receptionClient.notes || [],
+              followUps: receptionClient.followUps || [],
+            }
+          : null,
+      },
+    });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
 // Step 1 of the pay-first flow: figures out the authoritative price for the
 // chosen session mode/format/package and opens a Razorpay order for it.
 // The frontend never gets to say what the amount is.
