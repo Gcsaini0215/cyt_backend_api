@@ -371,9 +371,23 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
 
   try {
     const credit = await getActiveCredit(phone);
-    const creditInfo = credit
-      ? { available: true, sessionsRemaining: credit.totalSessions - credit.sessionsUsed, packageName: credit.packageName }
-      : { available: false, sessionsRemaining: 0, packageName: "" };
+
+    // A credit belongs to one specific person — always show *its* name, never a different
+    // name this same phone happens to be attached to elsewhere (a past booking, a Lead, or
+    // a different Reception client altogether). Phone numbers get shared or reused — e.g. a
+    // walk-in client's package matched here must never be shown, or claimed, under someone
+    // else's name just because they once used the same number.
+    if (credit) {
+      return res.status(200).json({
+        status: true,
+        data: {
+          found: true,
+          name: credit.name,
+          credit: { available: true, sessionsRemaining: credit.totalSessions - credit.sessionsUsed, packageName: credit.packageName },
+        },
+      });
+    }
+    const creditInfo = { available: false, sessionsRemaining: 0, packageName: "" };
 
     const pastAppointment = await NoidaAppointment.findOne({ phone }).sort({ createdAt: -1 }).select("name").lean();
     if (pastAppointment?.name) {
@@ -392,12 +406,6 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
     const receptionMatch = receptionClients.find((c) => samePhone(c.phone, phone));
     if (receptionMatch?.name) {
       return res.status(200).json({ status: true, data: { found: true, name: receptionMatch.name, credit: creditInfo } });
-    }
-
-    // Not found anywhere by name, but might still have credit if admin
-    // manually registered them (e.g. an existing/offline client).
-    if (credit) {
-      return res.status(200).json({ status: true, data: { found: true, name: credit.name, credit: creditInfo } });
     }
 
     return res.status(200).json({ status: true, data: { found: false, name: null, credit: creditInfo } });
