@@ -550,6 +550,39 @@ export const getNoidaClientProfile = expressAsyncHandler(async (req, res, next) 
   }
 });
 
+// DELETE /noida-appointments/clients/:phone
+// A full wipe for one client — every Noida booking, their Noida credit, and (if this
+// phone also has a walk-in Reception record) that record too. Permanent; used from the
+// "Clients" grid's card-level delete. For removing a single booking instead, see
+// deleteNoidaAppointment (DELETE /noida-appointments/:id).
+export const deleteNoidaClient = expressAsyncHandler(async (req, res, next) => {
+  const phone = (req.params.phone || "").trim();
+  if (!/^\d{10}$/.test(phone)) {
+    return res.status(400).json({ status: false, message: "A valid 10-digit phone number is required." });
+  }
+  try {
+    const [appts, credits, receptionClients] = await Promise.all([
+      NoidaAppointment.deleteMany({ phone }),
+      NoidaClientCredit.deleteMany({ phone }),
+      ReceptionClient.find({ phone: { $regex: phoneTailRegex(phone) } }).lean(),
+    ]);
+    const matchingReception = receptionClients.filter((c) => samePhone(c.phone, phone));
+    if (matchingReception.length) {
+      await ReceptionClient.deleteMany({ id: { $in: matchingReception.map((c) => c.id) } });
+    }
+    return res.status(200).json({
+      status: true,
+      data: {
+        appointmentsDeleted: appts.deletedCount || 0,
+        creditsDeleted: credits.deletedCount || 0,
+        receptionDeleted: matchingReception.length,
+      },
+    });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
 // Step 1 of the pay-first flow: figures out the authoritative price for the
 // chosen session mode/format/package and opens a Razorpay order for it.
 // The frontend never gets to say what the amount is.
