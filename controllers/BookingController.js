@@ -544,6 +544,9 @@ export const createRazorpayOrder = expressAsyncHandler(async (req, res, next) =>
       status: true,
       message: "Razorpay order created successfully",
       data: order,
+      // The checkout must open with the same key the order was created under —
+      // and the same account whose secret verifies the signature afterwards.
+      key_id: process.env.RAZORPAY_KEY_ID,
     });
   } catch (err) {
     console.error("Razorpay Order Error:", err);
