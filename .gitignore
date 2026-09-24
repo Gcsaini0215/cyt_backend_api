@@ -15,3 +15,6 @@ githubssh.pub
 *.pfx
 id_rsa*
 id_ed25519*
+
+# issued quotation PDFs (client data) — never commit
+private/
