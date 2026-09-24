@@ -58,6 +58,7 @@ const offerLetterSchema = new Schema(
       designation: { type: String, default: "" },
       phone: { type: String, default: "" },
       email: { type: String, default: "" },
+      useDefaultSignature: { type: Boolean, default: false }, // print the default signature + company stamp on the PDF
     },
     enclosures: { type: [String], default: [] },
     emailMessage: { type: String, default: "" }, // the short cover note that goes in the email body

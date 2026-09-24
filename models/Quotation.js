@@ -12,6 +12,21 @@ const itemSchema = new Schema(
   { _id: false }
 );
 
+// One entry per email actually sent (or attempted) from the app.
+const emailLogSchema = new Schema(
+  {
+    to: { type: [String], default: [] },
+    cc: { type: [String], default: [] },
+    subject: { type: String, default: "" },
+    sentAt: { type: Date, default: Date.now },
+    sentBy: { type: String, default: "" },
+    ok: { type: Boolean, default: false },
+    error: { type: String, default: "" },
+    isTest: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
+
 const quotationSchema = new Schema(
   {
     number: { type: String, required: true, unique: true, trim: true }, // CYT-QT-2026-0001
@@ -40,6 +55,7 @@ const quotationSchema = new Schema(
     preparedBy: {
       name: { type: String, default: "" },
       designation: { type: String, default: "" },
+      useDefaultSignature: { type: Boolean, default: false }, // print the default signature + company stamp on the PDF
     },
     // Recomputed on the server on every save — the PDF and the list both trust these, never the browser.
     totals: {
@@ -52,6 +68,12 @@ const quotationSchema = new Schema(
     // The exact PDF that was issued, kept privately on the server (not under the public /uploads folder).
     pdfFile: { type: String, default: "" },
     pdfSavedAt: { type: Date },
+    // Emailing to the client: send log + an unguessable one-click download link (see QuotationEmailController).
+    emails: { type: [emailLogSchema], default: [] },
+    shareToken: { type: String, default: "", index: true },
+    shareTokenAt: { type: Date },
+    downloadCount: { type: Number, default: 0 }, // may include e-mail security scanners that pre-open links
+    lastDownloadedAt: { type: Date },
     createdBy: { type: Schema.Types.ObjectId, ref: "Admin" },
   },
   { timestamps: true }

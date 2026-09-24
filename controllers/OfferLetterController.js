@@ -14,11 +14,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PDF_DIR = path.resolve(__dirname, "..", "private", "offer-letters");
 fs.mkdirSync(PDF_DIR, { recursive: true });
 
-// The logo shown in the email header — embedded in the message (cid), so it appears even where remote images are blocked.
-const LOGO_PATH = path.resolve(__dirname, "..", "helper", "assets", "email-logo.png");
-const LOGO_CID = "cyt-logo";
-let LOGO_BUFFER = null;
-try { LOGO_BUFFER = fs.readFileSync(LOGO_PATH); } catch { /* no logo file — the header simply shows the name */ }
+// The logo in the email header is the public site's emblem, referenced by URL — so it is not a separate attachment.
+const LOGO_URL = "https://www.chooseyourtherapist.in/cyt-emblem.png";
 const PUBLIC_API = (process.env.API_PUBLIC_URL || "https://api.chooseyourtherapist.in/api").replace(/\/$/, "");
 const SHARE_LINK_MAX_AGE_MS = 180 * 24 * 3600 * 1000; // download links stop working after 6 months
 
@@ -81,6 +78,7 @@ const build = (b = {}) => ({
     designation: str(b.signatory?.designation, 120),
     phone: str(b.signatory?.phone, 40),
     email: str(b.signatory?.email, 150),
+    useDefaultSignature: !!b.signatory?.useDefaultSignature,
   },
   enclosures: lines(b.enclosures, 10, 200),
   emailMessage: str(b.emailMessage, 3000),
@@ -221,16 +219,16 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 export const buildEmailHtml = ({ message, q, fileName, downloadUrl = "", hasLogo = false }) => {
   const paras = String(message || "")
     .split(/\n{2,}/)
-    .map((p) => `<p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#1e293b;">${esc(p).replace(/\n/g, "<br>")}</p>`)
+    .map((p) => `<p style="margin:0 0 14px;font-size:15px;line-height:1.7;color:#1e293b;text-align:justify;">${esc(p).replace(/\n/g, "<br>")}</p>`)
     .join("");
   const sig = q.signatory || {};
   return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f4f6f5;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f5;padding:24px 12px;"><tr><td align="center">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;">
-<tr><td style="background:#ffffff;padding:18px 26px 16px;border-bottom:3px solid #14532d;">
+<tr><td style="background:#ffffff;padding:16px 22px 14px;border-bottom:3px solid #14532d;">
 <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-${hasLogo ? `<td width="64" valign="middle" style="padding-right:14px;"><img src="cid:${LOGO_CID}" width="56" alt="Choose Your Therapist" style="display:block;border:0;width:56px;height:auto;"></td>` : ""}
-<td valign="middle"><div style="color:#14532d;font-size:18px;font-weight:700;letter-spacing:.5px;">CHOOSE YOUR THERAPIST LLP</div><div style="font-size:12.5px;margin-top:3px;"><a href="https://www.chooseyourtherapist.in" style="color:#14532d;font-weight:700;text-decoration:none;">www.chooseyourtherapist.in</a></div></td>
+${hasLogo ? `<td width="58" valign="middle" style="padding-right:12px;"><img src="${LOGO_URL}" width="50" alt="Choose Your Therapist" style="display:block;border:0;width:50px;height:auto;"></td>` : ""}
+<td valign="middle"><div style="color:#14532d;font-size:14px;font-weight:700;letter-spacing:.2px;white-space:nowrap;">CHOOSE YOUR THERAPIST LLP</div><div style="font-size:12.5px;margin-top:3px;"><a href="https://www.chooseyourtherapist.in" style="color:#14532d;font-weight:700;text-decoration:none;">www.chooseyourtherapist.in</a></div></td>
 </tr></table></td></tr>
 <tr><td style="height:2px;line-height:2px;font-size:0;background:#d4af37;">&nbsp;</td></tr>
 <tr><td style="padding:26px 26px 6px;">${paras}
@@ -240,7 +238,7 @@ ${hasLogo ? `<td width="64" valign="middle" style="padding-right:14px;"><img src
 ${sig.designation ? `<p style="margin:2px 0 0;font-size:13.5px;color:#475569;">${esc(sig.designation)}</p>` : ""}
 <p style="margin:2px 0 0;font-size:13.5px;color:#475569;">Choose Your Therapist LLP${sig.phone ? ` · ${esc(sig.phone)}` : ""}${sig.email ? ` · ${esc(sig.email)}` : ""}</p>
 </td></tr>
-<tr><td style="padding:16px 26px 22px;"><div style="border-top:1px solid #e2e8f0;padding-top:12px;font-size:11.5px;line-height:1.55;color:#94a3b8;">D-137, near LPS Global School, Block D, Sector 51, Noida, Uttar Pradesh 201301 · +91 80777 57951<br>You are receiving this because we believe our services may be relevant to your organisation. If not, just reply “no thanks” and we won't write again.</div></td></tr>
+<tr><td style="padding:16px 26px 22px;"><div style="border-top:1px solid #e2e8f0;padding-top:12px;font-size:11.5px;line-height:1.55;color:#94a3b8;">D-137, Block D, Sector 51, Noida, Uttar Pradesh 201301 · +91 80777 57951<br>You are receiving this because we believe our services may be relevant to your organisation. If not, just reply “no thanks” and we won't write again.</div></td></tr>
 </table></td></tr></table></body></html>`;
 };
 
@@ -301,11 +299,10 @@ export const sendOfferLetter = expressAsyncHandler(async (req, res, next) => {
     replyTo: REPLY_TO,
     subject,
     text: buildEmailText({ message, q: doc, fileName, downloadUrl }),
-    html: buildEmailHtml({ message, q: doc, fileName, downloadUrl, hasLogo: !!LOGO_BUFFER }),
+    html: buildEmailHtml({ message, q: doc, fileName, downloadUrl, hasLogo: true }),
     fromName: "Choose Your Therapist",
     attachments: [
       { filename: fileName, content, contentType: "application/pdf" },
-      ...(LOGO_BUFFER ? [{ filename: "cyt-logo.png", content: LOGO_BUFFER, contentType: "image/png", cid: LOGO_CID, contentDisposition: "inline" }] : []),
     ],
   });
 

@@ -17,6 +17,10 @@ const zohoTransporter = nodemailer.createTransport({
     user: process.env.ZOHO_EMAIL,
     pass: process.env.ZOHO_PASS,
   },
+  // fail fast with a readable error instead of hanging the admin's request until the proxy times out
+  connectionTimeout: 15000,
+  greetingTimeout: 15000,
+  socketTimeout: 60000,
 });
 
 export const sendMail = async (to, subject, text, html, fromName = "CYT Team", attachments = []) => {
@@ -69,8 +73,12 @@ export const sendMailAdvanced = async ({ to, cc, replyTo, subject, text, html, f
       html,
       attachments,
     });
-    console.log("Email sent: %s", info.messageId);
-    return { success: true, messageId: info.messageId, rejected: info.rejected || [] };
+    const rejected = info.rejected || [];
+    const accepted = info.accepted || [];
+    console.log("Email sent: %s (accepted %d, rejected %d)", info.messageId, accepted.length, rejected.length);
+    // the SMTP server can refuse every address without throwing — that is not a success
+    if (!accepted.length) return { success: false, error: `The mail server refused the address(es): ${rejected.join(", ") || "unknown"}`, rejected };
+    return { success: true, messageId: info.messageId, rejected };
   } catch (error) {
     console.error("sendMailAdvanced error:", error.message, error.code, error.response);
     return { success: false, error: error.message };

@@ -71,7 +71,7 @@ const build = (b = {}) => {
     terms: (Array.isArray(b.terms) ? b.terms : []).slice(0, MAX_TERMS).map((t) => str(t, 500)).filter(Boolean),
     paymentInstructions: str(b.paymentInstructions, 1500),
     notes: str(b.notes, 1500),
-    preparedBy: { name: str(b.preparedBy?.name, 120), designation: str(b.preparedBy?.designation, 120) },
+    preparedBy: { name: str(b.preparedBy?.name, 120), designation: str(b.preparedBy?.designation, 120), useDefaultSignature: !!b.preparedBy?.useDefaultSignature },
     totals: computeTotals(items, discountType, discountValue, gstPercent),
   };
 };
@@ -89,7 +89,7 @@ const nextNumber = async (dateStr) => {
   return `CYT-QT-${year}-${String(c.seq).padStart(4, "0")}`;
 };
 
-const pdfPathFor = (file) => path.join(PDF_DIR, path.basename(file)); // basename: never trust a stored path
+export const pdfPathFor = (file) => path.join(PDF_DIR, path.basename(file)); // basename: never trust a stored path
 const removePdf = (file) => {
   if (file) fs.promises.unlink(pdfPathFor(file)).catch(() => {});
 };
