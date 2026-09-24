@@ -56,6 +56,27 @@ export const sendMailWithReason = async (to, subject, text, html, fromName = "CY
   }
 };
 
+// Full-featured sender for one-to-one outreach (cc, reply-to, attachments); resolves the SMTP result instead of just true/false.
+export const sendMailAdvanced = async ({ to, cc, replyTo, subject, text, html, fromName = "CYT Team", attachments = [] }) => {
+  try {
+    const info = await zohoTransporter.sendMail({
+      from: `"${fromName}" <hello@chooseyourtherapist.in>`,
+      to,
+      cc: cc && cc.length ? cc : undefined,
+      replyTo,
+      subject,
+      text,
+      html,
+      attachments,
+    });
+    console.log("Email sent: %s", info.messageId);
+    return { success: true, messageId: info.messageId, rejected: info.rejected || [] };
+  } catch (error) {
+    console.error("sendMailAdvanced error:", error.message, error.code, error.response);
+    return { success: false, error: error.message };
+  }
+};
+
 export const sendReminderMail = async (to, clientName, customNote) => {
   const firstName = clientName ? clientName.split(" ")[0] : "there";
   const subject = `A gentle check-in from Choose Your Therapist 💚`;
