@@ -53,6 +53,7 @@ import {
   updateClientCredit,
   deleteClientCredit,
 } from "../controllers/NoidaClientCreditController.js";
+import { pingNoidaPresence, getNoidaPresence } from "../controllers/NoidaPresenceController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
 import { leadRateLimit, phoneLookupRateLimit, pollingRateLimit, lastMinuteRequestRateLimit } from "../middlewares/rateLimitMiddleware.js";
 
@@ -80,6 +81,9 @@ router.get("/noida-appointments/last-minute-requests", hasPermission("noidaCente
 router.patch("/noida-appointments/last-minute-requests/:id/accept", hasPermission("noidaCenter"), acceptLastMinuteRequest);
 router.patch("/noida-appointments/last-minute-requests/:id/reject", hasPermission("noidaCenter"), rejectLastMinuteRequest);
 router.get("/noida-appointments/summary", hasPermission("noidaCenter"), getNoidaAppointmentsSummary);
+// Live visitors on the public booking page: visitors ping (public), reception reads the counts.
+router.post("/noida-appointments/presence", pollingRateLimit, pingNoidaPresence);
+router.get("/noida-appointments/presence", hasPermission("noidaCenter"), getNoidaPresence);
 router.get("/noida-appointments/export", hasPermission("noidaCenter"), exportNoidaAppointments);
 router.get("/noida-appointments/payment-problems", hasPermission("noidaCenter"), getPaymentProblems);
 router.post("/noida-appointments/payment-problems/:id/retry", hasPermission("noidaCenter"), retryPaymentProblem);
