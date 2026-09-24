@@ -20,6 +20,11 @@ const TraineeSchema = new Schema(
     hours: { type: String, default: "" },
     programFee: { type: Number, default: null },
     transactionId: { type: String, default: "" },
+    // "razorpay" = paid + signature-verified here; "upi-manual" = legacy self-reported UTR (unverified)
+    paymentMethod: { type: String, default: "" },
+    paymentStatus: { type: String, default: "" }, // "paid" | "unverified"
+    razorpayOrderId: { type: String, default: "" },
+    razorpayPaymentId: { type: String, default: "", index: true },
     availableFrom: { type: String, default: "" },
     motivation: { type: String, default: "" },
     resume: { type: String, default: "" },

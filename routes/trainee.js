@@ -1,6 +1,6 @@
 import express from "express";
 import {
-  createTrainee, getTraineeBySlug,
+  createTrainee, createTraineeOrder, getTraineeBySlug,
   getAllTrainees, updateTraineeStatus, deleteTrainee,
 } from "../controllers/traineeController.js";
 import { leadRateLimit } from "../middlewares/rateLimitMiddleware.js";
@@ -9,6 +9,7 @@ import { uploadTherapistDocuments } from "../services/fileUpload.js";
 
 const router = express.Router();
 
+router.post("/trainees/create-order", leadRateLimit, createTraineeOrder);
 router.post(
   "/trainees",
   leadRateLimit,
