@@ -55,6 +55,7 @@ import {
 } from "../controllers/NoidaClientCreditController.js";
 import { pingNoidaPresence, getNoidaPresence } from "../controllers/NoidaPresenceController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
+import { hideRevenueForTeam } from "../middlewares/hideRevenueMiddleware.js";
 import { leadRateLimit, phoneLookupRateLimit, pollingRateLimit, lastMinuteRequestRateLimit } from "../middlewares/rateLimitMiddleware.js";
 
 const router = Router();
@@ -74,30 +75,30 @@ router.patch("/noida-appointments/reschedule", leadRateLimit, rescheduleNoidaApp
 router.post("/noida-appointments/last-minute-requests", lastMinuteRequestRateLimit, createLastMinuteRequest); // public — no auth
 router.get("/noida-appointments/last-minute-requests/:id/status", pollingRateLimit, getLastMinuteRequestStatus); // public — no auth, polled
 
-router.post("/noida-appointments/admin-book-credit", hasPermission("noidaCenter"), adminBookCreditSession);
-router.post("/noida-appointments/admin-create", hasPermission("noidaCenter"), adminCreateNoidaAppointment);
+router.post("/noida-appointments/admin-book-credit", hasPermission("noidaCenter"), hideRevenueForTeam, adminBookCreditSession);
+router.post("/noida-appointments/admin-create", hasPermission("noidaCenter"), hideRevenueForTeam, adminCreateNoidaAppointment);
 router.get("/noida-appointments/payment-qr", hasPermission("noidaCenter"), getNoidaPaymentQr);
-router.get("/noida-appointments/last-minute-requests", hasPermission("noidaCenter"), getLastMinuteRequests);
-router.patch("/noida-appointments/last-minute-requests/:id/accept", hasPermission("noidaCenter"), acceptLastMinuteRequest);
+router.get("/noida-appointments/last-minute-requests", hasPermission("noidaCenter"), hideRevenueForTeam, getLastMinuteRequests);
+router.patch("/noida-appointments/last-minute-requests/:id/accept", hasPermission("noidaCenter"), hideRevenueForTeam, acceptLastMinuteRequest);
 router.patch("/noida-appointments/last-minute-requests/:id/reject", hasPermission("noidaCenter"), rejectLastMinuteRequest);
-router.get("/noida-appointments/summary", hasPermission("noidaCenter"), getNoidaAppointmentsSummary);
+router.get("/noida-appointments/summary", hasPermission("noidaCenter"), hideRevenueForTeam, getNoidaAppointmentsSummary);
 // Live visitors on the public booking page: visitors ping (public), reception reads the counts.
 router.post("/noida-appointments/presence", pollingRateLimit, pingNoidaPresence);
 router.get("/noida-appointments/presence", hasPermission("noidaCenter"), getNoidaPresence);
-router.get("/noida-appointments/export", hasPermission("noidaCenter"), exportNoidaAppointments);
-router.get("/noida-appointments/payment-problems", hasPermission("noidaCenter"), getPaymentProblems);
-router.post("/noida-appointments/payment-problems/:id/retry", hasPermission("noidaCenter"), retryPaymentProblem);
-router.patch("/noida-appointments/payment-problems/:id/resolve", hasPermission("noidaCenter"), resolvePaymentProblem);
-router.get("/noida-appointments/clients", hasPermission("noidaCenter"), getNoidaClientsList);
-router.get("/noida-appointments/client-profile", hasPermission("noidaCenter"), getNoidaClientProfile);
+router.get("/noida-appointments/export", hasPermission("noidaCenter"), hideRevenueForTeam, exportNoidaAppointments);
+router.get("/noida-appointments/payment-problems", hasPermission("noidaCenter"), hideRevenueForTeam, getPaymentProblems);
+router.post("/noida-appointments/payment-problems/:id/retry", hasPermission("noidaCenter"), hideRevenueForTeam, retryPaymentProblem);
+router.patch("/noida-appointments/payment-problems/:id/resolve", hasPermission("noidaCenter"), hideRevenueForTeam, resolvePaymentProblem);
+router.get("/noida-appointments/clients", hasPermission("noidaCenter"), hideRevenueForTeam, getNoidaClientsList);
+router.get("/noida-appointments/client-profile", hasPermission("noidaCenter"), hideRevenueForTeam, getNoidaClientProfile);
 router.delete("/noida-appointments/clients/:phone", hasPermission("noidaCenter"), deleteNoidaClient);
-router.get("/noida-appointments/recent-activity", hasPermission("noidaCenter"), getNoidaRecentActivity);
-router.get("/noida-appointments", hasPermission("noidaCenter"), getNoidaAppointments);
-router.patch("/noida-appointments/:id", hasPermission("noidaCenter"), updateNoidaAppointment);
-router.patch("/noida-appointments/:id/assign", hasPermission("noidaCenter"), assignNoidaAppointment);
+router.get("/noida-appointments/recent-activity", hasPermission("noidaCenter"), hideRevenueForTeam, getNoidaRecentActivity);
+router.get("/noida-appointments", hasPermission("noidaCenter"), hideRevenueForTeam, getNoidaAppointments);
+router.patch("/noida-appointments/:id", hasPermission("noidaCenter"), hideRevenueForTeam, updateNoidaAppointment);
+router.patch("/noida-appointments/:id/assign", hasPermission("noidaCenter"), hideRevenueForTeam, assignNoidaAppointment);
 router.delete("/noida-appointments/:id", hasPermission("noidaCenter"), deleteNoidaAppointment);
 
-router.get("/noida-followup-slots", hasPermission("noidaCenter"), getFollowupSlots);
+router.get("/noida-followup-slots", hasPermission("noidaCenter"), hideRevenueForTeam, getFollowupSlots);
 router.post("/noida-followup-slots", hasPermission("noidaCenter"), addFollowupSlots);
 router.post("/noida-followup-slots/bulk", hasPermission("noidaCenter"), addFollowupSlotsBulk);
 router.delete("/noida-followup-slots/:id", hasPermission("noidaCenter"), deleteFollowupSlot);
