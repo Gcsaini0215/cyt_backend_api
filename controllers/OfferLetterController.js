@@ -2,6 +2,7 @@ import expressAsyncHandler from "express-async-handler";
 import multer from "multer";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import { fileURLToPath } from "url";
 import OfferLetter from "../models/OfferLetter.js";
 import NoidaCounter from "../models/NoidaCounter.js"; // generic atomic counter collection
@@ -12,6 +13,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Outside /uploads on purpose (that folder is public): these carry business names, contacts and offers.
 const PDF_DIR = path.resolve(__dirname, "..", "private", "offer-letters");
 fs.mkdirSync(PDF_DIR, { recursive: true });
+
+// The logo shown in the email header — embedded in the message (cid), so it appears even where remote images are blocked.
+const LOGO_PATH = path.resolve(__dirname, "..", "helper", "assets", "email-logo.png");
+const LOGO_CID = "cyt-logo";
+let LOGO_BUFFER = null;
+try { LOGO_BUFFER = fs.readFileSync(LOGO_PATH); } catch { /* no logo file — the header simply shows the name */ }
+const PUBLIC_API = (process.env.API_PUBLIC_URL || "https://api.chooseyourtherapist.in/api").replace(/\/$/, "");
+const SHARE_LINK_MAX_AGE_MS = 180 * 24 * 3600 * 1000; // download links stop working after 6 months
 
 const REPLY_TO = "Chooseyourtherapist@gmail.com"; // the address printed on the letterhead — replies land here
 const STATUSES = ["draft", "sent", "replied", "meeting", "won", "lost"];
@@ -209,7 +218,7 @@ export const downloadOfferLetterPdf = expressAsyncHandler(async (req, res, next)
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-export const buildEmailHtml = ({ message, q, fileName }) => {
+export const buildEmailHtml = ({ message, q, fileName, downloadUrl = "", hasLogo = false }) => {
   const paras = String(message || "")
     .split(/\n{2,}/)
     .map((p) => `<p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#1e293b;">${esc(p).replace(/\n/g, "<br>")}</p>`)
@@ -218,9 +227,14 @@ export const buildEmailHtml = ({ message, q, fileName }) => {
   return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f4f6f5;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f5;padding:24px 12px;"><tr><td align="center">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;">
-<tr><td style="background:#14532d;padding:18px 26px;"><div style="color:#ffffff;font-size:17px;font-weight:700;letter-spacing:.4px;">CHOOSE YOUR THERAPIST LLP</div><div style="color:#d4af37;font-size:12px;margin-top:3px;">www.chooseyourtherapist.in</div></td></tr>
+<tr><td style="background:#ffffff;padding:18px 26px 16px;border-bottom:3px solid #14532d;">
+<table role="presentation" cellpadding="0" cellspacing="0"><tr>
+${hasLogo ? `<td width="64" valign="middle" style="padding-right:14px;"><img src="cid:${LOGO_CID}" width="56" alt="Choose Your Therapist" style="display:block;border:0;width:56px;height:auto;"></td>` : ""}
+<td valign="middle"><div style="color:#14532d;font-size:18px;font-weight:700;letter-spacing:.5px;">CHOOSE YOUR THERAPIST LLP</div><div style="font-size:12.5px;margin-top:3px;"><a href="https://www.chooseyourtherapist.in" style="color:#14532d;font-weight:700;text-decoration:none;">www.chooseyourtherapist.in</a></div></td>
+</tr></table></td></tr>
+<tr><td style="height:2px;line-height:2px;font-size:0;background:#d4af37;">&nbsp;</td></tr>
 <tr><td style="padding:26px 26px 6px;">${paras}
-<table role="presentation" cellpadding="0" cellspacing="0" style="margin:6px 0 18px;background:#f0f7f2;border:1px solid #d5e6dc;border-radius:8px;"><tr><td style="padding:12px 16px;font-size:13.5px;color:#14532d;"><b>Attached:</b> ${esc(fileName)}<br><span style="color:#475569;">Our detailed letter (PDF) — ${esc(q.number)}</span></td></tr></table>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:6px 0 18px;background:#f0f7f2;border:1px solid #d5e6dc;border-radius:8px;"><tr><td style="padding:12px 16px;font-size:13.5px;color:#14532d;"><b>Attached:</b> ${downloadUrl ? `<a href="${esc(downloadUrl)}" style="color:#14532d;font-weight:700;text-decoration:underline;">${esc(fileName)}</a>` : esc(fileName)}<br><span style="color:#475569;">Our detailed letter (PDF) — ${esc(q.number)}</span>${downloadUrl ? `<br><a href="${esc(downloadUrl)}" style="display:inline-block;margin-top:10px;background:#14532d;color:#ffffff;text-decoration:none;font-weight:700;font-size:13.5px;padding:9px 18px;border-radius:7px;">Download the letter (PDF)</a>` : ""}</td></tr></table>
 <p style="margin:0 0 4px;font-size:15px;color:#1e293b;">${esc(q.closing || "Yours sincerely,")}</p>
 <p style="margin:14px 0 0;font-size:15px;font-weight:700;color:#0f2a1d;">${esc(sig.name || "Choose Your Therapist")}</p>
 ${sig.designation ? `<p style="margin:2px 0 0;font-size:13.5px;color:#475569;">${esc(sig.designation)}</p>` : ""}
@@ -230,9 +244,9 @@ ${sig.designation ? `<p style="margin:2px 0 0;font-size:13.5px;color:#475569;">$
 </table></td></tr></table></body></html>`;
 };
 
-export const buildEmailText = ({ message, q, fileName }) => {
+export const buildEmailText = ({ message, q, fileName, downloadUrl = "" }) => {
   const sig = q.signatory || {};
-  return `${message}\n\nAttached: ${fileName} (${q.number})\n\n${q.closing || "Yours sincerely,"}\n${sig.name || "Choose Your Therapist"}${sig.designation ? `\n${sig.designation}` : ""}\nChoose Your Therapist LLP${sig.phone ? ` | ${sig.phone}` : ""}${sig.email ? ` | ${sig.email}` : ""}\nwww.chooseyourtherapist.in\n\nIf this is not relevant, reply "no thanks" and we won't write again.`;
+  return `${message}\n\nAttached: ${fileName} (${q.number})${downloadUrl ? `\nDownload: ${downloadUrl}` : ""}\n\n${q.closing || "Yours sincerely,"}\n${sig.name || "Choose Your Therapist"}${sig.designation ? `\n${sig.designation}` : ""}\nChoose Your Therapist LLP${sig.phone ? ` | ${sig.phone}` : ""}${sig.email ? ` | ${sig.email}` : ""}\nwww.chooseyourtherapist.in\n\nIf this is not relevant, reply "no thanks" and we won't write again.`;
 };
 
 const sendTimes = new Map(); // adminId -> [timestamps within the last hour]
@@ -275,15 +289,24 @@ export const sendOfferLetter = expressAsyncHandler(async (req, res, next) => {
 
   const fileName = fileNameFor(doc);
   const content = await fs.promises.readFile(full);
+  // one-click download link for the recipient (the PDF is attached as well)
+  if (!doc.shareToken || !doc.shareTokenAt || Date.now() - doc.shareTokenAt.getTime() > SHARE_LINK_MAX_AGE_MS) {
+    doc.shareToken = crypto.randomBytes(24).toString("hex");
+    doc.shareTokenAt = new Date();
+  }
+  const downloadUrl = `${PUBLIC_API}/offer-letters/download/${doc.shareToken}/${encodeURIComponent(fileName)}`;
   const result = await sendMailAdvanced({
     to,
     cc,
     replyTo: REPLY_TO,
     subject,
-    text: buildEmailText({ message, q: doc, fileName }),
-    html: buildEmailHtml({ message, q: doc, fileName }),
+    text: buildEmailText({ message, q: doc, fileName, downloadUrl }),
+    html: buildEmailHtml({ message, q: doc, fileName, downloadUrl, hasLogo: !!LOGO_BUFFER }),
     fromName: "Choose Your Therapist",
-    attachments: [{ filename: fileName, content, contentType: "application/pdf" }],
+    attachments: [
+      { filename: fileName, content, contentType: "application/pdf" },
+      ...(LOGO_BUFFER ? [{ filename: "cyt-logo.png", content: LOGO_BUFFER, contentType: "image/png", cid: LOGO_CID, contentDisposition: "inline" }] : []),
+    ],
   });
 
   doc.emails.push({
@@ -300,4 +323,25 @@ export const sendOfferLetter = expressAsyncHandler(async (req, res, next) => {
 
   if (!result.success) { res.status(502); return next(new Error(`The email could not be sent: ${result.error}`)); }
   res.json({ status: true, message: isTest ? "Test email sent." : "Email sent.", data: doc });
+});
+
+/* GET /api/offer-letters/download/:token/:name — PUBLIC. The link in the email: one click downloads the PDF.
+   The token is 48 random hex characters; the trailing :name only makes the URL end in the file name. */
+export const downloadSharedOfferLetter = expressAsyncHandler(async (req, res) => {
+  const token = String(req.params.token || "");
+  const gone = (code, msg) => res.status(code).type("text/plain").send(msg);
+  if (!/^[a-f0-9]{48}$/.test(token)) return gone(404, "This link is not valid.");
+  const doc = await OfferLetter.findOne({ shareToken: token }).select("number pdfFile shareTokenAt recipient.business downloadCount");
+  if (!doc || !doc.pdfFile) return gone(404, "This link is not valid.");
+  if (!doc.shareTokenAt || Date.now() - doc.shareTokenAt.getTime() > SHARE_LINK_MAX_AGE_MS) {
+    return gone(410, "This download link has expired. Please ask us to send the letter again.");
+  }
+  const full = pdfPathFor(doc.pdfFile);
+  if (!fs.existsSync(full)) return gone(404, "The file is no longer available.");
+  await OfferLetter.updateOne({ _id: doc._id }, { $inc: { downloadCount: 1 }, $set: { lastDownloadedAt: new Date() } });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${fileNameFor(doc)}"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  fs.createReadStream(full).pipe(res);
 });

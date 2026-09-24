@@ -10,11 +10,16 @@ import {
   saveOfferLetterPdf,
   downloadOfferLetterPdf,
   sendOfferLetter,
+  downloadSharedOfferLetter,
 } from "../controllers/OfferLetterController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
+import { leadRateLimit } from "../middlewares/rateLimitMiddleware.js";
 
 const router = Router();
 const can = hasPermission("offerLetters");
+
+// The link inside the email — public by design (the token is the secret), so it is rate limited.
+router.get("/offer-letters/download/:token/:name", leadRateLimit, downloadSharedOfferLetter);
 
 router.get("/offer-letters", can, getOfferLetters);
 router.post("/offer-letters", can, createOfferLetter);

@@ -65,6 +65,11 @@ const offerLetterSchema = new Schema(
     emails: { type: [emailLogSchema], default: [] },
     pdfFile: { type: String, default: "" },
     pdfSavedAt: { type: Date },
+    // Unguessable link that goes in the email so the recipient can download the PDF with one click.
+    shareToken: { type: String, default: "", index: true },
+    shareTokenAt: { type: Date },
+    downloadCount: { type: Number, default: 0 }, // may include e-mail security scanners that pre-open links
+    lastDownloadedAt: { type: Date },
     createdBy: { type: Schema.Types.ObjectId, ref: "Admin" },
   },
   { timestamps: true }
