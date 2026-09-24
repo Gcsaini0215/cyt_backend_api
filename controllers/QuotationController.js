@@ -207,7 +207,7 @@ export const saveQuotationPdf = expressAsyncHandler(async (req, res, next) => {
 
 /* GET /api/quotations/:id/pdf — authenticated download of the saved PDF */
 export const downloadQuotationPdf = expressAsyncHandler(async (req, res, next) => {
-  const q = await Quotation.findById(req.params.id).select("number pdfFile").lean();
+  const q = await Quotation.findById(req.params.id).select("number pdfFile client.name").lean();
   if (!q || !q.pdfFile) {
     res.status(404);
     return next(new Error("No saved PDF for this quotation yet."));
@@ -218,7 +218,10 @@ export const downloadQuotationPdf = expressAsyncHandler(async (req, res, next) =
     return next(new Error("The saved PDF file is missing."));
   }
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${q.number}.pdf"`);
+  // same naming as the admin app: <Company>_Quotation_<Number>.pdf
+  const company = String(q.client?.name || "").replace(/&/g, " and ").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60).replace(/_+$/, "");
+  const fileName = `${company ? `${company}_` : ""}Quotation_${String(q.number).replace(/[^A-Za-z0-9._-]/g, "_")}.pdf`;
+  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
   res.setHeader("Cache-Control", "private, no-store");
   fs.createReadStream(full).pipe(res);
 });
