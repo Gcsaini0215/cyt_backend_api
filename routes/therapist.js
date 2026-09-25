@@ -25,7 +25,8 @@ import {
   deleteUser,
   getMyReviews,
 } from "../controllers/TherapistController.js";  
-import { upload } from "../services/fileUpload.js";  
+import { upload } from "../services/fileUpload.js";
+import { getTherapistStats } from "../controllers/TherapistStatsController.js";  
 const router = Router();  
   
 router.post(  
@@ -50,6 +51,7 @@ router.post(
 router.get("/get-availability-details", isTherapist, getAvailabilityDetails);  
   
 router.get("/get-therapists",hasPermission(["therapists","bdm"]), getTherapists);
+router.get("/therapist-stats", hasPermission("therapists"), getTherapistStats);
 
 router.get("/toggle-to-show-to-page/:therapistId",hasPermission("therapists"), ShowToPage);
 
