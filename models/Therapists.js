@@ -94,6 +94,22 @@ const TherapistSchema = new Schema(
     id_card: { type: String, default: null },
     id_card_type: { type: String, default: null },
 
+    // Admin review of a new application (documents + About)
+    // In-person practice location (asked at registration for In-Person / Both)
+    office_pincode: { type: String, default: "" },
+    office_city: { type: String, default: "" },
+    office_state: { type: String, default: "" },
+    office_location: { lat: { type: Number, default: null }, lng: { type: Number, default: null } },
+
+    verification_status: { type: String, enum: ["pending", "approved", "rejected", "reupload"], default: "pending" },
+    verification_note: { type: String, default: "" },          // reject reason / what to re-upload
+    verification_checklist: { type: Object, default: {} },     // { id_matches, degree_valid, docs_clear, about_ok }
+    reupload_docs: { type: [String], default: [] },            // resume | qualification_certificate | id_card
+    reupload_token_hash: { type: String, default: null },      // sha256 of the emailed link token
+    reupload_expires: { type: Date, default: null },
+    verified_by: { type: Schema.Types.ObjectId, ref: "Admin", default: null },
+    verified_at: { type: Date, default: null },
+
     subscription_plan: { type: String, default: null },
     subscription_amount: { type: Number, default: null },
     subscription_started_at: { type: Date, default: null },

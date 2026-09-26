@@ -25,7 +25,14 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
     const registerSchema = Joi.object({
       name: Joi.string().min(3).max(30).required(),
       type: Joi.string().required(),
-      serve: Joi.string().required(),
+      serve: Joi.string().allow("").optional(),
+      about: Joi.string().allow("").max(3000).optional(),
+      officeAddress: Joi.string().allow("").max(400).optional(),
+      officePincode: Joi.string().allow("").pattern(/^\d{6}$/).optional(),
+      officeCity: Joi.string().allow("").max(80).optional(),
+      officeState: Joi.string().allow("").max(80).optional(),
+      officeLat: Joi.number().min(-90).max(90).optional(),
+      officeLng: Joi.number().min(-180).max(180).optional(),
       email: Joi.string().email().required(),
       mode: Joi.number().required(),
       idCardType: Joi.string().required(),
@@ -49,8 +56,38 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
         res.status(400);
         return next(new Error(error));
       }
-      const { phone, name, type, mode, serve, idCardType } = req.body;
+      const { phone, name, type, mode, idCardType } = req.body;
+      const serve = req.body.serve || "";
       const email = req.body.email.toLowerCase();
+
+      // "About you" from the form becomes the profile bio (plain text — never HTML)
+      const about = String(req.body.about || "").replace(/<[^>]*>/g, "").replace(/[ \t]+/g, " ").trim();
+      const aboutWords = about ? about.split(/\s+/).length : 0;
+      if (about && (aboutWords < 50 || aboutWords > 250)) {
+        res.status(400);
+        return next(new Error("Please write between 50 and 250 words about yourself."));
+      }
+
+      // In-person / both: where they practise (address + PIN + map pin)
+      const inPerson = String(mode) === "2" || String(mode) === "3";
+      const clean = (v) => String(v || "").replace(/<[^>]*>/g, "").trim();
+      const office = {};
+      if (req.body.officeAddress !== undefined || req.body.officePincode !== undefined) {
+        const addr = clean(req.body.officeAddress);
+        const pin = clean(req.body.officePincode);
+        if (inPerson && (addr.length < 10 || !/^\d{6}$/.test(pin))) {
+          res.status(400);
+          return next(new Error("Please add your full practice address with a 6-digit PIN code."));
+        }
+        const lat = Number(req.body.officeLat), lng = Number(req.body.officeLng);
+        Object.assign(office, {
+          office_address: addr,
+          office_pincode: pin,
+          office_city: clean(req.body.officeCity),
+          office_state: clean(req.body.officeState),
+          ...(req.body.officeLat !== undefined && Number.isFinite(lat) && Number.isFinite(lng) ? { office_location: { lat, lng } } : {}),
+        });
+      }
       const userExists = await Users.findOne({ email });
 
       if (userExists && userExists.is_verified === 1) {
@@ -74,6 +111,7 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
           otp_count: (userExists.otp_count || 0) + 1,
           name,
           phone: phone.toString(),
+          ...(about ? { bio: about } : {}),
         });
 
         await Therapists.findOneAndUpdate(
@@ -83,6 +121,11 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
             qualification_certificate: qualificationCertificateUrl,
             id_card: idCardUrl,
             id_card_type: idCardType,
+            ...office,
+            verification_status: "pending",
+            verification_note: "",
+            reupload_docs: [],
+            reupload_token_hash: null,
           },
           { upsert: true }
         );
@@ -100,7 +143,8 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
           otp: otp.toString(),
           otp_count: 1,
           is_verified: 0,
-          role: 1
+          role: 1,
+          ...(about ? { bio: about } : {}),
         }], { session });
 
         await Therapists.create([{
@@ -113,6 +157,7 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
           qualification_certificate: qualificationCertificateUrl,
           id_card: idCardUrl,
           id_card_type: idCardType,
+          ...office,
           profile_code: generateProfileCode()
         }], { session });
 
@@ -299,6 +344,10 @@ export const aproveTherapist = expressAsyncHandler(async (req, res, next) => {
       userId,
       { is_verified, is_mail_sent },
       { new: true }
+    );
+    await Therapists.updateOne(
+      { user: userId },
+      { verification_status: "approved", verification_note: "", reupload_docs: [], reupload_token_hash: null, verified_by: req.user?._id || null, verified_at: new Date() }
     );
 
     res.status(201).json({

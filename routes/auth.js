@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { saveVerificationChecklist, rejectTherapistApplication, requestTherapistReupload, getReuploadRequest, submitReupload } from "../controllers/TherapistVerificationController.js";
 import { isSuperAdmin, hasPermission } from "../middlewares/authMiddleware.js";
 import {
   leadRateLimit,
@@ -60,6 +61,22 @@ router.post(
 );
 
 router.get("/aprove-therapist/:userId",hasPermission("therapists"), aproveTherapist);
+
+// Admin review of applications + the therapist's one-time re-upload link
+router.patch("/therapist-verification/:id/checklist", hasPermission("therapists"), saveVerificationChecklist);
+router.post("/therapist-verification/:id/reject", hasPermission("therapists"), rejectTherapistApplication);
+router.post("/therapist-verification/:id/reupload", hasPermission("therapists"), requestTherapistReupload);
+router.get("/therapist-reupload/:token", leadRateLimit, getReuploadRequest);
+router.post(
+  "/therapist-reupload/:token",
+  leadRateLimit,
+  uploadTherapistDocuments.fields([
+    { name: "resume", maxCount: 1 },
+    { name: "qualification_certificate", maxCount: 1 },
+    { name: "id_card", maxCount: 1 },
+  ]),
+  submitReupload
+);
 
 router.get("/send-aprove-mail/:userId", sendAproveMail); 
 

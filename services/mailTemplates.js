@@ -430,6 +430,32 @@ export const therapistApprovedMail = ({ name, email }) =>
       note(`Any issues or questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
   });
 
+export const therapistApplicationRejectedMail = ({ name, reason }) =>
+  shell({
+    preheader: "An update on your CYT therapist application",
+    body:
+      eyebrow("Application update", STOP) +
+      heading(`Hi${name ? " " + esc(name) : ""}, we couldn't approve your application`) +
+      para("Thank you for applying to join Choose Your Therapist. After reviewing your application and documents, we're unable to approve it at this time.") +
+      (reason ? kvTable([["Reason", esc(reason), true]]) : "") +
+      para("If you think this is a mistake, or you can share updated documents, just reply to this email or apply again.") +
+      button("Apply again", `${BRAND.site}/therapist-registration`) +
+      note(`Questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
+  });
+
+export const therapistReuploadMail = ({ name, docs = [], note: msg, link }) =>
+  shell({
+    preheader: "Please re-upload a document for your CYT application",
+    body:
+      eyebrow("Action needed", WARN) +
+      heading(`Hi${name ? " " + esc(name) : ""}, one more step`) +
+      para("We're reviewing your therapist application and need a clearer or updated copy of the following:") +
+      kvTable(docs.map((d) => [esc(d), "Please upload again", true])) +
+      (msg ? para(`<strong>Note from our team:</strong> ${esc(msg)}`) : "") +
+      button("Upload documents", link) +
+      note("This link is valid for 7 days and only works for your application."),
+  });
+
 export const welcomeCredentialsMail = ({ name, email }) =>
   shell({
     preheader: `Welcome to ${BRAND.name}`,
