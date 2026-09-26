@@ -54,9 +54,10 @@ import {
   deleteClientCredit,
 } from "../controllers/NoidaClientCreditController.js";
 import { pingNoidaPresence, getNoidaPresence } from "../controllers/NoidaPresenceController.js";
+import { createExitFeedback, getExitFeedback, updateExitFeedback, deleteExitFeedback } from "../controllers/NoidaExitFeedbackController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
 import { hideRevenueForTeam } from "../middlewares/hideRevenueMiddleware.js";
-import { leadRateLimit, phoneLookupRateLimit, pollingRateLimit, lastMinuteRequestRateLimit } from "../middlewares/rateLimitMiddleware.js";
+import { leadRateLimit, phoneLookupRateLimit, pollingRateLimit, lastMinuteRequestRateLimit, exitFeedbackRateLimit } from "../middlewares/rateLimitMiddleware.js";
 
 const router = Router();
 
@@ -85,6 +86,11 @@ router.get("/noida-appointments/summary", hasPermission("noidaCenter"), hideReve
 // Live visitors on the public booking page: visitors ping (public), reception reads the counts.
 router.post("/noida-appointments/presence", pollingRateLimit, pingNoidaPresence);
 router.get("/noida-appointments/presence", hasPermission("noidaCenter"), getNoidaPresence);
+// "Why are you leaving?" popup on the public booking page: visitors post (public), the admin reviews/follows up.
+router.post("/noida-appointments/exit-feedback", exitFeedbackRateLimit, createExitFeedback);
+router.get("/noida-exit-feedback", hasPermission("noidaCenter"), getExitFeedback);
+router.patch("/noida-exit-feedback/:id", hasPermission("noidaCenter"), updateExitFeedback);
+router.delete("/noida-exit-feedback/:id", hasPermission("noidaCenter"), deleteExitFeedback);
 router.get("/noida-appointments/export", hasPermission("noidaCenter"), hideRevenueForTeam, exportNoidaAppointments);
 router.get("/noida-appointments/payment-problems", hasPermission("noidaCenter"), hideRevenueForTeam, getPaymentProblems);
 router.post("/noida-appointments/payment-problems/:id/retry", hasPermission("noidaCenter"), hideRevenueForTeam, retryPaymentProblem);

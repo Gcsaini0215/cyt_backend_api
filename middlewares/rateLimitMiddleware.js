@@ -88,3 +88,15 @@ export const pollingRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+// "Why are you leaving?" answers from the public Noida booking page — one per visit
+// is normal, so a small per-IP cap keeps the admin list free of spam.
+export const exitFeedbackRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10, // 10 answers per IP per hour
+  message: {
+    status: false,
+    message: "Too many requests. Please try again later.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
