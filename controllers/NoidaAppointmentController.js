@@ -37,7 +37,7 @@ function priceFieldFor(sessionMode, format) {
 
 // Single source of truth for what a booking costs — never trust a client-supplied
 // amount. Returns { baseAmount, platformFee, totalAmount, packageName }.
-export async function computeBookingAmount({ sessionMode, format, packageId, customSessions, couponCode, phone, lockedDiscount }) {
+export async function computeBookingAmount({ sessionMode, format, packageId, customSessions, couponCode, phone, lockedDiscount, date, slot }) {
   const pricing = await getOrCreatePricing();
   let baseAmount;
   let packageName = "";
@@ -79,9 +79,9 @@ export async function computeBookingAmount({ sessionMode, format, packageId, cus
       discountAmount = Math.min(Math.floor(lockedDiscount), baseAmount);
       appliedCode = normalizeCouponCode(couponCode);
     } else {
-      const r = await resolveCoupon({ code: couponCode, phone, baseAmount, isPackage: sessionMode === "package" });
+      const r = await resolveCoupon({ code: couponCode, phone, baseAmount, isPackage: sessionMode === "package", date, slot });
       discountAmount = r.discountAmount;
-      appliedCode = r.coupon.code;
+      appliedCode = r.appliedCode;
     }
   }
 
@@ -694,7 +694,7 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
       res.status(400);
       return next(new Error("That therapist isn't available for booking right now. Please pick another or choose no preference."));
     }
-    const { baseAmount, platformFee, totalAmount, packageName, discountAmount, couponCode: appliedCoupon } = await computeBookingAmount({ sessionMode, format, packageId, customSessions, couponCode, phone });
+    const { baseAmount, platformFee, totalAmount, packageName, discountAmount, couponCode: appliedCoupon } = await computeBookingAmount({ sessionMode, format, packageId, customSessions, couponCode, phone, date, slot });
 
     const razorpay = getRazorpayInstance();
     const order = await razorpay.orders.create({
@@ -795,7 +795,7 @@ async function finalizeNoidaBooking({
   } else {
     // Recomputed fresh (never trusts a client-sent amount) — matches what the
     // order was created for, since both calls read the same live pricing.
-    const computed = await computeBookingAmount({ sessionMode, format, packageId, customSessions, couponCode, phone, lockedDiscount });
+    const computed = await computeBookingAmount({ sessionMode, format, packageId, customSessions, couponCode, phone, lockedDiscount, date, slot });
     discountAmount = computed.discountAmount;
     appliedCoupon = computed.couponCode;
     sessionsCount = computed.sessionsCount;

@@ -430,6 +430,24 @@ export const therapistApprovedMail = ({ name, email }) =>
       note(`Any issues or questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
   });
 
+export const noidaOfferCodeMail = ({ name, code, offer }) =>
+  shell({
+    preheader: `Your code ${code} — ${offer.discount}`,
+    body:
+      eyebrow("Your offer code", OK) +
+      heading(`Hi${name ? " " + esc(name) : ""}, here's your ${esc(offer.discount)} code`) +
+      para(esc(offer.title) + ". Use this code when you book at our Noida centre.") +
+      `<div style="margin:18px 0;padding:16px;border:2px dashed ${BRAND.green};border-radius:12px;text-align:center;font-family:Arial,sans-serif;font-size:24px;font-weight:800;letter-spacing:2px;color:${BRAND.green};">${esc(code)}</div>` +
+      kvTable([
+        offer.window && ["Valid for", esc(offer.window)],
+        ["Applies to", offer.appliesTo === "package" ? "Packages" : offer.appliesTo === "session" ? "Single sessions" : "Sessions &amp; packages"],
+        offer.validUntil && ["Book by", esc(offer.validUntil)],
+        ["Note", "Works once, with the phone number you claimed it with."],
+      ]) +
+      button("Book a session", "https://www.chooseyourtherapist.in/noida-appointment") +
+      note("Enter the code in the Coupon box before paying."),
+  });
+
 export const therapistAvailabilityReminderMail = ({ name, hasHours, freeCount, sample = [], link, unsubscribe }) =>
   shell({
     preheader: hasHours ? `${freeCount} of your session slots are still open` : "Set your session timings so clients can book you",

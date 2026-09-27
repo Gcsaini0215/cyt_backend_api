@@ -16,6 +16,16 @@ const noidaCouponSchema = new Schema({
   perPhoneLimit: { type: Number, default: 1, min: 0 },       // uses per client phone; 0 = unlimited
   validFrom:     { type: String, default: "" },              // "YYYY-MM-DD" (IST), empty = from now
   validUntil:    { type: String, default: "" },              // "YYYY-MM-DD" (IST), empty = no end
+  // only for sessions on these weekdays (0 = Sun … 6 = Sat, center time); empty = any day
+  days:          { type: [Number], default: [] },
+  // only for sessions starting in this window ("HH:MM", 24h, center time); empty = any time
+  timeFrom:      { type: String, default: "" },
+  timeTo:        { type: String, default: "" },
+  // shown as an offer on the public booking page, where people claim a personal code
+  isPublic:      { type: Boolean, default: false },
+  publicTitle:   { type: String, default: "" },
+  // when true the main code itself can't be typed in — only personal claimed codes work
+  claimOnly:     { type: Boolean, default: true },
   active:        { type: Boolean, default: true },
   note:          { type: String, default: "" },
 }, { timestamps: true });
