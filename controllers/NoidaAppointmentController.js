@@ -1519,10 +1519,14 @@ function buildAppointmentFilter(q) {
   if (q.attendance === "none") filter.attendance = { $in: ["", null] };
   else if (["arrived", "completed", "no_show"].includes(q.attendance)) filter.attendance = q.attendance;
 
+  if (q.coupon === "any") filter.couponCode = { $nin: ["", null] };
+  else if (q.coupon === "none") filter.couponCode = { $in: ["", null] };
+
   const term = String(q.search || "").trim().slice(0, 60);
   if (term) {
     const rx = new RegExp(escapeRegex(term), "i");
-    filter.$or = [{ name: rx }, { phone: rx }, { email: rx }, { clientCode: rx }];
+    // coupon code too, so typing an offer's main code (e.g. FRIDAY4ME) lists every booking made with it
+    filter.$or = [{ name: rx }, { phone: rx }, { email: rx }, { clientCode: rx }, { couponCode: rx }];
   }
 
   const sort = q.when === "upcoming" ? { date: 1, slot: 1 } : { date: -1, slot: 1 };
