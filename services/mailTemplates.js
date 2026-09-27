@@ -430,6 +430,20 @@ export const therapistApprovedMail = ({ name, email }) =>
       note(`Any issues or questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
   });
 
+export const therapistAvailabilityReminderMail = ({ name, hasHours, freeCount, sample = [], link, unsubscribe }) =>
+  shell({
+    preheader: hasHours ? `${freeCount} of your session slots are still open` : "Set your session timings so clients can book you",
+    body:
+      eyebrow(hasHours ? "Open slots" : "Timings needed", WARN) +
+      heading(hasHours ? `Hi${name ? " " + esc(name) : ""}, you have ${freeCount} open slots` : `Hi${name ? " " + esc(name) : ""}, set your timings`) +
+      para(hasHours
+        ? "These sessions in the next 3 days are still free. If your plans have changed, update your timings so clients only see hours you can actually take."
+        : "You haven't set your weekly hours yet, so clients can't book a session with you. It takes a minute — tap the hours you're available.") +
+      (sample.length ? kvTable([["Still open", esc(sample.join(" · "))]]) : "") +
+      button(hasHours ? "Review my timings" : "Set my timings", link) +
+      note(`Don't want these reminders? <a href="${unsubscribe}" style="color:${BRAND.green};">Stop availability reminders</a>.`),
+  });
+
 export const therapistApplicationRejectedMail = ({ name, reason }) =>
   shell({
     preheader: "An update on your CYT therapist application",

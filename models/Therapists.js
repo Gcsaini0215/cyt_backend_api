@@ -101,6 +101,10 @@ const TherapistSchema = new Schema(
     office_state: { type: String, default: "" },
     office_location: { lat: { type: Number, default: null }, lng: { type: Number, default: null } },
 
+    // "slots are empty — update your timings" reminder emails
+    availability_reminder_last_at: { type: Date, default: null },
+    availability_reminders_off: { type: Boolean, default: false },
+
     verification_status: { type: String, enum: ["pending", "approved", "rejected", "reupload"], default: "pending" },
     verification_note: { type: String, default: "" },          // reject reason / what to re-upload
     verification_checklist: { type: Object, default: {} },     // { id_matches, degree_valid, docs_clear, about_ok }
