@@ -245,24 +245,29 @@ export const claimOffer = expressAsyncHandler(async (req, res) => {
   const coupon = await NoidaCoupon.findOne({ _id: req.params.id, ...liveOfferFilter() });
   if (!coupon) return res.status(404).json({ status: false, message: "This offer has ended." });
 
-  // one personal code per phone per offer — a repeat claim just gets the same code again
+  // one claim per phone per offer — a repeat claim just gets the same code again.
+  // "Personal codes only" offers hand out a unique one-time code; otherwise everyone gets the
+  // main code itself (the claim row still records the lead, keyed by an internal code).
+  const shared = !coupon.claimOnly;
   let claim = await NoidaCouponClaim.findOne({ coupon: coupon._id, phone });
   const isNew = !claim;
   if (!claim) {
     for (let i = 0; i < 5 && !claim; i++) {
       try {
-        claim = await NoidaCouponClaim.create({ coupon: coupon._id, code: makeCode(coupon.code), name, phone, email, ip: req.ip || "" });
+        const code = shared ? `${coupon.code}~${phone}` : makeCode(coupon.code);
+        claim = await NoidaCouponClaim.create({ coupon: coupon._id, code, name, phone, email, ip: req.ip || "" });
       } catch (e) { if (e?.code !== 11000) throw e; }
     }
     if (!claim) return res.status(500).json({ status: false, message: "Could not create your code. Please try again." });
   }
+  const givenCode = shared ? coupon.code : claim.code;
 
   const offer = publicOffer(coupon);
   const sent = await sendMail(
     email,
     `Your ${offer.discount} code for Choose Your Therapist Noida`,
-    `Your code: ${claim.code} — ${offer.title}. Book at https://www.chooseyourtherapist.in/noida-appointment`,
-    noidaOfferCodeMail({ name, code: claim.code, offer }),
+    `Your code: ${givenCode} — ${offer.title}. Book at https://www.chooseyourtherapist.in/noida-appointment`,
+    noidaOfferCodeMail({ name, code: givenCode, offer, personal: !shared }),
   ).catch(() => false);
   if (sent && !claim.emailed) { claim.emailed = true; await claim.save(); }
 
@@ -272,18 +277,28 @@ export const claimOffer = expressAsyncHandler(async (req, res) => {
       concern: `Claimed offer: ${offer.title}`,
       source: "Noida Offer",
       location: "Noida",
-      message: `Code ${claim.code} · ${offer.discount}${offer.window ? ` · ${offer.window}` : ""}`,
-      data: { offerId: String(coupon._id), code: claim.code },
+      message: `Code ${givenCode} · ${offer.discount}${offer.window ? ` · ${offer.window}` : ""}`,
+      data: { offerId: String(coupon._id), code: givenCode },
     }).catch(() => {});
   }
 
-  res.json({ status: true, data: { code: claim.code, emailed: !!sent, offer } });
+  res.json({ status: true, data: { code: givenCode, emailed: !!sent, offer } });
 });
 
 // GET /noida-coupons/:id/claims — admin: who claimed an offer and whether they booked
 export const getOfferClaims = expressAsyncHandler(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid coupon ID." });
+  const coupon = await NoidaCoupon.findById(req.params.id, "code").lean();
   const claims = await NoidaCouponClaim.find({ coupon: req.params.id }).sort({ createdAt: -1 }).limit(500).lean();
-  const booked = new Set(await NoidaAppointment.distinct("couponCode", { couponCode: { $in: claims.map((c) => c.code) }, status: "confirmed" }));
-  res.json({ status: true, data: claims.map((c) => ({ ...c, booked: booked.has(c.code) })) });
+  const appts = await NoidaAppointment.find(
+    { couponCode: { $in: [...claims.map((c) => c.code), coupon?.code].filter(Boolean) }, status: "confirmed" }, "couponCode phone",
+  ).lean();
+  const bookedBy = new Set(appts.map((a) => (a.couponCode === coupon?.code ? `main|${a.phone}` : a.couponCode)));
+  res.json({
+    status: true,
+    data: claims.map((c) => {
+      const shared = c.code.includes("~");
+      return { ...c, code: shared ? coupon?.code || c.code : c.code, booked: shared ? bookedBy.has(`main|${c.phone}`) : bookedBy.has(c.code) };
+    }),
+  });
 });

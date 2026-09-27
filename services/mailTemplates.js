@@ -430,7 +430,7 @@ export const therapistApprovedMail = ({ name, email }) =>
       note(`Any issues or questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
   });
 
-export const noidaOfferCodeMail = ({ name, code, offer }) =>
+export const noidaOfferCodeMail = ({ name, code, offer, personal = true }) =>
   shell({
     preheader: `Your code ${code} — ${offer.discount}`,
     body:
@@ -442,7 +442,7 @@ export const noidaOfferCodeMail = ({ name, code, offer }) =>
         offer.window && ["Valid for", esc(offer.window)],
         ["Applies to", offer.appliesTo === "package" ? "Packages" : offer.appliesTo === "session" ? "Single sessions" : "Sessions &amp; packages"],
         offer.validUntil && ["Book by", esc(offer.validUntil)],
-        ["Note", "Works once, with the phone number you claimed it with."],
+        personal && ["Note", "Works once, with the phone number you claimed it with."],
       ]) +
       button("Book a session", "https://www.chooseyourtherapist.in/noida-appointment") +
       note("Enter the code in the Coupon box before paying."),

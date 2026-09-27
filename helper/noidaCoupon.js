@@ -21,7 +21,7 @@ export function calcDiscount(coupon, baseAmount) {
 const couponError = (message) => { const e = new Error(message); e.status = 400; return e; };
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const hhmmToMin = (v) => { const [h, m] = String(v || "").split(":").map(Number); return Number.isFinite(h) ? h * 60 + (m || 0) : null; };
+const hhmmToMin = (v) => { if (!v || !/^\d{1,2}:\d{2}$/.test(String(v))) return null; const [h, m] = String(v).split(":").map(Number); return h * 60 + m; };
 const minToLabel = (m) => `${Math.floor(m / 60) % 12 || 12}:${String(m % 60).padStart(2, "0")} ${m < 720 ? "AM" : "PM"}`;
 function slotStart(slot) {
   const [time, ampm] = String(slot || "").split(" - ")[0].trim().split(" ");
