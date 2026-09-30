@@ -15,9 +15,10 @@ export function addStaffClient(res, adminId, manager) {
 
 // scope: what changed ("attendance" | "tasks" | "notices" | "settings");
 // adminIds: staff members it concerns (null = everyone). Managers always hear about every change.
-export function emitStaff(scope, adminIds = null) {
+// data: optional small payload shown to the admin (e.g. the new therapist's name for the alert banner)
+export function emitStaff(scope, adminIds = null, data = null) {
   const ids = adminIds ? new Set(adminIds.map(String)) : null;
-  const payload = `event: changed\ndata: ${JSON.stringify({ scope, at: Date.now() })}\n\n`;
+  const payload = `event: changed\ndata: ${JSON.stringify({ scope, at: Date.now(), ...(data ? { data } : {}) })}\n\n`;
   for (const c of clients) {
     if (!c.manager && ids && !ids.has(c.adminId)) continue;
     try { c.res.write(payload); } catch { clients.delete(c); }

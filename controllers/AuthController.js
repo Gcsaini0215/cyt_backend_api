@@ -8,6 +8,7 @@ import Users from "../models/Users.js";
 import Admin from "../models/Admin.js";
 import Role from "../models/Role.js";
 import Therapists from "../models/Therapists.js";
+import { emitStaff } from "../services/staffEvents.js";
 import { sendMail } from "../helper/mailer.js";
 import { getTimeDifferenceInSeconds } from "../helper/time.js";
 import { generate6DigitOTP, generateProfileCode } from "../helper/generate.js";
@@ -688,9 +689,18 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
     if (user) {
       console.log(`[verifyOtp] email=${email} | match=${user.otp?.toString() === otp?.toString()}`);
       if (user.otp?.toString() === otp?.toString()) {
+        const newTherapist = !isAdminUser && user.role === 1 && user.is_verified === 0;
         user.otp = "";
         user.otp_count = 0;
         await user.save();
+        if (newTherapist) {
+          // live alert in the admin panel: a new therapist has just finished signing up
+          Therapists.findOne({ user: user._id }).select("profile_type").lean().then((t) => {
+            emitStaff("therapist-registered", null, {
+              id: t?._id || user._id, name: user.name, type: t?.profile_type || "", state: user.state || "", at: Date.now(),
+            });
+          }).catch(() => {});
+        }
         let permissions = null;
         if (isAdminUser && user.roleId) {
           const role = await Role.findById(user.roleId).select("permissions");
