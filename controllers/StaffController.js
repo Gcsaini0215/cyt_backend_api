@@ -15,11 +15,12 @@ import StaffTask from "../models/StaffTask.js";
 import StaffNotice from "../models/StaffNotice.js";
 import StaffSetting from "../models/StaffSetting.js";
 import StaffLeave from "../models/StaffLeave.js";
+import StaffWfh from "../models/StaffWfh.js";
 import NoidaAppointment from "../models/NoidaAppointment.js";
 import LeadActivity from "../models/LeadActivity.js";
 import { addStaffClient, emitStaff } from "../services/staffEvents.js";
 import { sendMail } from "../helper/mailer.js";
-import { staffTaskMail, staffNoticeMail, staffLeaveRequestMail, staffLeaveDecisionMail } from "../services/mailTemplates.js";
+import { staffTaskMail, staffNoticeMail, staffLeaveRequestMail, staffLeaveDecisionMail, staffWfhRequestMail, staffWfhDecisionMail } from "../services/mailTemplates.js";
 
 /* ── IST helpers ───────────────────────────────────────────────────────── */
 const IST_MS = 330 * 60000;
@@ -45,6 +46,67 @@ const datesBetween = (from, to, skipSundays = false) => {
   for (let d = from, i = 0; d <= to && i < 400; d = addDays(d, 1), i++) if (!skipSundays || !isSunday(d)) out.push(d);
   return out;
 };
+
+/* ── where people work ─────────────────────────────────────────────────── */
+const cleanIp = (ip) => String(ip || "").replace(/^::ffff:/, "");
+// metres between two lat/lng points
+function distanceM(a, b) {
+  const R = 6371000, rad = (d) => (d * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return Math.round(2 * R * Math.asin(Math.sqrt(h)));
+}
+const officeConfigured = (s) => (s.office?.lat != null && s.office?.lng != null) || (s.officeIps || []).length > 0;
+const weekday = (date) => { const [y, m, d] = date.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); };
+function modeOf(s, adminId) {
+  const m = (s.modes || []).find((x) => String(x.admin) === String(adminId));
+  return { mode: m?.mode || "office", wfhDays: m?.wfhDays || [] };
+}
+// may this person work from anywhere on `date`? (WFH mode, a hybrid WFH weekday, or an approved WFH request)
+async function wfhAllowed(s, adminId, date) {
+  const { mode, wfhDays } = modeOf(s, adminId);
+  if (mode === "wfh") return { ok: true, why: "wfh" };
+  if (mode === "hybrid" && wfhDays.includes(weekday(date))) return { ok: true, why: "hybrid" };
+  if (await StaffWfh.exists({ admin: adminId, date, status: "approved" })) return { ok: true, why: "request" };
+  return { ok: false, why: "" };
+}
+// is this request coming from the office? by office network, or by location within the radius
+function atOffice(s, ip, loc) {
+  const byIp = (s.officeIps || []).includes(cleanIp(ip));
+  let distance = null;
+  if (loc && s.office?.lat != null && s.office?.lng != null) distance = distanceM(loc, s.office);
+  // allow for the phone's own uncertainty, up to 100 m
+  const byLoc = distance != null && distance - Math.min(loc.acc || 0, 100) <= (s.office.radius || 200);
+  return { inOffice: byIp || byLoc, byIp, distance };
+}
+function readLoc(body) {
+  const lat = Number(body?.lat), lng = Number(body?.lng), acc = Number(body?.acc);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6, acc: Number.isFinite(acc) ? Math.round(acc) : null };
+}
+const wfhOut = (w) => ({
+  id: w._id, date: w.date, reason: w.reason, status: w.status, decisionNote: w.decisionNote, decidedAt: w.decidedAt, createdAt: w.createdAt,
+  decidedBy: w.decidedBy?.name || "",
+  admin: w.admin?._id ? { id: w.admin._id, name: w.admin.name, role: w.admin.roleId?.name || "" } : w.admin,
+});
+
+// Forgot to check out? Two hours after the shift ends the day is closed at the shift end time and flagged.
+export async function autoCheckOut() {
+  const s = await getSettings();
+  const open = await StaffAttendance.find({ checkIn: { $ne: null }, checkOut: null });
+  const touched = [];
+  for (const row of open) {
+    const end = istToDate(row.date, s.endTime);
+    if (Date.now() < end.getTime() + 2 * 3600000) continue;
+    row.checkOut = row.checkIn > end ? row.checkIn : end;
+    row.autoOut = true;
+    row.earlyMinutes = 0;
+    await row.save();
+    touched.push(row.admin);
+  }
+  if (touched.length) emitStaff("attendance", touched);
+}
+setInterval(() => { if (mongoose.connection.readyState === 1) autoCheckOut().catch((e) => console.error("auto check-out:", e?.message)); }, 10 * 60000).unref();
 
 /* ── email (fire and forget: a slow or failed mail never blocks the action) ── */
 function mailEach(people, subject, build) {
@@ -197,7 +259,7 @@ export const getMyDay = expressAsyncHandler(async (req, res) => {
   const settings = await getSettings();
   const nowUtc = new Date();
 
-  const [monthRows, tasks, notices, perfToday, perfWeek, perfMonth, myLeaves, leaveDays] = await Promise.all([
+  const [monthRows, tasks, notices, perfToday, perfWeek, perfMonth, myLeaves, leaveDays, myWfh, wfhToday] = await Promise.all([
     StaffAttendance.find({ admin: admin._id, date: { $gte: monthStartDate(month), $lte: today } }).sort({ date: 1 }).lean(),
     StaffTask.find({ assignee: admin._id, $or: [{ status: "open" }, { doneAt: { $gte: new Date(Date.now() - 36 * 3600000) } }] })
       .populate("createdBy", "name").lean(),
@@ -207,8 +269,11 @@ export const getMyDay = expressAsyncHandler(async (req, res) => {
     perfFor([admin._id], dayStart(monthStartDate(month)), nowUtc),
     StaffLeave.find({ admin: admin._id, to: { $gte: addDays(today, -60) } }).sort({ from: -1 }).limit(20).populate("decidedBy", "name").lean(),
     approvedLeaveDays([admin._id], monthStartDate(month), addDays(nextMonthStart(month), -1)),
+    StaffWfh.find({ admin: admin._id, date: { $gte: addDays(today, -30) } }).sort({ date: -1 }).limit(15).populate("decidedBy", "name").lean(),
+    wfhAllowed(settings, admin._id, today),
   ]);
   const todayRow = monthRows.find((r) => r.date === today) || null;
+  const work = modeOf(settings, admin._id);
   const target = settings.targets.find((t) => String(t.admin) === String(admin._id) && t.month === month) || null;
   const pick = (p) => (isSuper ? p[String(admin._id)] : noMoney(p[String(admin._id)]));
 
@@ -218,7 +283,15 @@ export const getMyDay = expressAsyncHandler(async (req, res) => {
       me: { id: admin._id, name: admin.name, designation: admin.designation || "", isSuper, canManage, joined: admin.createdAt ? istDate(admin.createdAt) : "" },
       settings: { startTime: settings.startTime, endTime: settings.endTime, graceMinutes: settings.graceMinutes },
       serverNow: nowUtc.toISOString(),
-      today: todayRow && { date: todayRow.date, checkIn: todayRow.checkIn, checkOut: todayRow.checkOut, lateMinutes: todayRow.lateMinutes },
+      today: todayRow && {
+        date: todayRow.date, checkIn: todayRow.checkIn, checkOut: todayRow.checkOut, lateMinutes: todayRow.lateMinutes,
+        inPlace: todayRow.inPlace, outPlace: todayRow.outPlace, earlyMinutes: todayRow.earlyMinutes, autoOut: todayRow.autoOut,
+      },
+      work: {
+        mode: work.mode, wfhDays: work.wfhDays, wfhToday: wfhToday.ok, wfhWhy: wfhToday.why,
+        officeCheck: settings.enforceOffice && officeConfigured(settings), // must check in from the office unless WFH today
+      },
+      wfh: myWfh.map(wfhOut),
       month: {
         month,
         present: monthRows.filter((r) => r.checkIn).length,
@@ -241,16 +314,36 @@ export const getMyDay = expressAsyncHandler(async (req, res) => {
 });
 
 // POST /api/staff/check-in
+// body: { lat, lng, acc } from the browser's location (optional unless the office check is on)
 export const checkIn = expressAsyncHandler(async (req, res) => {
   const { admin } = req.staff;
   const today = istDate();
   const settings = await getSettings();
   const existing = await StaffAttendance.findOne({ admin: admin._id, date: today });
   if (existing?.checkIn) return res.json({ status: true, data: existing, message: "Already checked in" });
+  const loc = readLoc(req.body);
+  const wfh = await wfhAllowed(settings, admin._id, today);
+  const where = atOffice(settings, req.ip, loc);
+  const configured = officeConfigured(settings);
+  if (settings.enforceOffice && configured && !wfh.ok && !where.inOffice) {
+    const hasOfficeLoc = settings.office?.lat != null;
+    return res.status(403).json({
+      status: false,
+      code: !loc && hasOfficeLoc ? "LOCATION_NEEDED" : "NOT_AT_OFFICE",
+      distance: where.distance,
+      message: !loc && hasOfficeLoc
+        ? "Allow location access so we can confirm you're at the office."
+        : `You're not at the office${where.distance != null ? ` (about ${where.distance >= 1000 ? `${(where.distance / 1000).toFixed(1)} km` : `${where.distance} m`} away)` : ""}. Check in from the office, or request work from home for today.`,
+    });
+  }
   const now = new Date();
+  const place = where.inOffice ? "office" : wfh.ok ? "wfh" : configured ? "outside" : "unknown";
   const row = await StaffAttendance.findOneAndUpdate(
     { admin: admin._id, date: today },
-    { $set: { checkIn: now, checkOut: null, lateMinutes: lateFor(now, today, settings) } },
+    { $set: {
+      checkIn: now, checkOut: null, lateMinutes: lateFor(now, today, settings),
+      inPlace: place, inLoc: loc, inIp: cleanIp(req.ip), inDistance: where.distance, autoOut: false, earlyMinutes: 0,
+    } },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   );
   emitStaff("attendance", [admin._id]);
@@ -262,7 +355,19 @@ export const checkOut = expressAsyncHandler(async (req, res) => {
   const { admin } = req.staff;
   const row = await StaffAttendance.findOne({ admin: admin._id, date: istDate() });
   if (!row?.checkIn) { res.status(400); throw new Error("You haven't checked in today."); }
-  if (!row.checkOut) { row.checkOut = new Date(); await row.save(); }
+  if (!row.checkOut) {
+    const settings = await getSettings();
+    const loc = readLoc(req.body);
+    const where = atOffice(settings, req.ip, loc);
+    const wfh = await wfhAllowed(settings, admin._id, row.date);
+    row.checkOut = new Date();
+    row.outLoc = loc;
+    row.outPlace = where.inOffice ? "office" : wfh.ok ? "wfh" : officeConfigured(settings) ? "outside" : "unknown";
+    // leaving more than 5 minutes before the shift ends counts as early
+    const early = Math.round((istToDate(row.date, settings.endTime) - row.checkOut) / 60000);
+    row.earlyMinutes = early > 5 ? early : 0;
+    await row.save();
+  }
   emitStaff("attendance", [admin._id]);
   res.json({ status: true, data: row });
 });
@@ -307,14 +412,17 @@ export const getTeam = expressAsyncHandler(async (req, res) => {
   const month = monthOf(today);
   const [roster, settings] = await Promise.all([staffRoster(), getSettings()]);
   const ids = roster.map((a) => a._id);
-  const [att, tasks, perfToday, perfMonth, leaveToday, pendingLeaves] = await Promise.all([
+  const [att, tasks, perfToday, perfMonth, leaveToday, pendingLeaves, pendingWfh, wfhToday] = await Promise.all([
     StaffAttendance.find({ admin: { $in: ids }, date: today }).lean(),
     StaffTask.find({ assignee: { $in: ids }, $or: [{ status: "open" }, { doneAt: { $gte: dayStart(today) } }] }).select("assignee status due doneAt").lean(),
     perfFor(ids, dayStart(today), new Date()),
     perfFor(ids, dayStart(monthStartDate(month)), new Date()),
     approvedLeaveDays(ids, today, today),
     StaffLeave.countDocuments({ status: "pending" }),
+    StaffWfh.countDocuments({ status: "pending" }),
+    StaffWfh.find({ admin: { $in: ids }, date: today, status: "approved" }).select("admin").lean(),
   ]);
+  const wfhReq = new Set(wfhToday.map((w) => String(w.admin)));
   const attBy = new Map(att.map((a) => [String(a.admin), a]));
   const nowMin = istMinutes();
   const lateCutoff = hhmmToMin(settings.startTime) + (settings.graceMinutes || 0);
@@ -330,6 +438,10 @@ export const getTeam = expressAsyncHandler(async (req, res) => {
       state,
       checkIn: row?.checkIn || null, checkOut: row?.checkOut || null, lateMinutes: row?.lateMinutes || 0,
       minutes: workedMinutes(row, today),
+      inPlace: row?.inPlace || "", outPlace: row?.outPlace || "", earlyMinutes: row?.earlyMinutes || 0, autoOut: !!row?.autoOut,
+      inLoc: row?.inLoc?.lat != null ? row.inLoc : null, inDistance: row?.inDistance ?? null,
+      mode: modeOf(settings, id).mode,
+      wfhToday: (() => { const m = modeOf(settings, id); return m.mode === "wfh" || (m.mode === "hybrid" && m.wfhDays.includes(weekday(today))) || wfhReq.has(id); })(),
       tasks: {
         open: mine.filter((t) => t.status === "open").length,
         overdue: mine.filter((t) => t.status === "open" && t.due && t.due < today).length,
@@ -352,7 +464,10 @@ export const getTeam = expressAsyncHandler(async (req, res) => {
         late: staff.filter((s) => s.lateMinutes > 0).length,
         absent: staff.filter((s) => s.state === "absent").length,
         leave: staff.filter((s) => s.state === "leave").length,
+        early: staff.filter((s) => s.earlyMinutes > 0).length,
+        outside: staff.filter((s) => s.inPlace === "outside").length,
         pendingLeaves,
+        pendingWfh,
       },
       staff,
     },
@@ -376,7 +491,7 @@ export const getAttendance = expressAsyncHandler(async (req, res) => {
   const staff = roster.map((a) => {
     const mine = rows.filter((r) => String(r.admin) === String(a._id));
     const records = {};
-    mine.forEach((r) => { records[r.date] = { checkIn: r.checkIn, checkOut: r.checkOut, lateMinutes: r.lateMinutes, note: r.note, edited: !!r.editedBy }; });
+    mine.forEach((r) => { records[r.date] = { checkIn: r.checkIn, checkOut: r.checkOut, lateMinutes: r.lateMinutes, note: r.note, edited: !!r.editedBy, place: r.inPlace || "", early: r.earlyMinutes || 0, autoOut: !!r.autoOut }; });
     return {
       id: a._id, name: a.name, role: a.roleId?.name || "", joined: a.createdAt ? istDate(a.createdAt) : "",
       leaveDays: [...(leaves[String(a._id)] || [])],
@@ -520,22 +635,45 @@ export const getStaffSettings = expressAsyncHandler(async (req, res) => {
     status: true,
     data: {
       startTime: s.startTime, endTime: s.endTime, graceMinutes: s.graceMinutes, month,
+      office: { lat: s.office?.lat ?? null, lng: s.office?.lng ?? null, radius: s.office?.radius || 200 },
+      officeIps: s.officeIps || [], enforceOffice: !!s.enforceOffice, yourIp: cleanIp(req.ip),
       roles: roles.map((r) => ({ id: r._id, name: r.name, color: r.color })),
       staff: roster.map((a) => {
         const t = s.targets.find((x) => String(x.admin) === String(a._id) && x.month === month);
-        return { id: a._id, name: a.name, role: a.roleId?.name || "", target: t ? { bookings: t.bookings, collections: req.staff.isSuper ? t.collections : undefined, leads: t.leads } : null };
+        const m = modeOf(s, a._id);
+        return { id: a._id, name: a.name, role: a.roleId?.name || "", mode: m.mode, wfhDays: m.wfhDays, target: t ? { bookings: t.bookings, collections: req.staff.isSuper ? t.collections : undefined, leads: t.leads } : null };
       }),
     },
   });
 });
 
-// PUT /api/staff/settings  { startTime, endTime, graceMinutes }
+// PUT /api/staff/settings  { startTime, endTime, graceMinutes, office, officeIps, enforceOffice, modes }
+const isIp = (ip) => (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip) ? ip.split(".").every((n) => Number(n) <= 255) : /^[0-9a-f:]{2,39}$/i.test(ip) && ip.includes(":"));
 export const updateStaffSettings = expressAsyncHandler(async (req, res) => {
-  const { startTime, endTime, graceMinutes } = req.body || {};
+  const { startTime, endTime, graceMinutes, office, officeIps, enforceOffice, modes } = req.body || {};
   const s = await getSettings();
   if (startTime !== undefined) { if (!TIME_RE.test(startTime)) { res.status(400); throw new Error("Start time must be HH:MM."); } s.startTime = startTime; }
   if (endTime !== undefined) { if (!TIME_RE.test(endTime)) { res.status(400); throw new Error("End time must be HH:MM."); } s.endTime = endTime; }
   if (graceMinutes !== undefined) s.graceMinutes = Math.max(0, Math.min(180, Number(graceMinutes) || 0));
+  if (office !== undefined) {
+    const loc = office && readLoc(office);
+    s.office = { lat: loc ? loc.lat : null, lng: loc ? loc.lng : null, radius: Math.max(50, Math.min(2000, Number(office?.radius) || 200)) };
+  }
+  if (Array.isArray(officeIps)) {
+    const clean = [...new Set(officeIps.map(cleanIp).map((x) => x.trim()).filter(Boolean))];
+    if (clean.some((ip) => !isIp(ip))) { res.status(400); throw new Error("One of the network addresses isn't valid."); }
+    s.officeIps = clean.slice(0, 20);
+  }
+  if (enforceOffice !== undefined) s.enforceOffice = !!enforceOffice;
+  if (Array.isArray(modes)) {
+    modes.forEach((m) => {
+      if (!isId(m?.admin) || !["office", "wfh", "hybrid"].includes(m.mode)) return;
+      const wfhDays = (Array.isArray(m.wfhDays) ? m.wfhDays : []).map(Number).filter((d) => d >= 0 && d <= 6);
+      const cur = s.modes.find((x) => String(x.admin) === String(m.admin));
+      if (cur) { cur.mode = m.mode; cur.wfhDays = wfhDays; } else s.modes.push({ admin: m.admin, mode: m.mode, wfhDays });
+    });
+  }
+  if (s.enforceOffice && !officeConfigured(s)) { res.status(400); throw new Error("Set the office location or office network first."); }
   await s.save();
   emitStaff("settings");
   res.json({ status: true });
@@ -627,5 +765,68 @@ export const decideLeave = expressAsyncHandler(async (req, res) => {
   const person = await Admin.findById(leave.admin).select("name email").lean();
   mailEach([person], status === "approved" ? "Your leave is approved" : "Your leave request wasn't approved",
     (p) => staffLeaveDecisionMail({ name: p.name, leave, approved: status === "approved", by: req.staff.admin.name, decisionNote: leave.decisionNote }));
+  res.json({ status: true });
+});
+
+/* ── work from home requests ───────────────────────────────────────────── */
+// POST /api/staff/wfh  { date, reason } — a team member asks to work from home one day
+export const applyWfh = expressAsyncHandler(async (req, res) => {
+  const { admin } = req.staff;
+  const { date, reason = "" } = req.body || {};
+  const today = istDate();
+  if (!DATE_RE.test(date || "")) { res.status(400); throw new Error("Pick the day."); }
+  if (date < today) { res.status(400); throw new Error("Pick today or a later day."); }
+  if (date > addDays(today, 30)) { res.status(400); throw new Error("You can ask up to 30 days ahead."); }
+  if (!String(reason).trim()) { res.status(400); throw new Error("Please write a short reason."); }
+  if (await StaffWfh.exists({ admin: admin._id, date, status: { $in: ["pending", "approved"] } })) { res.status(400); throw new Error("You've already asked for this day."); }
+  if (await StaffLeave.exists({ admin: admin._id, status: "approved", from: { $lte: date }, to: { $gte: date } })) { res.status(400); throw new Error("You're on leave that day."); }
+  const w = await StaffWfh.create({ admin: admin._id, date, reason: String(reason).trim().slice(0, 1000) });
+  emitStaff("wfh", [admin._id]);
+  const approvers = (await managers()).filter((m) => String(m._id) !== String(admin._id));
+  mailEach(approvers, `Work from home request: ${admin.name}`, (m) => staffWfhRequestMail({ managerName: m.name, staffName: admin.name, date, reason: w.reason }));
+  res.json({ status: true, data: wfhOut(w) });
+});
+
+// DELETE /api/staff/wfh/:id — cancel your own request (pending, or approved for a later day)
+export const cancelWfh = expressAsyncHandler(async (req, res) => {
+  const { admin } = req.staff;
+  if (!isId(req.params.id)) { res.status(404); throw new Error("Request not found."); }
+  const w = await StaffWfh.findOne({ _id: req.params.id, admin: admin._id });
+  if (!w) { res.status(404); throw new Error("Request not found."); }
+  if (!(w.status === "pending" || (w.status === "approved" && w.date > istDate()))) { res.status(400); throw new Error("This request can't be cancelled any more."); }
+  w.status = "cancelled";
+  await w.save();
+  emitStaff("wfh", [admin._id]);
+  res.json({ status: true });
+});
+
+// GET /api/staff/wfh?status=pending|all — manager
+export const listWfh = expressAsyncHandler(async (req, res) => {
+  const q = req.query.status === "pending" ? { status: "pending" } : {};
+  const list = await StaffWfh.find(q).sort({ date: -1 }).limit(200)
+    .populate({ path: "admin", select: "name roleId", populate: { path: "roleId", select: "name" } })
+    .populate("decidedBy", "name").lean();
+  const order = { pending: 0, approved: 1, rejected: 2, cancelled: 3 };
+  list.sort((a, b) => order[a.status] - order[b.status] || (a.status === "pending" ? (a.date < b.date ? -1 : 1) : (a.date < b.date ? 1 : -1)));
+  res.json({ status: true, data: list.map(wfhOut) });
+});
+
+// PATCH /api/staff/wfh/:id  { status: "approved" | "rejected", note } — manager
+export const decideWfh = expressAsyncHandler(async (req, res) => {
+  const { status, note = "" } = req.body || {};
+  if (!["approved", "rejected"].includes(status)) { res.status(400); throw new Error("Approve or reject."); }
+  if (!isId(req.params.id)) { res.status(404); throw new Error("Request not found."); }
+  const w = await StaffWfh.findById(req.params.id);
+  if (!w || w.status === "cancelled") { res.status(404); throw new Error("This request was cancelled."); }
+  if (String(w.admin) === String(req.staff.admin._id)) { res.status(403); throw new Error("Someone else has to decide your own request."); }
+  w.status = status;
+  w.decidedBy = req.staff.admin._id;
+  w.decidedAt = new Date();
+  w.decisionNote = String(note).trim().slice(0, 500);
+  await w.save();
+  emitStaff("wfh", [w.admin]);
+  const person = await Admin.findById(w.admin).select("name email").lean();
+  mailEach([person], status === "approved" ? "Work from home approved" : "Work from home not approved",
+    (p) => staffWfhDecisionMail({ name: p.name, date: w.date, approved: status === "approved", by: req.staff.admin.name, decisionNote: w.decisionNote }));
   res.json({ status: true });
 });

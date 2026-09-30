@@ -7,6 +7,7 @@ import {
   listNotices, createNotice, deleteNotice,
   getStaffSettings, updateStaffSettings, setTarget,
   applyLeave, cancelLeave, listLeaves, decideLeave,
+  applyWfh, cancelWfh, listWfh, decideWfh,
 } from "../controllers/StaffController.js";
 
 const router = Router();
@@ -20,6 +21,8 @@ router.patch("/staff/tasks/:id/status", staffAuth, setTaskStatus);
 router.post("/staff/notices/:id/read", staffAuth, readNotice);
 router.post("/staff/leaves", staffAuth, applyLeave);
 router.delete("/staff/leaves/:id", staffAuth, cancelLeave);
+router.post("/staff/wfh", staffAuth, applyWfh);
+router.delete("/staff/wfh/:id", staffAuth, cancelWfh);
 
 /* managers — Super Admin, or a role with the "staff" permission */
 router.get("/staff/team", staffAuth, staffManager, getTeam);
@@ -37,5 +40,7 @@ router.put("/staff/settings", staffAuth, staffManager, updateStaffSettings);
 router.put("/staff/targets", staffAuth, staffManager, setTarget);
 router.get("/staff/leaves", staffAuth, staffManager, listLeaves);
 router.patch("/staff/leaves/:id", staffAuth, staffManager, decideLeave);
+router.get("/staff/wfh", staffAuth, staffManager, listWfh);
+router.patch("/staff/wfh/:id", staffAuth, staffManager, decideWfh);
 
 export default router;

@@ -644,3 +644,27 @@ export const staffLeaveDecisionMail = ({ name, leave, approved, by, decisionNote
       button("Open my dashboard", `${ADMIN_SITE}/home`),
     foot: teamFoot,
   });
+
+export const staffWfhRequestMail = ({ managerName, staffName, date, reason }) =>
+  shell({
+    preheader: `${staffName} asked to work from home on ${fmtDay(date)}`,
+    body:
+      eyebrow("Work from home request", WARN) +
+      heading(`${esc(staffName)} wants to work from home`) +
+      para(`Hi ${esc(first(managerName))}, this needs your approval.`) +
+      kvTable([["Date", esc(fmtDay(date))], reason && ["Reason", multiline(reason)]]) +
+      button("Review request", `${ADMIN_SITE}/team`),
+    foot: teamFoot,
+  });
+
+export const staffWfhDecisionMail = ({ name, date, approved, by, decisionNote }) =>
+  shell({
+    preheader: `Work from home on ${fmtDay(date)}: ${approved ? "approved" : "not approved"}`,
+    body:
+      eyebrow(approved ? "WFH approved" : "WFH not approved", approved ? OK : STOP) +
+      heading(approved ? `You can work from home, ${esc(first(name))}` : `Please come to the office, ${esc(first(name))}`) +
+      para(approved ? "You can check in from anywhere on this day." : "Your work-from-home request for this day wasn't approved.") +
+      kvTable([["Date", esc(fmtDay(date))], by && ["Decided by", esc(by)], decisionNote && ["Note", multiline(decisionNote)]]) +
+      button("Open my dashboard", `${ADMIN_SITE}/home`),
+    foot: teamFoot,
+  });
