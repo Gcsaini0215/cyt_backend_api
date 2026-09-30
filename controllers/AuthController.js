@@ -114,6 +114,7 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
         await Users.findByIdAndUpdate(userExists._id, {
           otp: otp.toString(),
           otp_count: (userExists.otp_count || 0) + 1,
+          role: 1, // an existing client account applying as a therapist becomes a therapist account
           name,
           phone: phone.toString(),
           ...(about ? { bio: about } : {}),
@@ -347,7 +348,7 @@ export const aproveTherapist = expressAsyncHandler(async (req, res, next) => {
 
     const updatedUser = await Users.findByIdAndUpdate(
       userId,
-      { is_verified, is_mail_sent },
+      { is_verified, is_mail_sent, role: 1 },
       { new: true }
     );
     await Therapists.updateOne(
@@ -669,14 +670,16 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
   let email = req.body.email.toLowerCase();
   let otp = req.body.otp;
   try {
-    let isAdminUser = false;
-    let user = await Admin.findOne({ email });
-
-    if (user) {
-      isAdminUser = true;
-    } else {
-      user = await Users.findOne({ email });
-    }
+    // The same email can belong to a team (Admin) account AND a client / therapist (Users) account.
+    // Verify whichever account's pending code matches; otherwise fall back to the old order (Admin first).
+    const [adminAcc, userAcc] = await Promise.all([Admin.findOne({ email }), Users.findOne({ email })]);
+    const code = otp?.toString();
+    let isAdminUser;
+    let user;
+    if (userAcc?.otp && userAcc.otp.toString() === code) { user = userAcc; isAdminUser = false; }
+    else if (adminAcc?.otp && adminAcc.otp.toString() === code) { user = adminAcc; isAdminUser = true; }
+    else if (userAcc && userAcc.otp) { user = userAcc; isAdminUser = false; } // a code is pending here — report it as invalid
+    else { user = adminAcc || userAcc; isAdminUser = !!adminAcc; }
 
     if (user && !isAdminUser && !user.otp && user.role === 1 && user.is_verified === 0) {
       // the code was already used (e.g. the button was tapped twice) — say so instead of "Invalid OTP"
