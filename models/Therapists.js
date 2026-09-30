@@ -119,6 +119,17 @@ const TherapistSchema = new Schema(
     subscription_started_at: { type: Date, default: null },
     subscription_expires_at: { type: Date, default: null },
     subscription_transaction_id: { type: String, default: null },
+    subscription_terms_accepted_at: { type: Date, default: null }, // when they ticked "I agree" before paying
+    subscription_terms_version: { type: String, default: null },
+
+    // "Please complete your profile" request: which items are missing, a one-time link (hash only), and re-check
+    completion_items: { type: [String], default: [] },
+    completion_note: { type: String, default: "" },
+    completion_token_hash: { type: String, default: null },
+    completion_expires: { type: Date, default: null },
+    completion_requested_at: { type: Date, default: null },
+    completion_submitted_at: { type: Date, default: null },
+    profile_recheck: { type: Boolean, default: false }, // resubmitted — an admin should look at it again
 
     is_mail_sent: {
       type: Number,

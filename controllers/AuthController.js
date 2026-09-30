@@ -262,6 +262,7 @@ export const verifyTherapistSubscriptionPayment = expressAsyncHandler(async (req
   const {
     email, plan,
     razorpay_order_id, razorpay_payment_id, razorpay_signature,
+    terms_accepted, terms_version,
   } = req.body;
 
   if (!email || !plan || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
@@ -271,6 +272,10 @@ export const verifyTherapistSubscriptionPayment = expressAsyncHandler(async (req
   if (!PLAN_MONTHS[plan]) {
     res.status(400);
     return next(new Error("Invalid subscription plan"));
+  }
+  if (terms_accepted !== true) {
+    res.status(400);
+    return next(new Error("Please read and accept the subscription terms."));
   }
 
   const sign = razorpay_order_id + "|" + razorpay_payment_id;
@@ -302,6 +307,8 @@ export const verifyTherapistSubscriptionPayment = expressAsyncHandler(async (req
       subscription_started_at: startedAt,
       subscription_expires_at: expiresAt,
       subscription_transaction_id: razorpay_payment_id,
+      subscription_terms_accepted_at: new Date(),
+      subscription_terms_version: String(terms_version || "v1").slice(0, 20),
       show_to_page: 1, // payment activates the public profile
     },
     { new: true, upsert: true }
@@ -384,12 +391,14 @@ export const sendAproveMail = expressAsyncHandler(async (req, res, next) => {
       res.status(400);
       return next(new Error("Invalid user ID format"));
     }
-    const userExists = await Therapists.findById(userId);
+    const therapistDoc = await Therapists.findById(userId).populate("user", "name email");
 
-    if (!userExists) {
+    if (!therapistDoc) {
       res.status(400);
       return next(new Error("This user is not exists"));
     }
+    // name and email live on the user, not the therapist document
+    const userExists = { name: therapistDoc.user?.name, email: therapistDoc.user?.email };
 
     const subject = "Welcome to CYT";
     const text = `Hello Thank you for registering.Best regards,CYT`;

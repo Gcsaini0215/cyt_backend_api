@@ -418,16 +418,50 @@ export const leadNotificationEmail = (data) => {
 // ONBOARDING & LIFECYCLE
 // ============================================================================
 
+const PLAN_ROWS = [["3 months", "₹1,999"], ["6 months", "₹4,999"], ["12 months", "₹9,500"]];
+const paymentLink = (email) => `${BRAND.site.replace("://", "://www.")}/therapist-payment?email=${encodeURIComponent(email || "")}`;
+const visibilityNote = note("Your subscription is for listing and visibility on Choose Your Therapist. We don't promise a number of clients — bookings depend on how complete and active your profile is. The full terms are shown before you pay.");
+
 export const therapistApprovedMail = ({ name, email }) =>
   shell({
-    preheader: "Your CYT therapist profile is approved",
+    preheader: "Your CYT therapist profile is approved — choose a plan to go live",
     body:
       eyebrow("Profile approved", OK) +
       heading(`You're approved${name ? ", " + esc(name) : ""}`) +
-      para("Your therapist profile has been successfully approved. You can now sign in and start offering your services to clients.") +
-      kvTable([["Login email", esc(email || "—"), true]]) +
-      button("Sign in", `${BRAND.site}/login`) +
+      para("Your therapist profile has been approved. One step left: choose a subscription plan so your profile goes live and clients can find and book you.") +
+      kvTable([["Login email", esc(email || "—"), true], ...PLAN_ROWS]) +
+      button("Choose a plan & go live", paymentLink(email)) +
+      visibilityNote +
       note(`Any issues or questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
+  });
+
+export const therapistPaymentMail = ({ name, email }) =>
+  shell({
+    preheader: "Activate your Choose Your Therapist profile",
+    body:
+      eyebrow("Activate your profile", WARN) +
+      heading(`${name ? esc(name) + ", your" : "Your"} profile is ready to go live`) +
+      para("Your application is approved. Choose a subscription plan to make your profile visible to clients on Choose Your Therapist.") +
+      kvTable(PLAN_ROWS) +
+      button("Choose a plan", paymentLink(email)) +
+      visibilityNote,
+  });
+
+export const therapistCompleteProfileMail = ({ name, items = [], note: msg, link, live }) =>
+  shell({
+    preheader: "A few details are missing from your therapist profile",
+    body:
+      eyebrow(live ? "Profile check" : "Complete your profile", WARN) +
+      heading(`${name ? esc(name) + ", please" : "Please"} complete your profile`) +
+      para(live
+        ? "We're reviewing every live profile on Choose Your Therapist. Yours is missing the details below — complete profiles are shown higher and get far more enquiries."
+        : "Your profile is missing the details below. Please add them so we can review and publish your profile.") +
+      `<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:12px 14px;margin-bottom:16px;">
+        ${items.map((i) => `<div style="font-size:12.5px;color:#7c2d12;padding:3px 0;">&#9675;&nbsp; ${esc(i)}</div>`).join("")}
+      </div>` +
+      (msg ? `<div style="font-size:12.5px;color:${BRAND.ink};background:#f6f7f4;border-radius:10px;padding:10px 12px;margin-bottom:16px;">${esc(msg)}</div>` : "") +
+      button("Complete my profile", link) +
+      note(`This link works for 14 days. ${live ? "After you submit, our team checks your profile again." : "After you submit, our team reviews your profile."}`),
   });
 
 export const noidaOfferCodeMail = ({ name, code, offer, personal = true }) =>

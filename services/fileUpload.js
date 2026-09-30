@@ -95,6 +95,18 @@ export const uploadTherapistDocuments = multer({
   limits: { fileSize: 5 * MB },
 });
 
+// "Complete your profile" form: photo (image) + documents, each saved to its own folder (5 MB per file)
+export const uploadTherapistCompletion = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, file.fieldname === "photo" ? imagesPath : documentsPath),
+    filename: (req, file, cb) => cb(null, storedName(file)),
+  }),
+  fileFilter: (req, file, cb) => (file.fieldname === "photo"
+    ? checkFile(IMAGE_EXT, IMAGE_MIME)(req, file, cb)
+    : checkFile(DOC_EXT, DOC_MIME)(req, file, cb)),
+  limits: { fileSize: 5 * MB },
+});
+
 // Delete uploaded file
 export const deleteFile = (filePath) => {
   fs.unlink(filePath, (err) => {

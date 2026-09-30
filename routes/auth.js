@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { saveVerificationChecklist, rejectTherapistApplication, requestTherapistReupload, getReuploadRequest, submitReupload } from "../controllers/TherapistVerificationController.js";
+import { saveVerificationChecklist, rejectTherapistApplication, requestTherapistReupload, getReuploadRequest, submitReupload, sendPaymentLink, listProfileGaps, requestProfileCompletion, notifyProfileGaps, markRechecked, getCompletionRequest, submitCompletion } from "../controllers/TherapistVerificationController.js";
 import { isSuperAdmin, hasPermission } from "../middlewares/authMiddleware.js";
 import {
   leadRateLimit,
@@ -25,7 +25,7 @@ import {
   verifyOtpAndResetPassword,
   getAdminNameByEmail,
 } from "../controllers/AuthController.js";
-import { uploadTherapistDocuments } from "../services/fileUpload.js";
+import { uploadTherapistDocuments, uploadTherapistCompletion } from "../services/fileUpload.js";
 
 const router = Router();
 
@@ -66,6 +66,23 @@ router.get("/aprove-therapist/:userId",hasPermission("therapists"), aproveTherap
 router.patch("/therapist-verification/:id/checklist", hasPermission("therapists"), saveVerificationChecklist);
 router.post("/therapist-verification/:id/reject", hasPermission("therapists"), rejectTherapistApplication);
 router.post("/therapist-verification/:id/reupload", hasPermission("therapists"), requestTherapistReupload);
+router.post("/therapist-verification/:id/payment-link", hasPermission("therapists"), sendPaymentLink);
+router.post("/therapist-verification/:id/complete-profile", hasPermission("therapists"), requestProfileCompletion);
+router.patch("/therapist-verification/:id/rechecked", hasPermission("therapists"), markRechecked);
+router.get("/therapist-profile-gaps", hasPermission("therapists"), listProfileGaps);
+router.post("/therapist-profile-gaps/notify", hasPermission("therapists"), notifyProfileGaps);
+router.get("/therapist-complete/:token", leadRateLimit, getCompletionRequest);
+router.post(
+  "/therapist-complete/:token",
+  leadRateLimit,
+  uploadTherapistCompletion.fields([
+    { name: "photo", maxCount: 1 },
+    { name: "resume", maxCount: 1 },
+    { name: "qualification_certificate", maxCount: 1 },
+    { name: "id_card", maxCount: 1 },
+  ]),
+  submitCompletion
+);
 router.get("/therapist-reupload/:token", leadRateLimit, getReuploadRequest);
 router.post(
   "/therapist-reupload/:token",
