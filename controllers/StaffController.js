@@ -14,9 +14,12 @@ import StaffAttendance from "../models/StaffAttendance.js";
 import StaffTask from "../models/StaffTask.js";
 import StaffNotice from "../models/StaffNotice.js";
 import StaffSetting from "../models/StaffSetting.js";
+import StaffLeave from "../models/StaffLeave.js";
 import NoidaAppointment from "../models/NoidaAppointment.js";
 import LeadActivity from "../models/LeadActivity.js";
 import { addStaffClient, emitStaff } from "../services/staffEvents.js";
+import { sendMail } from "../helper/mailer.js";
+import { staffTaskMail, staffNoticeMail, staffLeaveRequestMail, staffLeaveDecisionMail } from "../services/mailTemplates.js";
 
 /* ── IST helpers ───────────────────────────────────────────────────────── */
 const IST_MS = 330 * 60000;
@@ -35,6 +38,46 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH_RE = /^\d{4}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const isId = (v) => mongoose.isValidObjectId(v);
+const isSunday = (date) => { const [y, m, d] = date.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay() === 0; };
+// every date from..to inclusive (capped), optionally without Sundays
+const datesBetween = (from, to, skipSundays = false) => {
+  const out = [];
+  for (let d = from, i = 0; d <= to && i < 400; d = addDays(d, 1), i++) if (!skipSundays || !isSunday(d)) out.push(d);
+  return out;
+};
+
+/* ── email (fire and forget: a slow or failed mail never blocks the action) ── */
+function mailEach(people, subject, build) {
+  const list = people.filter((p) => p?.email);
+  if (!list.length) return;
+  (async () => {
+    for (const p of list) {
+      try { await sendMail(p.email, subject, "", build(p), "CYT Team"); }
+      catch (e) { console.error("staff mail failed:", p.email, e?.message); }
+    }
+  })();
+}
+// who approves leave: Super Admins + roles with the "staff" permission
+async function managers() {
+  const roles = await Role.find({ permissions: "staff" }).select("_id").lean();
+  return Admin.find({ $or: [{ roleId: null }, { roleId: { $in: roles.map((r) => r._id) } }] }).select("name email").lean();
+}
+// approved leave covering a date range: { adminId: Set(dates) }
+async function approvedLeaveDays(adminIds, from, to) {
+  const rows = await StaffLeave.find({ admin: { $in: adminIds }, status: "approved", from: { $lte: to }, to: { $gte: from } }).lean();
+  const out = {};
+  rows.forEach((l) => {
+    const set = out[String(l.admin)] || (out[String(l.admin)] = new Set());
+    datesBetween(l.from < from ? from : l.from, l.to > to ? to : l.to).forEach((d) => set.add(d));
+  });
+  return out;
+}
+const leaveOut = (l) => ({
+  id: l._id, from: l.from, to: l.to, halfDay: l.halfDay, type: l.type, reason: l.reason, days: l.days, status: l.status,
+  decisionNote: l.decisionNote, decidedAt: l.decidedAt, createdAt: l.createdAt,
+  decidedBy: l.decidedBy?.name || "",
+  admin: l.admin?._id ? { id: l.admin._id, name: l.admin.name, role: l.admin.roleId?.name || "" } : l.admin,
+});
 
 async function getSettings() {
   let s = await StaffSetting.findOne({ key: "main" });
@@ -154,7 +197,7 @@ export const getMyDay = expressAsyncHandler(async (req, res) => {
   const settings = await getSettings();
   const nowUtc = new Date();
 
-  const [monthRows, tasks, notices, perfToday, perfWeek, perfMonth] = await Promise.all([
+  const [monthRows, tasks, notices, perfToday, perfWeek, perfMonth, myLeaves, leaveDays] = await Promise.all([
     StaffAttendance.find({ admin: admin._id, date: { $gte: monthStartDate(month), $lte: today } }).sort({ date: 1 }).lean(),
     StaffTask.find({ assignee: admin._id, $or: [{ status: "open" }, { doneAt: { $gte: new Date(Date.now() - 36 * 3600000) } }] })
       .populate("createdBy", "name").lean(),
@@ -162,6 +205,8 @@ export const getMyDay = expressAsyncHandler(async (req, res) => {
     perfFor([admin._id], dayStart(today), nowUtc),
     perfFor([admin._id], dayStart(weekStart(today)), nowUtc),
     perfFor([admin._id], dayStart(monthStartDate(month)), nowUtc),
+    StaffLeave.find({ admin: admin._id, to: { $gte: addDays(today, -60) } }).sort({ from: -1 }).limit(20).populate("decidedBy", "name").lean(),
+    approvedLeaveDays([admin._id], monthStartDate(month), addDays(nextMonthStart(month), -1)),
   ]);
   const todayRow = monthRows.find((r) => r.date === today) || null;
   const target = settings.targets.find((t) => String(t.admin) === String(admin._id) && t.month === month) || null;
@@ -180,7 +225,10 @@ export const getMyDay = expressAsyncHandler(async (req, res) => {
         late: monthRows.filter((r) => r.lateMinutes > 0).length,
         minutes: monthRows.reduce((s, r) => s + workedMinutes(r, today), 0),
         days: monthRows.map((r) => ({ date: r.date, checkIn: r.checkIn, checkOut: r.checkOut, lateMinutes: r.lateMinutes })),
+        leaveDays: [...(leaveDays[String(admin._id)] || [])],
       },
+      leaves: myLeaves.map(leaveOut),
+      onLeaveToday: myLeaves.some((l) => l.status === "approved" && l.from <= today && l.to >= today),
       tasks: sortTasks(tasks, today).map(taskOut),
       notices: notices.map((n) => ({
         id: n._id, title: n.title, body: n.body, important: n.important, createdAt: n.createdAt,
@@ -259,11 +307,13 @@ export const getTeam = expressAsyncHandler(async (req, res) => {
   const month = monthOf(today);
   const [roster, settings] = await Promise.all([staffRoster(), getSettings()]);
   const ids = roster.map((a) => a._id);
-  const [att, tasks, perfToday, perfMonth] = await Promise.all([
+  const [att, tasks, perfToday, perfMonth, leaveToday, pendingLeaves] = await Promise.all([
     StaffAttendance.find({ admin: { $in: ids }, date: today }).lean(),
     StaffTask.find({ assignee: { $in: ids }, $or: [{ status: "open" }, { doneAt: { $gte: dayStart(today) } }] }).select("assignee status due doneAt").lean(),
     perfFor(ids, dayStart(today), new Date()),
     perfFor(ids, dayStart(monthStartDate(month)), new Date()),
+    approvedLeaveDays(ids, today, today),
+    StaffLeave.countDocuments({ status: "pending" }),
   ]);
   const attBy = new Map(att.map((a) => [String(a.admin), a]));
   const nowMin = istMinutes();
@@ -273,7 +323,7 @@ export const getTeam = expressAsyncHandler(async (req, res) => {
     const row = attBy.get(id);
     const mine = tasks.filter((t) => String(t.assignee) === id);
     const target = settings.targets.find((t) => String(t.admin) === id && t.month === month) || null;
-    const state = row?.checkOut ? "out" : row?.checkIn ? "in" : nowMin > lateCutoff ? "absent" : "notyet";
+    const state = row?.checkOut ? "out" : row?.checkIn ? "in" : leaveToday[id] ? "leave" : nowMin > lateCutoff ? "absent" : "notyet";
     return {
       id, name: a.name, email: a.email, designation: a.designation || "", profile: a.profile,
       role: a.roleId ? { name: a.roleId.name, color: a.roleId.color } : null,
@@ -301,6 +351,8 @@ export const getTeam = expressAsyncHandler(async (req, res) => {
         out: staff.filter((s) => s.state === "out").length,
         late: staff.filter((s) => s.lateMinutes > 0).length,
         absent: staff.filter((s) => s.state === "absent").length,
+        leave: staff.filter((s) => s.state === "leave").length,
+        pendingLeaves,
       },
       staff,
     },
@@ -315,7 +367,10 @@ export const getAttendance = expressAsyncHandler(async (req, res) => {
   const last = addDays(nextMonthStart(month), -1);
   const until = last < today ? last : today;
   const roster = await staffRoster();
-  const rows = await StaffAttendance.find({ admin: { $in: roster.map((a) => a._id) }, date: { $gte: first, $lte: last } }).lean();
+  const [rows, leaves] = await Promise.all([
+    StaffAttendance.find({ admin: { $in: roster.map((a) => a._id) }, date: { $gte: first, $lte: last } }).lean(),
+    approvedLeaveDays(roster.map((a) => a._id), first, last),
+  ]);
   const days = [];
   for (let d = first; d <= until; d = addDays(d, 1)) days.push(d);
   const staff = roster.map((a) => {
@@ -324,6 +379,7 @@ export const getAttendance = expressAsyncHandler(async (req, res) => {
     mine.forEach((r) => { records[r.date] = { checkIn: r.checkIn, checkOut: r.checkOut, lateMinutes: r.lateMinutes, note: r.note, edited: !!r.editedBy }; });
     return {
       id: a._id, name: a.name, role: a.roleId?.name || "", joined: a.createdAt ? istDate(a.createdAt) : "",
+      leaveDays: [...(leaves[String(a._id)] || [])],
       present: mine.filter((r) => r.checkIn).length,
       late: mine.filter((r) => r.lateMinutes > 0).length,
       minutes: mine.reduce((s, r) => s + workedMinutes(r, today), 0),
@@ -381,6 +437,9 @@ export const createTask = expressAsyncHandler(async (req, res) => {
     assignee: a._id, createdBy: req.staff.admin._id,
   })));
   emitStaff("tasks", valid.map((a) => a._id));
+  const people = await Admin.find({ _id: { $in: valid.map((a) => a._id) } }).select("name email").lean();
+  const t = docs[0];
+  mailEach(people, `New task: ${t.title}`, (p) => staffTaskMail({ name: p.name, title: t.title, note: t.note, due: t.due, priority: t.priority, by: req.staff.admin.name }));
   res.json({ status: true, data: docs.map(taskOut) });
 });
 
@@ -441,6 +500,8 @@ export const createNotice = expressAsyncHandler(async (req, res) => {
     roles: (Array.isArray(roles) ? roles : []).filter(isId), important: !!important, createdBy: req.staff.admin._id,
   });
   emitStaff("notices");
+  const audience = await Admin.find(n.roles.length ? { roleId: { $in: n.roles } } : { roleId: { $ne: null } }).select("name email").lean();
+  mailEach(audience, `${n.important ? "Important: " : ""}${n.title}`, (p) => staffNoticeMail({ name: p.name, title: n.title, body: n.body, important: n.important, by: req.staff.admin.name }));
   res.json({ status: true, data: { id: n._id } });
 });
 
@@ -494,5 +555,77 @@ export const setTarget = expressAsyncHandler(async (req, res) => {
   else s.targets.push({ admin, month, ...next });
   await s.save();
   emitStaff("settings", [admin]);
+  res.json({ status: true });
+});
+
+/* ── leave ─────────────────────────────────────────────────────────────── */
+const LEAVE_TYPES = ["casual", "sick", "emergency", "other"];
+
+// POST /api/staff/leaves  { from, to, halfDay, type, reason } — a team member applies
+export const applyLeave = expressAsyncHandler(async (req, res) => {
+  const { admin } = req.staff;
+  const { from, to = from, halfDay = false, type = "casual", reason = "" } = req.body || {};
+  const today = istDate();
+  if (!DATE_RE.test(from || "") || !DATE_RE.test(to || "")) { res.status(400); throw new Error("Pick the leave dates."); }
+  if (to < from) { res.status(400); throw new Error("The end date can't be before the start date."); }
+  if (from < addDays(today, -30)) { res.status(400); throw new Error("Leave can be applied up to 30 days back."); }
+  if (datesBetween(from, to).length > 60) { res.status(400); throw new Error("Apply for at most 60 days at a time."); }
+  const workDays = datesBetween(from, to, true).length;
+  if (!workDays) { res.status(400); throw new Error("Those dates are all Sundays."); }
+  if (!String(reason).trim()) { res.status(400); throw new Error("Please write a short reason."); }
+  const clash = await StaffLeave.exists({ admin: admin._id, status: { $in: ["pending", "approved"] }, from: { $lte: to }, to: { $gte: from } });
+  if (clash) { res.status(400); throw new Error("You already have leave on some of these dates."); }
+  const leave = await StaffLeave.create({
+    admin: admin._id, from, to, halfDay: !!halfDay && from === to,
+    type: LEAVE_TYPES.includes(type) ? type : "other", reason: String(reason).trim().slice(0, 1000), days: workDays,
+  });
+  emitStaff("leaves", [admin._id]);
+  const approvers = (await managers()).filter((m) => String(m._id) !== String(admin._id));
+  mailEach(approvers, `Leave request: ${admin.name}`, (m) => staffLeaveRequestMail({ managerName: m.name, staffName: admin.name, leave }));
+  res.json({ status: true, data: leaveOut(leave) });
+});
+
+// DELETE /api/staff/leaves/:id — cancel your own request (pending, or approved and not started yet)
+export const cancelLeave = expressAsyncHandler(async (req, res) => {
+  const { admin } = req.staff;
+  if (!isId(req.params.id)) { res.status(404); throw new Error("Leave not found."); }
+  const leave = await StaffLeave.findOne({ _id: req.params.id, admin: admin._id });
+  if (!leave) { res.status(404); throw new Error("Leave not found."); }
+  const canCancel = leave.status === "pending" || (leave.status === "approved" && leave.from > istDate());
+  if (!canCancel) { res.status(400); throw new Error("This leave can't be cancelled any more."); }
+  leave.status = "cancelled";
+  await leave.save();
+  emitStaff("leaves", [admin._id]);
+  res.json({ status: true });
+});
+
+// GET /api/staff/leaves?status=pending|all — manager
+export const listLeaves = expressAsyncHandler(async (req, res) => {
+  const q = req.query.status === "pending" ? { status: "pending" } : {};
+  const list = await StaffLeave.find(q).sort({ createdAt: -1 }).limit(200)
+    .populate({ path: "admin", select: "name roleId", populate: { path: "roleId", select: "name" } })
+    .populate("decidedBy", "name").lean();
+  const order = { pending: 0, approved: 1, rejected: 2, cancelled: 3 };
+  list.sort((a, b) => order[a.status] - order[b.status] || (a.status === "pending" ? (a.from < b.from ? -1 : 1) : (a.from < b.from ? 1 : -1)));
+  res.json({ status: true, data: list.map(leaveOut) });
+});
+
+// PATCH /api/staff/leaves/:id  { status: "approved" | "rejected", note } — manager
+export const decideLeave = expressAsyncHandler(async (req, res) => {
+  const { status, note = "" } = req.body || {};
+  if (!["approved", "rejected"].includes(status)) { res.status(400); throw new Error("Approve or reject."); }
+  if (!isId(req.params.id)) { res.status(404); throw new Error("Leave not found."); }
+  const leave = await StaffLeave.findById(req.params.id);
+  if (!leave || leave.status === "cancelled") { res.status(404); throw new Error("This request was cancelled."); }
+  if (String(leave.admin) === String(req.staff.admin._id)) { res.status(403); throw new Error("Someone else has to decide your own leave."); }
+  leave.status = status;
+  leave.decidedBy = req.staff.admin._id;
+  leave.decidedAt = new Date();
+  leave.decisionNote = String(note).trim().slice(0, 500);
+  await leave.save();
+  emitStaff("leaves", [leave.admin]);
+  const person = await Admin.findById(leave.admin).select("name email").lean();
+  mailEach([person], status === "approved" ? "Your leave is approved" : "Your leave request wasn't approved",
+    (p) => staffLeaveDecisionMail({ name: p.name, leave, approved: status === "approved", by: req.staff.admin.name, decisionNote: leave.decisionNote }));
   res.json({ status: true });
 });

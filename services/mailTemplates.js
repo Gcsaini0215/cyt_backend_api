@@ -567,3 +567,80 @@ export const therapistText = (booking, txId) =>
 
 export const adminText = (booking, txId) =>
   `CONFIRMED BOOKING: ${booking.client.name} with ${booking.therapist.user.name} on ${slotText(booking.booking_date)}. Amount: ₹${booking.amount}. Transaction: ${txId}.`;
+
+// ============================================================================
+// TEAM (staff system) — internal mails to team members and managers
+// ============================================================================
+
+const ADMIN_SITE = "https://cyt.chooseyourtherapist.in";
+const teamFoot = `${BRAND.name} LLP &middot; Team workspace &middot; You're receiving this because you're part of the CYT team.`;
+const fmtDay = (d) => (d ? new Date(`${d}T00:00:00Z`).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "");
+const LEAVE_TYPES = { casual: "Casual leave", sick: "Sick leave", emergency: "Emergency leave", other: "Other" };
+const leaveRange = ({ from, to, halfDay }) => (from === to ? `${fmtDay(from)}${halfDay ? " (half day)" : ""}` : `${fmtDay(from)} → ${fmtDay(to)}`);
+const multiline = (s) => esc(s).replace(/\n/g, "<br />");
+const first = (n) => String(n || "").trim().split(/\s+/)[0] || "there";
+
+export const staffTaskMail = ({ name, title, note: details, due, priority, by }) =>
+  shell({
+    preheader: `New task: ${title}`,
+    body:
+      eyebrow(priority === "high" ? "New task · High priority" : "New task", priority === "high" ? STOP : INFO) +
+      heading(esc(title)) +
+      para(`Hi ${esc(first(name))}, ${by ? esc(by) + " has" : "you've been"} assigned you a new task.`) +
+      (details ? `<div style="background:#f6f7f4;border-radius:10px;padding:12px 14px;font-size:12.5px;color:${BRAND.ink};line-height:1.6;margin-bottom:16px;">${multiline(details)}</div>` : "") +
+      kvTable([
+        ["Due", due ? esc(fmtDay(due)) : "No deadline"],
+        ["Priority", priority === "high" ? `<span style="color:${STOP};">High</span>` : priority === "low" ? "Low" : "Normal"],
+        by && ["Assigned by", esc(by)],
+      ]) +
+      button("Open my dashboard", `${ADMIN_SITE}/home`) +
+      note("Mark it done from your dashboard once it's finished."),
+    foot: teamFoot,
+  });
+
+export const staffNoticeMail = ({ name, title, body: message, important, by }) =>
+  shell({
+    preheader: `${important ? "Important: " : ""}${title}`,
+    body:
+      eyebrow(important ? "Important notice" : "Team notice", important ? WARN : INFO) +
+      heading(esc(title)) +
+      para(`Hi ${esc(first(name))},`) +
+      (message ? `<div style="font-size:13px;color:${BRAND.ink};line-height:1.7;margin-bottom:16px;">${multiline(message)}</div>` : "") +
+      (by ? note(`— ${esc(by)}`) : "") +
+      button("View on dashboard", `${ADMIN_SITE}/home`),
+    foot: teamFoot,
+  });
+
+export const staffLeaveRequestMail = ({ managerName, staffName, leave }) =>
+  shell({
+    preheader: `${staffName} requested leave: ${leaveRange(leave)}`,
+    body:
+      eyebrow("Leave request", WARN) +
+      heading(`${esc(staffName)} has asked for leave`) +
+      para(`Hi ${esc(first(managerName))}, a new leave request needs your approval.`) +
+      kvTable([
+        ["Dates", esc(leaveRange(leave))],
+        ["Working days", String(leave.halfDay ? 0.5 : leave.days)],
+        ["Type", LEAVE_TYPES[leave.type] || "Leave"],
+        leave.reason && ["Reason", multiline(leave.reason)],
+      ]) +
+      button("Review request", `${ADMIN_SITE}/team`),
+    foot: teamFoot,
+  });
+
+export const staffLeaveDecisionMail = ({ name, leave, approved, by, decisionNote }) =>
+  shell({
+    preheader: `Your leave ${approved ? "is approved" : "was not approved"}: ${leaveRange(leave)}`,
+    body:
+      eyebrow(approved ? "Leave approved" : "Leave not approved", approved ? OK : STOP) +
+      heading(approved ? `Your leave is approved${name ? ", " + esc(first(name)) : ""}` : `Your leave request wasn't approved${name ? ", " + esc(first(name)) : ""}`) +
+      para(approved ? "Enjoy your time off — the team has been updated." : "Please speak to your manager if you'd like to discuss it or apply for different dates.") +
+      kvTable([
+        ["Dates", esc(leaveRange(leave))],
+        ["Type", LEAVE_TYPES[leave.type] || "Leave"],
+        by && ["Decided by", esc(by)],
+        decisionNote && ["Note", multiline(decisionNote)],
+      ]) +
+      button("Open my dashboard", `${ADMIN_SITE}/home`),
+    foot: teamFoot,
+  });

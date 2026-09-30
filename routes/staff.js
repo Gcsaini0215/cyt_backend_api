@@ -6,6 +6,7 @@ import {
   listTasks, createTask, updateTask, deleteTask,
   listNotices, createNotice, deleteNotice,
   getStaffSettings, updateStaffSettings, setTarget,
+  applyLeave, cancelLeave, listLeaves, decideLeave,
 } from "../controllers/StaffController.js";
 
 const router = Router();
@@ -17,6 +18,8 @@ router.post("/staff/check-in", staffAuth, checkIn);
 router.post("/staff/check-out", staffAuth, checkOut);
 router.patch("/staff/tasks/:id/status", staffAuth, setTaskStatus);
 router.post("/staff/notices/:id/read", staffAuth, readNotice);
+router.post("/staff/leaves", staffAuth, applyLeave);
+router.delete("/staff/leaves/:id", staffAuth, cancelLeave);
 
 /* managers — Super Admin, or a role with the "staff" permission */
 router.get("/staff/team", staffAuth, staffManager, getTeam);
@@ -32,5 +35,7 @@ router.delete("/staff/notices/:id", staffAuth, staffManager, deleteNotice);
 router.get("/staff/settings", staffAuth, staffManager, getStaffSettings);
 router.put("/staff/settings", staffAuth, staffManager, updateStaffSettings);
 router.put("/staff/targets", staffAuth, staffManager, setTarget);
+router.get("/staff/leaves", staffAuth, staffManager, listLeaves);
+router.patch("/staff/leaves/:id", staffAuth, staffManager, decideLeave);
 
 export default router;
