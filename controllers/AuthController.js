@@ -13,6 +13,11 @@ import { getTimeDifferenceInSeconds } from "../helper/time.js";
 import { generate6DigitOTP, generateProfileCode } from "../helper/generate.js";
 import { loginOtpEmail, otpVerificationEmail, registrationOtpEmail, therapistVerificationEmail, therapistApprovedMail, welcomeCredentialsMail, passwordResetMail } from "../services/mailTemplates.js";
 
+// A code sent in the last 15 minutes is sent again instead of a new one, so re-submitting the form or
+// tapping "Resend" never leaves an older email with a code that no longer works.
+const OTP_REUSE_MS = 15 * 60 * 1000;
+const reusableOtp = (user) => (user?.otp && /^\d{6}$/.test(String(user.otp)) && user.updatedAt && Date.now() - new Date(user.updatedAt).getTime() < OTP_REUSE_MS ? String(user.otp) : null);
+
 export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
   const resumeFile      = req.files?.resume?.[0];
   const qualCertFile    = req.files?.qualification_certificate?.[0];
@@ -98,7 +103,7 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
       const url = resumeFile.filename;
       const qualificationCertificateUrl = qualCertFile.filename;
       const idCardUrl = idCardFile.filename;
-      const otp = generate6DigitOTP();
+      const otp = (userExists && userExists.is_verified === 0 && reusableOtp(userExists)) || generate6DigitOTP();
       const subject = "Therapist Registration – OTP Verification & Approval Process";
       const text = `Hello Thank you for registering.Best regards,CYT`;
 
@@ -536,9 +541,10 @@ export const resendTherapistOtp = expressAsyncHandler(async (req, res, next) => 
     res.status(400);
     return next(new Error("No user found with this email"));
   }
-  const otp = generate6DigitOTP().toString();
+  const reused = reusableOtp(user);
+  const otp = reused || generate6DigitOTP().toString();
   await Users.findByIdAndUpdate(user._id, { otp, otp_count: (user.otp_count || 0) + 1 });
-  console.log(`[resendOtp] new OTP issued for ${email}`);
+  console.log(`[resendOtp] ${reused ? "re-sent the same" : "new"} OTP for ${email}`);
   const subject = "Therapist Registration – Resend OTP";
   const text = `Your new OTP is ${otp}`;
   const html = therapistVerificationEmail(email, otp);
@@ -672,6 +678,10 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
       user = await Users.findOne({ email });
     }
 
+    if (user && !isAdminUser && !user.otp && user.role === 1 && user.is_verified === 0) {
+      // the code was already used (e.g. the button was tapped twice) — say so instead of "Invalid OTP"
+      return res.status(400).json({ status: false, code: "OTP_ALREADY_USED", message: "This code has already been used — your email is verified." });
+    }
     if (user) {
       console.log(`[verifyOtp] email=${email} | match=${user.otp?.toString() === otp?.toString()}`);
       if (user.otp?.toString() === otp?.toString()) {
@@ -696,7 +706,7 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
         });
       } else {
         res.status(400);
-        return next(new Error("Invalid OTP"));
+        return next(new Error("Invalid OTP — please use the code from the most recent email we sent."));
       }
     } else {
       res.status(400);
