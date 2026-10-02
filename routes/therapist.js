@@ -18,6 +18,7 @@ import {
   getProfile,
   checkProfileSet,
   getDashboardData,
+  setDashboardSince,
   ShowToPage,
   ShowToPageSelf,
   SetPriority,
@@ -82,6 +83,7 @@ router.delete("/delete-review/:id", hasPermission("reviews"), deleteReview);
 router.delete("/delete-user", hasPermission(["therapists","clients"]), deleteUser);
 
 router.get("/get-my-reviews", isAuthCommon, getMyReviews);
+router.post("/set-dashboard-since", isTherapist, setDashboardSince);
 
 // One-click "stop availability reminders" link from the reminder email
 router.get("/availability-reminders/unsubscribe", async (req, res) => {

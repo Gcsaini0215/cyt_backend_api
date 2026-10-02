@@ -538,7 +538,12 @@ export const getDashboardData = expressAsyncHandler(async (req, res, next) => {
       is_active: 1,
     });
 
-    const bookings = await Booking.find({ therapist: therapistProfile._id, transaction: { $exists: true, $ne: null } })
+    const since = therapistProfile.dashboard_since || null;
+    const bookings = await Booking.find({
+      therapist: therapistProfile._id,
+      transaction: { $exists: true, $ne: null },
+      ...(since && { booking_date: { $gte: since } }),
+    })
       .populate("client", "name email phone profile")
       .sort({ _id: -1 });
 
@@ -548,7 +553,11 @@ export const getDashboardData = expressAsyncHandler(async (req, res, next) => {
 
     const workshops = await Workshop.find({ post_by: therapistProfile._id });
     const workshopIds = workshops.map(w => w._id);
-    const workshopBookings = await WorkshopBooking.find({ workshop: { $in: workshopIds }, is_payment_success: true })
+    const workshopBookings = await WorkshopBooking.find({
+      workshop: { $in: workshopIds },
+      is_payment_success: true,
+      ...(since && { createdAt: { $gte: since } }),
+    })
       .populate("user", "name email phone profile")
       .populate("workshop", "title category event_date")
       .sort({ _id: -1 });
@@ -573,6 +582,7 @@ export const getDashboardData = expressAsyncHandler(async (req, res, next) => {
         client: uniqueClients,
         recentAppointments: bookings.slice(0, 5),
         recentWorkshops: workshopBookings.slice(0, 5),
+        since,
       },
       status: true,
     });
@@ -580,6 +590,25 @@ export const getDashboardData = expressAsyncHandler(async (req, res, next) => {
     res.status(400);
     throw new Error(error.message || "Unknown error");
   }
+});
+
+// POST /set-dashboard-since { since: "month" | null } — the therapist's own
+// "start fresh" switch for the dashboard overview. "month" = 1st of the
+// current month in IST; null goes back to all-time. Only a date is stored.
+export const setDashboardSince = expressAsyncHandler(async (req, res) => {
+  const therapist = await Therapists.findOne({ user: req.user._id });
+  if (!therapist) {
+    res.status(404);
+    throw new Error("Therapist profile not found");
+  }
+  let since = null;
+  if (req.body?.since === "month") {
+    const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000); // shift to IST wall clock
+    since = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), 1) - 5.5 * 60 * 60 * 1000);
+  }
+  therapist.dashboard_since = since;
+  await therapist.save();
+  res.status(200).json({ status: true, message: since ? "Overview reset" : "Showing all-time", data: { since } });
 });
 
 export const ShowToPage = expressAsyncHandler(async (req, res, next) => {

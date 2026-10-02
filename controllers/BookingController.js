@@ -754,7 +754,9 @@ export const getBookings = expressAsyncHandler(async (req, res, next) => {
       })
       .populate({
         path: "transaction",
-        select: "amount transaction_id",
+        // method + time power the invoice "Paid on / Method" lines and the
+        // therapist notifications feed
+        select: "amount transaction_id payment_method createdAt",
         populate: {
           path: "status",
           select: "_id name"

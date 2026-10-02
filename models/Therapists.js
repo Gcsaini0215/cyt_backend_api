@@ -105,6 +105,10 @@ const TherapistSchema = new Schema(
     availability_reminder_last_at: { type: Date, default: null },
     availability_reminders_off: { type: Boolean, default: false },
 
+    // Therapist dashboard "start fresh": overview stats count only bookings
+    // from this date on. Nothing is deleted — null means all-time.
+    dashboard_since: { type: Date, default: null },
+
     verification_status: { type: String, enum: ["pending", "approved", "rejected", "reupload"], default: "pending" },
     verification_note: { type: String, default: "" },          // reject reason / what to re-upload
     verification_checklist: { type: Object, default: {} },     // { id_matches, degree_valid, docs_clear, about_ok }
