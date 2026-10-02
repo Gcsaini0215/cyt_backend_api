@@ -20,6 +20,7 @@ import { generateQrCode } from "../helper/generate.js";
 import { leadNotificationEmail, noidaAppointmentConfirmationEmail } from "../services/mailTemplates.js";
 import { getOrCreatePricing } from "./NoidaPricingController.js";
 import { getActiveCredit } from "./NoidaClientCreditController.js";
+import { claimReceptionSession, refundReceptionSession, refundNoidaCredit, reclaimNoidaCredit } from "../helper/receptionPackage.js";
 
 const getRazorpayInstance = () => new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
@@ -383,7 +384,16 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
         data: {
           found: true,
           name: credit.name,
-          credit: { available: true, sessionsRemaining: credit.totalSessions - credit.sessionsUsed, packageName: credit.packageName },
+          credit: {
+            available: true,
+            sessionsRemaining: credit.totalSessions - credit.sessionsUsed,
+            packageName: credit.packageName,
+            totalSessions: credit.totalSessions,
+            sessionsUsed: credit.sessionsUsed,
+            source: credit.source,
+            lastUsedAt: credit.lastUsedAt || null,
+            lastUsedKind: credit.lastUsedKind || null,
+          },
         },
       });
     }
@@ -589,6 +599,8 @@ export const getNoidaClientProfile = expressAsyncHandler(async (req, res, next) 
               sessionsUsed: credit.sessionsUsed,
               packageName: credit.packageName,
               source: credit.source,
+              lastUsedAt: credit.lastUsedAt || null,
+              lastUsedKind: credit.lastUsedKind || null,
             }
           : { available: false, sessionsRemaining: 0, packageName: "" },
         reception: receptionClient
@@ -765,11 +777,9 @@ async function finalizeNoidaBooking({
     // Same idea, but the session lives on a walk-in Reception client's package
     // (a separate collection with a free-form `id` string, not an ObjectId) — so this
     // booking and an in-clinic visit draw from the same pool and can't double-spend it.
-    const claimed = await ReceptionClient.findOneAndUpdate(
-      { id: credit._id, "package.used": credit.sessionsUsed },
-      { $inc: { "package.used": 1 } },
-      { new: true }
-    );
+    const claimed = await claimReceptionSession(credit._id, {
+      kind: "booking", date, slot, by: bookedByAdmin ? "reception desk" : "client (online)",
+    });
     if (!claimed) {
       const err = new Error("That session credit was just claimed elsewhere. Please refresh and try again.");
       err.status = 409;
@@ -839,6 +849,15 @@ async function finalizeNoidaBooking({
     receptionCreditClientId,
     bookedByAdmin: bookedByAdmin || null,
   });
+
+  if (receptionCreditClientId) {
+    // point the "booking" history entry at this appointment (for Recount / history)
+    await ReceptionClient.updateOne(
+      { id: receptionCreditClientId, "sessionLog.kind": "booking", "sessionLog.date": date, "sessionLog.slot": slot },
+      { $set: { "sessionLog.$[e].ref": String(appointment._id) } },
+      { arrayFilters: [{ "e.kind": "booking", "e.date": date, "e.slot": slot, "e.ref": { $exists: false } }] }
+    ).catch(() => {});
+  }
 
   // A brand-new (paid, not credit-funded) package purchase — open a credit
   // record so this client's future follow-ups skip payment automatically.
@@ -1705,7 +1724,7 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
       update.archivedAt = archived ? new Date() : null;
     }
 
-    const before = status ? await NoidaAppointment.findById(id).select("status date slot type").lean() : null;
+    const before = status ? await NoidaAppointment.findById(id).select("status date slot type creditUsed receptionCreditClientId creditRefunded").lean() : null;
     if (status === "confirmed" && before && before.status === "cancelled") {
       // Bringing a cancelled booking back — only if nobody else has taken the slot since.
       const taken = await NoidaAppointment.exists({ _id: { $ne: id }, date: before.date, slot: before.slot, status: "confirmed" });
@@ -1713,12 +1732,35 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
         res.status(409);
         return next(new Error("Someone else has booked that slot since — it can't be re-confirmed."));
       }
+      // It was a package booking whose session went back on cancel — take it again.
+      if (before.creditRefunded && (before.receptionCreditClientId || before.creditUsed)) {
+        const ok = before.receptionCreditClientId
+          ? await claimReceptionSession(before.receptionCreditClientId, { kind: "rebook", ref: String(id), date: before.date, slot: before.slot, by: req.user?.name || "" })
+          : await reclaimNoidaCredit(before.creditUsed);
+        if (!ok) {
+          res.status(409);
+          return next(new Error("This client has no package sessions left — it can't be re-confirmed from the package."));
+        }
+        update.creditRefunded = false;
+      }
     }
 
     const appointment = await NoidaAppointment.findByIdAndUpdate(id, update, { new: true });
     if (!appointment) {
       res.status(404);
       return next(new Error("Appointment not found."));
+    }
+
+    // Cancelling a package booking gives its session back to the package (once).
+    if (status === "cancelled" && before && before.status !== "cancelled" && !before.creditRefunded
+        && (before.receptionCreditClientId || before.creditUsed)) {
+      const back = before.receptionCreditClientId
+        ? await refundReceptionSession(before.receptionCreditClientId, { kind: "cancel", ref: String(id), date: before.date, slot: before.slot, by: req.user?.name || "" })
+        : await refundNoidaCredit(before.creditUsed);
+      if (back) {
+        await NoidaAppointment.updateOne({ _id: id }, { $set: { creditRefunded: true } });
+        appointment.creditRefunded = true;
+      }
     }
 
     // A booking cancelled by the admin closes its slot for good (reopen it from Manage
@@ -1830,6 +1872,17 @@ export const deleteNoidaAppointment = expressAsyncHandler(async (req, res, next)
     if (!appointment) {
       res.status(404);
       return next(new Error("Appointment not found."));
+    }
+    // Deleting a live package booking that never happened gives the session back
+    // (a cancelled one was already refunded; an attended one really was used).
+    if (appointment.status !== "cancelled" && !appointment.creditRefunded
+        && !["arrived", "completed"].includes(appointment.attendance)
+        && (appointment.receptionCreditClientId || appointment.creditUsed)) {
+      if (appointment.receptionCreditClientId) {
+        await refundReceptionSession(appointment.receptionCreditClientId, { kind: "delete-refund", ref: String(id), date: appointment.date, slot: appointment.slot, by: req.user?.name || "" });
+      } else {
+        await refundNoidaCredit(appointment.creditUsed);
+      }
     }
     return res.status(200).json({ status: true, message: "Appointment deleted." });
   } catch (err) {

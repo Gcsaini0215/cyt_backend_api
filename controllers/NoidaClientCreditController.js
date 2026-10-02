@@ -2,6 +2,8 @@ import expressAsyncHandler from "express-async-handler";
 import mongoose from "mongoose";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import ReceptionClient from "../models/ReceptionClient.js";
+import NoidaAppointment from "../models/NoidaAppointment.js";
+import { lastUsedOf } from "../helper/receptionPackage.js";
 import { ensureClientCode, ensureBackfilled, clientCodesFor, phoneTailRegex, samePhone } from "../helper/noidaClient.js";
 
 // Shared helper — the one active credit record for a phone with sessions left, or null.
@@ -15,12 +17,17 @@ import { ensureClientCode, ensureBackfilled, clientCodesFor, phoneTailRegex, sam
 export async function getActiveCredit(phone) {
   const credits = await NoidaClientCredit.find({ phone, active: true }).sort({ createdAt: 1 }).lean();
   const noidaCredit = credits.find((c) => c.sessionsUsed < c.totalSessions);
-  if (noidaCredit) return { ...noidaCredit, source: "noida-credit" };
+  if (noidaCredit) {
+    // "last used" for the booking screen — the latest live booking drawn from this credit
+    const last = await NoidaAppointment.findOne({ creditUsed: noidaCredit._id, status: { $ne: "cancelled" } })
+      .sort({ date: -1 }).select("date").lean();
+    return { ...noidaCredit, source: "noida-credit", lastUsedAt: last?.date || null, lastUsedKind: last ? "booking" : null };
+  }
 
   // Newest first — a client re-registered after finishing an earlier package should be
   // matched on their current one, not a stale, fully-used record from an older visit.
   const receptionClients = await ReceptionClient.find({ phone: { $regex: phoneTailRegex(phone) } })
-    .sort({ createdAt: -1 }).select("id name phone package createdAt").lean();
+    .sort({ createdAt: -1 }).select("id name phone package createdAt sessionLog attendance").lean();
   const receptionMatch = receptionClients.find((c) => {
     if (!samePhone(c.phone, phone)) return false;
     const pkg = c.package;
@@ -35,6 +42,8 @@ export async function getActiveCredit(phone) {
       totalSessions: Number(receptionMatch.package.total),
       sessionsUsed: Number(receptionMatch.package.used || 0),
       source: "reception",
+      lastUsedAt: lastUsedOf(receptionMatch)?.at || null,
+      lastUsedKind: lastUsedOf(receptionMatch)?.kind || null,
     };
   }
 

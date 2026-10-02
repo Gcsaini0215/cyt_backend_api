@@ -1,7 +1,9 @@
 import { Router } from "express";
 import {
   getReceptionClients, createReceptionClient, upsertReceptionClient,
-  deleteReceptionClient, getPlanPrices, savePlanPrices,
+  deleteReceptionClient,
+  endReceptionSession,
+  recountReceptionClient, getPlanPrices, savePlanPrices,
 } from "../controllers/ReceptionController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
 
@@ -11,6 +13,8 @@ router.get("/reception-clients",        hasPermission("clients"), getReceptionCl
 router.post("/reception-clients",       hasPermission("clients"), createReceptionClient);
 router.put("/reception-clients/:id",    hasPermission("clients"), upsertReceptionClient);
 router.delete("/reception-clients/:id", hasPermission("clients"), deleteReceptionClient);
+router.post("/reception-clients/:id/end-session", hasPermission("clients"), endReceptionSession);
+router.get("/reception-clients/:id/recount", hasPermission("clients"), recountReceptionClient);
 
 router.get("/reception-plan-prices",    hasPermission("clients"), getPlanPrices);
 router.put("/reception-plan-prices",    hasPermission("clients"), savePlanPrices);

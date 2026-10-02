@@ -45,6 +45,8 @@ const noidaAppointmentSchema = new Schema({
   razorpayPaymentId: { type: String, default: "" },
   creditUsed:  { type: Schema.Types.ObjectId, ref: "NoidaClientCredit", default: null }, // which credit record this session was deducted from, if any
   receptionCreditClientId: { type: String, default: "" }, // set instead of creditUsed when the free session came from a walk-in Reception client's package (ReceptionClient.id, not an ObjectId)
+  creditRefunded: { type: Boolean, default: false },          // package session given back (cancelled / deleted) — guards against refunding twice
+  receptionAttendanceLinked: { type: Boolean, default: false }, // the Therapy Room's "end session" was matched to this pre-booked session (so it wasn't deducted again)
 
   assignedTo:  { type: Schema.Types.ObjectId, ref: "Admin", default: null }, // team member handling this booking
   bookedByAdmin: { type: Schema.Types.ObjectId, ref: "Admin", default: null }, // set when reception/staff booked this on the client's behalf
