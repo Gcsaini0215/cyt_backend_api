@@ -11,35 +11,47 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Copy code to VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}   # same as the frontend deploy — a non-default SSH port made this step fail
-          timeout: 60s
-          source: "."                     # ✅ project root
-          target: "/root/cyt_backend_api"  # ✅ full path to backend folder
-          strip_components: 0             # ✅ do NOT strip anything
-
-      - name: Install & restart backend on VPS
+      # The old scp-action copy step had failed on every run since 10 Sep
+      # (couldn't connect), so code reached the VPS only by hand. The server now
+      # pulls the commit itself over the same ssh-action connection the
+      # frontend deploy uses — and never touches .env, uploads/ or node_modules.
+      - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}   # same as the frontend deploy — a non-default SSH port made this step fail
+          port: ${{ secrets.VPS_PORT || 22 }}
+          timeout: 60s
+          command_timeout: 15m
           script: |
-            echo "📂 Switching to project directory..."
-            cd /root/cyt_backend_api || { echo "❌ Folder not found"; exit 1; }
+            set -e
+            APP=/root/cyt_backend_api
+            NEW=/root/cyt_backend_api-new
+            cd /root
 
-            echo "📦 Installing production dependencies..."
-            npm install --production || { echo "❌ npm install failed"; exit 1; }
+            echo "Fetching ${{ github.sha }}..."
+            rm -rf "$NEW"
+            git clone --quiet https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git "$NEW"
+            git -C "$NEW" checkout --quiet ${{ github.sha }}
 
-            echo "♻️ Restarting backend..."
+            echo "Backing up current code (no uploads/node_modules) for rollback..."
+            tar czf /root/cyt_backend_api-prev.tgz --exclude=node_modules --exclude=uploads -C /root cyt_backend_api 2>/dev/null || true
+
+            echo "Updating code..."
+            mkdir -p "$APP"
+            rm -rf "$NEW/.git" "$NEW/.env" "$NEW/uploads" "$NEW/node_modules"
+            cp -a "$NEW/." "$APP/"
+            rm -rf "$NEW"
+
+            echo "Installing production dependencies..."
+            cd "$APP"
+            npm install --production --no-audit --no-fund
+
+            echo "Restarting backend..."
             pm2 delete cyt_backend || true
             pm2 start index.js --name cyt_backend
+            pm2 save || true
+
+            sleep 4
+            pm2 describe cyt_backend | grep -E "status" | head -1
