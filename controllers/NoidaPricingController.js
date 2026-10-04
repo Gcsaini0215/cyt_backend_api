@@ -192,11 +192,12 @@ export const deletePackage = expressAsyncHandler(async (req, res, next) => {
 });
 
 
-// Public: the therapists a client can ask for at CYT Noida.
+// Public: the CYT Noida team, and whether a client can ask for one of them.
 export const getPublicNoidaTherapists = expressAsyncHandler(async (req, res, next) => {
   try {
     const enabled = await isTherapistChoiceEnabled();
-    return res.status(200).json({ status: true, enabled, data: enabled ? await getOfferedTherapists() : [] });
+    // enabled = the client may pick one; the list itself is always sent so the page can show the team
+    return res.status(200).json({ status: true, enabled, data: await getOfferedTherapists({ ignoreSwitch: true }) });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }

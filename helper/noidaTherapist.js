@@ -17,6 +17,9 @@ async function ratingsFor(ids) {
   return new Map(rows.map((r) => [String(r._id), { rating: Math.round(r.avg * 10) / 10, reviewCount: r.count }]));
 }
 
+const splitList = (v) => String(v || "").split(",").map((x) => x.trim()).filter(Boolean);
+const plainText = (html) => String(html || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&rsquo;/g, "'").replace(/\s+/g, " ").trim();
+
 const publicView = (d, stats) => ({
   _id: d._id,
   rating: stats?.rating || 0,
@@ -26,6 +29,11 @@ const publicView = (d, stats) => ({
   profileType: d.profile_type || "",
   qualification: d.qualification || "",
   experience: d.year_of_exp || "",
+  // for the profile card on the public booking page
+  state: d.state || "",
+  languages: splitList(d.language_spoken),
+  expertise: splitList(d.experties),
+  bio: plainText(d.user?.bio).slice(0, 700),
 });
 
 // The therapists the admin picked for CYT Noida, in the admin's order — and only
@@ -36,13 +44,15 @@ export async function isTherapistChoiceEnabled() {
   return pricing?.therapistChoice !== false; // on unless the admin switched it off
 }
 
-export async function getOfferedTherapists() {
+// The team list is shown on the public page even with choice switched off (as
+// "who you'll see"); only picking one is gated by the switch.
+export async function getOfferedTherapists({ ignoreSwitch = false } = {}) {
   const pricing = await NoidaPricing.findOne({}).select("therapists therapistChoice").lean();
-  if (pricing?.therapistChoice === false) return [];
+  if (!ignoreSwitch && pricing?.therapistChoice === false) return [];
   const ids = pricing?.therapists || [];
   if (!ids.length) return [];
   const [docs, stats] = await Promise.all([
-    Therapists.find({ _id: { $in: ids }, ...LIVE }).populate("user", "name profile").lean(),
+    Therapists.find({ _id: { $in: ids }, ...LIVE }).populate("user", "name profile bio").lean(),
     ratingsFor(ids),
   ]);
   const byId = new Map(docs.map((d) => [String(d._id), d]));
@@ -59,7 +69,7 @@ export async function resolveOfferedTherapist(id) {
 export async function getTherapistOptions() {
   const pricing = await NoidaPricing.findOne({}).select("therapists").lean();
   const selected = (pricing?.therapists || []).map(String);
-  const docs = await Therapists.find({ $or: [LIVE, { _id: { $in: selected } }] }).populate("user", "name profile").lean();
+  const docs = await Therapists.find({ $or: [LIVE, { _id: { $in: selected } }] }).populate("user", "name profile bio").lean();
   const stats = await ratingsFor(docs.map((d) => d._id));
   return docs
     .map((d) => ({ ...publicView(d, stats.get(String(d._id))), live: Number(d.show_to_page) > 0, selected: selected.includes(String(d._id)) }))
