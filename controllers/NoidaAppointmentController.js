@@ -364,6 +364,15 @@ export const rescheduleNoidaAppointment = expressAsyncHandler(async (req, res, n
 // tab to greet a returning client by name instead of asking them to
 // re-type everything. Checks past Noida bookings first, then the general
 // Lead inbox. Name only — nothing else about them is exposed pre-booking.
+// The therapist this phone last booked with (their most recent confirmed booking that
+// named one) — the Follow-up tab pre-selects them. Only the id goes out; the page
+// ignores it unless that therapist is still offered.
+async function lastTherapistFor(phone) {
+  const appt = await NoidaAppointment.findOne({ phone, therapist: { $ne: null }, status: "confirmed" })
+    .sort({ createdAt: -1 }).select("therapist").lean();
+  return appt?.therapist ? String(appt.therapist) : null;
+}
+
 export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) => {
   const phone = (req.query.phone || "").trim();
   if (!/^\d{10}$/.test(phone)) {
@@ -371,7 +380,7 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
   }
 
   try {
-    const credit = await getActiveCredit(phone);
+    const [credit, lastTherapistId] = await Promise.all([getActiveCredit(phone), lastTherapistFor(phone)]);
 
     // A credit belongs to one specific person — always show *its* name, never a different
     // name this same phone happens to be attached to elsewhere (a past booking, a Lead, or
@@ -394,6 +403,7 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
             lastUsedAt: credit.lastUsedAt || null,
             lastUsedKind: credit.lastUsedKind || null,
           },
+          lastTherapistId,
         },
       });
     }
@@ -401,12 +411,12 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
 
     const pastAppointment = await NoidaAppointment.findOne({ phone }).sort({ createdAt: -1 }).select("name").lean();
     if (pastAppointment?.name) {
-      return res.status(200).json({ status: true, data: { found: true, name: pastAppointment.name, credit: creditInfo } });
+      return res.status(200).json({ status: true, data: { found: true, name: pastAppointment.name, credit: creditInfo, lastTherapistId } });
     }
 
     const pastLead = await Lead.findOne({ phone }).sort({ created_at: -1 }).select("name").lean();
     if (pastLead?.name) {
-      return res.status(200).json({ status: true, data: { found: true, name: pastLead.name, credit: creditInfo } });
+      return res.status(200).json({ status: true, data: { found: true, name: pastLead.name, credit: creditInfo, lastTherapistId } });
     }
 
     // Not in Noida's own history — check the general walk-in "Reception" client list too
@@ -415,7 +425,7 @@ export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) =>
     const receptionClients = await ReceptionClient.find({ phone: { $regex: phoneTailRegex(phone) } }).select("name phone").limit(5).lean();
     const receptionMatch = receptionClients.find((c) => samePhone(c.phone, phone));
     if (receptionMatch?.name) {
-      return res.status(200).json({ status: true, data: { found: true, name: receptionMatch.name, credit: creditInfo } });
+      return res.status(200).json({ status: true, data: { found: true, name: receptionMatch.name, credit: creditInfo, lastTherapistId } });
     }
 
     return res.status(200).json({ status: true, data: { found: false, name: null, credit: creditInfo } });
