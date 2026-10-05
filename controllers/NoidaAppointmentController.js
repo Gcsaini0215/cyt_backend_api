@@ -1072,6 +1072,44 @@ export async function processPaidOrder({ orderId, paymentId }) {
   }
 }
 
+// Safety net for paid orders nobody confirmed: the browser never got back after the UPI
+// app (tab reloaded/closed) and no webhook arrived. Every couple of minutes, ask Razorpay
+// about orders still "pending" (older than a minute and a half, younger than a day); any
+// with a captured payment goes through processPaidOrder — booked, or refunded if the slot
+// has gone — exactly as the browser callback or webhook would have done.
+const RECONCILE_EVERY_MS = 2 * 60 * 1000;
+const RECONCILE_MIN_AGE_MS = 90 * 1000;
+const RECONCILE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+let reconciling = false;
+
+export async function reconcilePendingNoidaOrders() {
+  if (reconciling || mongoose.connection.readyState !== 1) return;
+  reconciling = true;
+  try {
+    const now = Date.now();
+    const rows = await NoidaPendingBooking.find({
+      status: "pending",
+      createdAt: { $lte: new Date(now - RECONCILE_MIN_AGE_MS), $gte: new Date(now - RECONCILE_MAX_AGE_MS) },
+    }).select("orderId").sort({ createdAt: 1 }).limit(50).lean();
+    if (!rows.length) return;
+    const razorpay = getRazorpayInstance();
+    for (const row of rows) {
+      try {
+        const payments = await razorpay.orders.fetchPayments(row.orderId);
+        const paid = (payments?.items || []).find((p) => p.status === "captured");
+        if (!paid) continue;
+        const out = await processPaidOrder({ orderId: row.orderId, paymentId: paid.id });
+        console.log(`noida reconcile: ${row.orderId} / ${paid.id} -> ${out.appointment ? "booked" : out.failure ? "could not book (refund handled)" : "already handled"}`);
+      } catch (err) {
+        console.error("noida reconcile:", row.orderId, err?.error?.description || err?.message || err);
+      }
+    }
+  } finally {
+    reconciling = false;
+  }
+}
+setInterval(() => { reconcilePendingNoidaOrders().catch((e) => console.error("noida reconcile:", e?.message)); }, RECONCILE_EVERY_MS).unref();
+
 export const createNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
   const {
     name, phone, email, concern, date, slot, age,
