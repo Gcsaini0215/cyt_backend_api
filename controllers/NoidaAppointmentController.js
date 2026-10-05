@@ -256,7 +256,7 @@ export const getUpcomingAppointment = expressAsyncHandler(async (req, res, next)
     const today = istDateStr(istNow());
     const appointment = await NoidaAppointment.findOne({ phone, status: "confirmed", date: { $gte: today } })
       .sort({ date: 1, slot: 1 })
-      .select("name date slot type")
+      .select("name date slot type rescheduleCount")
       .lean();
 
     if (!appointment) {
@@ -264,18 +264,30 @@ export const getUpcomingAppointment = expressAsyncHandler(async (req, res, next)
     }
     return res.status(200).json({
       status: true,
-      data: { found: true, name: appointment.name, date: appointment.date, slot: appointment.slot, type: appointment.type },
+      data: {
+        found: true, name: appointment.name, date: appointment.date, slot: appointment.slot, type: appointment.type,
+        rescheduleLimit: RESCHEDULES_PER_SESSION,
+        reschedulesUsed: appointment.rescheduleCount || 0,
+        reschedulesLeft: reschedulesLeft(appointment),
+      },
     });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
 });
 
-// Public: moves a client's nearest upcoming booking to a new date/slot.
+// Reschedule policy: every booked session — a single session or one session of a
+// package — can be moved once by the client. After that the public page refuses and
+// points them to WhatsApp; the reception desk (admin route) can still move it.
+const RESCHEDULES_PER_SESSION = 1;
+const reschedulesLeft = (appt) => Math.max(0, RESCHEDULES_PER_SESSION - (appt?.rescheduleCount || 0));
+
+// Moves a client's nearest upcoming booking to a new date/slot.
 // Re-derives the booking from phone server-side (never trusts a client-sent
 // appointment id) and re-validates the target slot exactly like a fresh
 // booking would — open, and not already taken by someone else.
-export const rescheduleNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
+// Public route: enforces the reschedule limit. Admin route: may go past it.
+const rescheduleHandler = ({ byAdmin }) => expressAsyncHandler(async (req, res, next) => {
   const phone = (req.body.phone || "").trim();
   const newDate = req.body.newDate;
   const newSlot = (req.body.newSlot || "").trim();
@@ -298,6 +310,10 @@ export const rescheduleNoidaAppointment = expressAsyncHandler(async (req, res, n
       res.status(404);
       return next(new Error("No upcoming appointment found for this number."));
     }
+    if (!byAdmin && reschedulesLeft(appointment) === 0) {
+      res.status(403);
+      return next(new Error(`This session has already been rescheduled once — our policy allows ${RESCHEDULES_PER_SESSION === 1 ? "one reschedule" : `${RESCHEDULES_PER_SESSION} reschedules`} per session. To change it again, please WhatsApp us on +91 80777 57951.`));
+    }
 
     const isOpen = await NoidaFollowupSlot.findOne({ date: newDate, slot: newSlot, type: appointment.type });
     if (!isOpen) {
@@ -313,12 +329,22 @@ export const rescheduleNoidaAppointment = expressAsyncHandler(async (req, res, n
     const previousDate = appointment.date;
     const previousSlot = appointment.slot;
 
-    appointment.previousDate = previousDate;
-    appointment.previousSlot = previousSlot;
-    appointment.rescheduleCount = (appointment.rescheduleCount || 0) + 1;
-    appointment.date = newDate;
-    appointment.slot = newSlot;
-    await appointment.save();
+    // Conditional on the count we checked, so two quick requests can't both use the
+    // one reschedule (the admin route skips the limit but still counts).
+    const moved = await NoidaAppointment.findOneAndUpdate(
+      {
+        _id: appointment._id,
+        status: "confirmed",
+        ...(byAdmin ? {} : { $or: [{ rescheduleCount: { $exists: false } }, { rescheduleCount: { $lt: RESCHEDULES_PER_SESSION } }] }),
+      },
+      { $set: { previousDate, previousSlot, date: newDate, slot: newSlot }, $inc: { rescheduleCount: 1 } },
+      { new: true }
+    );
+    if (!moved) {
+      res.status(403);
+      return next(new Error("This session has already been rescheduled. To change it again, please WhatsApp us on +91 80777 57951."));
+    }
+    appointment.set(moved.toObject());
 
     // Notify whoever owns this booking (assignee if set, else the fixed inbox) —
     // same pattern as a brand-new booking, just framed as a reschedule.
@@ -347,23 +373,21 @@ export const rescheduleNoidaAppointment = expressAsyncHandler(async (req, res, n
           appointment.email.trim(),
           "CYT Noida Appointment Has Been Rescheduled",
           `Your appointment is now confirmed for ${newDate} at ${newSlot}.`,
-          noidaAppointmentConfirmationEmail({ name: appointment.name, date: newDate, slot: newSlot, concern: appointment.concern })
+          noidaAppointmentConfirmationEmail({ name: appointment.name, date: newDate, slot: newSlot, concern: appointment.concern, rescheduled: reschedulesLeft(appointment) === 0 })
         );
       } catch (mailErr) {
         console.error("Reschedule client confirmation failed (non-fatal):", mailErr.message);
       }
     }
 
-    return res.status(200).json({ status: true, message: "Appointment rescheduled.", data: appointment });
+    return res.status(200).json({ status: true, message: "Appointment rescheduled.", data: appointment, reschedulesLeft: reschedulesLeft(appointment) });
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
 });
+export const rescheduleNoidaAppointment = rescheduleHandler({ byAdmin: false });
+export const adminRescheduleNoidaAppointment = rescheduleHandler({ byAdmin: true });
 
-// Public: "have we seen this phone number before?" — used by the follow-up
-// tab to greet a returning client by name instead of asking them to
-// re-type everything. Checks past Noida bookings first, then the general
-// Lead inbox. Name only — nothing else about them is exposed pre-booking.
 // The therapist this phone last booked with (their most recent confirmed booking that
 // named one) — the Follow-up tab pre-selects them. Only the id goes out; the page
 // ignores it unless that therapist is still offered.
@@ -373,6 +397,10 @@ async function lastTherapistFor(phone) {
   return appt?.therapist ? String(appt.therapist) : null;
 }
 
+// Public: "have we seen this phone number before?" — used by the follow-up
+// tab to greet a returning client by name instead of asking them to
+// re-type everything. Checks past Noida bookings first, then the general
+// Lead inbox. Name only — nothing else about them is exposed pre-booking.
 export const lookupClientByPhone = expressAsyncHandler(async (req, res, next) => {
   const phone = (req.query.phone || "").trim();
   if (!/^\d{10}$/.test(phone)) {

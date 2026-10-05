@@ -316,7 +316,7 @@ export const appointmentStatusMail = ({ firstName, isConfirmed, confirmedTime, c
 // NOIDA CENTER — CALENDLY-STYLE BOOKING
 // ============================================================================
 
-export const noidaAppointmentConfirmationEmail = ({ name, date, slot, concern }) =>
+export const noidaAppointmentConfirmationEmail = ({ name, date, slot, concern, rescheduled = false }) =>
   shell({
     preheader: `Your Noida center visit is booked for ${date}, ${slot}`,
     withBanner: true,
@@ -329,7 +329,10 @@ export const noidaAppointmentConfirmationEmail = ({ name, date, slot, concern })
         ["Time", esc(slot)],
         concern && ["Concern", esc(concern)],
       ]) +
-      note(`Need to reschedule or cancel? WhatsApp us at ${BRAND.phone} or reply to this email.`),
+      // Reschedule policy (RESCHEDULES_PER_SESSION in NoidaAppointmentController)
+      note(rescheduled
+        ? `You've used this session's one reschedule. For any further change or to cancel, WhatsApp us at ${BRAND.phone} or reply to this email.`
+        : `Reschedule policy: each session can be rescheduled once, from the Reschedule tab on the booking page. For any further change or to cancel, WhatsApp us at ${BRAND.phone} or reply to this email.`),
   });
 
 // ============================================================================

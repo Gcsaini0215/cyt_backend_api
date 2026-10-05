@@ -17,6 +17,7 @@ import {
   deleteFollowupSlot,
   getUpcomingAppointment,
   rescheduleNoidaAppointment,
+  adminRescheduleNoidaAppointment,
   adminBookCreditSession,
   adminCreateNoidaAppointment,
   exportNoidaAppointments,
@@ -74,6 +75,7 @@ router.post("/noida-appointments/offers/:id/claim", exitFeedbackRateLimit, claim
 router.post("/noida-appointments", leadRateLimit, createNoidaAppointment);       // public — no auth
 router.get("/noida-appointments/upcoming", phoneLookupRateLimit, getUpcomingAppointment); // public — no auth
 router.patch("/noida-appointments/reschedule", leadRateLimit, rescheduleNoidaAppointment); // public — no auth, registered before the :id route below
+router.patch("/noida-appointments/admin-reschedule", hasPermission("noidaCenter"), adminRescheduleNoidaAppointment); // reception desk — may go past the client reschedule limit
 
 router.post("/noida-appointments/last-minute-requests", lastMinuteRequestRateLimit, createLastMinuteRequest); // public — no auth
 router.get("/noida-appointments/last-minute-requests/:id/status", pollingRateLimit, getLastMinuteRequestStatus); // public — no auth, polled
