@@ -354,7 +354,12 @@ export const getFilteredTherapists = expressAsyncHandler(
               // public endpoint: never the therapist's contact details, login secrets or reviewers' emails
               "user.email": 0, "user.phone": 0, "user.resetToken": 0, "user.tokenExpiration": 0,
               "user.otp": 0, "user.otp_count": 0, "user.dob": 0, "user.age": 0, "user.last_visit": 0, "user.role": 0,
-              "reviews.email": 0
+              "reviews.email": 0,
+              // internal verification / profile-completion bookkeeping (incl. a token hash)
+              completion_token_hash: 0, completion_items: 0, completion_note: 0, completion_expires: 0,
+              completion_requested_at: 0, completion_submitted_at: 0, verification_checklist: 0,
+              verification_note: 0, verified_by: 0, profile_recheck: 0, reupload_docs: 0,
+              availability_reminder_last_at: 0, availability_reminders_off: 0
             }
           }
         ]),
@@ -382,7 +387,7 @@ export const getProfile = expressAsyncHandler(async (req, res, next) => {
       return next(new Error("Invalid user ID format"));
     }
    let therapist = await Therapists.findById(userId)
-      .select(" -resume -__v -is_mail_sent")
+      .select("-resume -__v -is_mail_sent -completion_token_hash -completion_items -completion_note -completion_expires -completion_requested_at -completion_submitted_at -verification_checklist -verification_note -verified_by -profile_recheck -reupload_docs -availability_reminder_last_at -availability_reminders_off")
       .populate("user", "name bio profile gender").lean(); // public profile: no phone / email / date of birth
     
     if (!therapist) {
