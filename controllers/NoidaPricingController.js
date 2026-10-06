@@ -92,6 +92,14 @@ export const updatePricing = expressAsyncHandler(async (req, res, next) => {
       }
       update.customPackage = { enabled: !!c.enabled, perSessionPrice, minSessions, maxSessions };
     }
+    if (req.body.slotCapacity !== undefined) {
+      const n = Math.floor(Number(req.body.slotCapacity));
+      if (!Number.isFinite(n) || n < 1 || n > 20) {
+        res.status(400);
+        return next(new Error("Clients per slot must be between 1 and 20."));
+      }
+      update.slotCapacity = n;
+    }
     if (req.body.defaultAssignee !== undefined) {
       const adminId = req.body.defaultAssignee;
       if (adminId) {

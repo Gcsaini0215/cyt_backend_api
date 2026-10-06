@@ -15,6 +15,7 @@ import {
   addFollowupSlots,
   addFollowupSlotsBulk,
   deleteFollowupSlot,
+  setFollowupSlotCapacity,
   getUpcomingAppointment,
   rescheduleNoidaAppointment,
   adminRescheduleNoidaAppointment,
@@ -112,6 +113,7 @@ router.get("/noida-followup-slots", hasPermission("noidaCenter"), hideRevenueFor
 router.post("/noida-followup-slots", hasPermission("noidaCenter"), addFollowupSlots);
 router.post("/noida-followup-slots/bulk", hasPermission("noidaCenter"), addFollowupSlotsBulk);
 router.delete("/noida-followup-slots/:id", hasPermission("noidaCenter"), deleteFollowupSlot);
+router.patch("/noida-followup-slots/:id/capacity", hasPermission("noidaCenter"), setFollowupSlotCapacity);
 
 router.get("/noida-coupons", hasPermission("noidaCenter"), getCoupons);
 router.get("/noida-coupons/:id/claims", hasPermission("noidaCenter"), getOfferClaims);

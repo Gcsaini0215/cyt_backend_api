@@ -12,6 +12,8 @@ const noidaFollowupSlotSchema = new Schema({
   date: { type: String, required: true }, // "YYYY-MM-DD"
   slot: { type: String, required: true }, // e.g. "11:00 AM - 12:00 PM"
   type: { type: String, enum: ["new", "followup"], default: "followup" },
+  // clients this slot can take at once; null = the centre default (NoidaPricing.slotCapacity)
+  capacity: { type: Number, default: null, min: 1, max: 20 },
 }, { timestamps: true });
 
 noidaFollowupSlotSchema.index({ date: 1, slot: 1, type: 1 }, { unique: true });

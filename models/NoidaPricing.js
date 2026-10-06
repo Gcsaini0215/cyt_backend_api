@@ -31,6 +31,10 @@ const noidaPricingSchema = new Schema({
   // about therapists at all (not even "No preference").
   therapistChoice: { type: Boolean, default: true },
 
+  // How many clients one opened slot can take at once (rooms / psychologists on duty).
+  // A slot can override it (NoidaFollowupSlot.capacity).
+  slotCapacity: { type: Number, default: 1, min: 1, max: 20 },
+
   // Auto-assigned + emailed the moment a new booking comes in, before any
   // admin manually reassigns it — lets one team member own first response
   // without someone having to notice and assign it by hand.

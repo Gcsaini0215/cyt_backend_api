@@ -149,6 +149,52 @@ function annotateSameDaySlots(slots, date, today, now) {
   });
 }
 
+// ── Slot capacity ── how many clients one date+slot can take: the slot's own capacity if the
+// admin set one (on any of its opened docs), else the centre default (Manage Slots → "Clients per
+// slot"). Occupancy is shared by new and follow-up bookings — it's one physical hour.
+async function centreCapacity() {
+  const p = await getOrCreatePricing();
+  return Math.max(1, Number(p.slotCapacity) || 1);
+}
+const capOf = (docs, def) => {
+  const caps = (docs || []).map((d) => Number(d.capacity)).filter((n) => n > 0);
+  return caps.length ? Math.max(...caps) : def;
+};
+// Map "date|slot" -> capacity, for every opened slot in `slotDocs`
+function capacityMap(slotDocs, def) {
+  const by = new Map();
+  for (const s of slotDocs) {
+    const k = `${s.date}|${s.slot}`;
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(s);
+  }
+  const out = new Map();
+  for (const [k, docs] of by) out.set(k, capOf(docs, def));
+  return out;
+}
+const countBy = (rows) => {
+  const m = new Map();
+  rows.forEach((b) => { const k = `${b.date}|${b.slot}`; m.set(k, (m.get(k) || 0) + 1); });
+  return m;
+};
+// Is this date+slot full? Optionally leaving one booking out (the one being moved or restored).
+async function slotIsFull(date, slot, excludeId = null) {
+  const [docs, def, count] = await Promise.all([
+    NoidaFollowupSlot.find({ date, slot }).select("capacity").lean(),
+    centreCapacity(),
+    NoidaAppointment.countDocuments({ date, slot, status: "confirmed", ...(excludeId ? { _id: { $ne: excludeId } } : {}) }),
+  ]);
+  const capacity = capOf(docs, def);
+  return { full: count >= capacity, capacity, count };
+}
+// A psychologist sees one client at a time, whatever the slot's capacity.
+async function therapistBusy(date, slot, therapistId, excludeId = null) {
+  if (!therapistId || !mongoose.Types.ObjectId.isValid(String(therapistId))) return false;
+  return !!(await NoidaAppointment.exists({ date, slot, status: "confirmed", therapist: therapistId, ...(excludeId ? { _id: { $ne: excludeId } } : {}) }));
+}
+const SLOT_FULL_MESSAGE = "Sorry, that slot was just booked by someone else. Please pick another.";
+const THERAPIST_BUSY_MESSAGE = "That psychologist already has a session at this time — please pick another time, or choose no preference.";
+
 export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
   const { date } = req.query;
   const type = normalizeType(req.query.type);
@@ -166,15 +212,24 @@ export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
     return res.status(200).json({ status: true, data: [] });
   }
 
-  const saved = await NoidaFollowupSlot.find({ date, type }).select("slot").lean();
+  const [saved, allDocs, def, booked] = await Promise.all([
+    NoidaFollowupSlot.find({ date, type }).select("slot").lean(),
+    NoidaFollowupSlot.find({ date }).select("date slot capacity").lean(),
+    centreCapacity(),
+    NoidaAppointment.find({ date, status: "confirmed" }).select("date slot").lean(),
+  ]);
   const annotated = annotateSameDaySlots(saved.map((s) => s.slot), date, today, now);
 
-  // Physical slot occupancy is global — a "new" and a "followup" booking can't share a time.
-  // Booked slots stay in the list (marked booked) rather than disappearing, so the client
-  // can see the full picture of what's taken vs. open.
-  const booked = await NoidaAppointment.find({ date, status: "confirmed" }).select("slot").lean();
-  const bookedSet = new Set(booked.map((b) => b.slot));
-  const data = annotated.map(({ slot, lastMinute, past }) => ({ slot, booked: bookedSet.has(slot), lastMinute, past }));
+  // Occupancy is global — new and follow-up bookings share the hour. A slot is "booked" (full)
+  // once it holds its capacity; full slots stay in the list so the client sees what's taken.
+  const caps = capacityMap(allDocs, def);
+  const counts = countBy(booked);
+  const data = annotated.map(({ slot, lastMinute, past }) => {
+    const k = `${date}|${slot}`;
+    const cap = caps.get(k) || def;
+    const n = counts.get(k) || 0;
+    return { slot, booked: n >= cap, left: Math.max(0, cap - n), lastMinute, past };
+  });
 
   return res.status(200).json({ status: true, data });
 });
@@ -191,13 +246,16 @@ export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) =
   const maxDate = new Date(now);
   maxDate.setDate(maxDate.getDate() + MAX_DAYS_AHEAD);
 
-  const [allSlots, booked] = await Promise.all([
+  const [allSlots, capDocs, def, booked] = await Promise.all([
     NoidaFollowupSlot.find({ date: { $gte: today, $lte: istDateStr(maxDate) }, type }).select("date slot").lean(),
+    NoidaFollowupSlot.find({ date: { $gte: today, $lte: istDateStr(maxDate) } }).select("date slot capacity").lean(),
+    centreCapacity(),
     NoidaAppointment.find({ date: { $gte: today }, status: "confirmed" }).select("date slot").lean(),
   ]);
 
-  // Public: only whether a slot is taken — no name, phone or client number.
-  const bookedSet = new Set(booked.map((b) => `${b.date}|${b.slot}`));
+  // Public: only whether a slot is full (and how many places are left) — no name, phone or client number.
+  const caps = capacityMap(capDocs, def);
+  const counts = countBy(booked);
   const byDate = new Map();
   for (const s of allSlots) {
     if (!byDate.has(s.date)) byDate.set(s.date, []);
@@ -208,8 +266,10 @@ export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) =
   for (const [date, slots] of byDate) {
     const annotated = annotateSameDaySlots(slots, date, today, now);
     for (const { slot, lastMinute, past } of annotated) {
-      const isBooked = bookedSet.has(`${date}|${slot}`);
-      data.push({ date, slot, booked: isBooked, lastMinute, past });
+      const k = `${date}|${slot}`;
+      const cap = caps.get(k) || def;
+      const n = counts.get(k) || 0;
+      data.push({ date, slot, booked: n >= cap, left: Math.max(0, cap - n), lastMinute, past });
     }
   }
   data.sort((a, b) => a.date === b.date ? 0 : a.date < b.date ? -1 : 1);
@@ -226,15 +286,19 @@ export const getFollowupDates = expressAsyncHandler(async (req, res, next) => {
     const now = istNow();
     const today = istDateStr(now);
 
-    const [allSlots, booked] = await Promise.all([
+    const [allSlots, capDocs, def, booked] = await Promise.all([
       NoidaFollowupSlot.find({ date: { $gte: today }, type }).select("date slot").lean(),
+      NoidaFollowupSlot.find({ date: { $gte: today } }).select("date slot capacity").lean(),
+      centreCapacity(),
       NoidaAppointment.find({ date: { $gte: today }, status: "confirmed" }).select("date slot").lean(),
     ]);
 
-    const bookedSet = new Set(booked.map((b) => `${b.date}|${b.slot}`));
+    const caps = capacityMap(capDocs, def);
+    const counts = countBy(booked);
     const openDates = new Set();
     for (const s of allSlots) {
-      if (!bookedSet.has(`${s.date}|${s.slot}`)) openDates.add(s.date);
+      const k = `${s.date}|${s.slot}`;
+      if ((counts.get(k) || 0) < (caps.get(k) || def)) openDates.add(s.date);
     }
 
     return res.status(200).json({ status: true, data: Array.from(openDates).sort() });
@@ -320,10 +384,13 @@ const rescheduleHandler = ({ byAdmin }) => expressAsyncHandler(async (req, res, 
       res.status(400);
       return next(new Error("That slot isn't open for booking on the selected date."));
     }
-    const clash = await NoidaAppointment.findOne({ date: newDate, slot: newSlot, status: "confirmed" });
-    if (clash) {
+    if ((await slotIsFull(newDate, newSlot, appointment._id)).full) {
       res.status(409);
-      return next(new Error("Sorry, that slot was just booked by someone else. Please pick another."));
+      return next(new Error(SLOT_FULL_MESSAGE));
+    }
+    if (await therapistBusy(newDate, newSlot, appointment.therapist, appointment._id)) {
+      res.status(409);
+      return next(new Error(THERAPIST_BUSY_MESSAGE));
     }
 
     const previousDate = appointment.date;
@@ -732,7 +799,7 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
   const { name, age, email, concern, date, slot } = req.body;
   const bookingSent = !!(name?.trim() && /^\d{10}$/.test(phone || "") && isValidDateStr(date) && slot?.trim());
   if (bookingSent) {
-    const blocked = await slotUnavailableReason({ date, slot, type, phone: phone.trim() });
+    const blocked = await slotUnavailableReason({ date, slot, type, phone: phone.trim(), therapistId });
     if (blocked) {
       res.status(blocked.status);
       return next(new Error(blocked.message));
@@ -801,11 +868,21 @@ async function finalizeNoidaBooking({
   sessionMode, format, address, packageId, customSessions, couponCode, discountAmount: lockedDiscount, therapistId,
   credit, paymentMethod, razorpayOrderId, razorpayPaymentId, bookedByAdmin,
 }) {
-  const alreadyBooked = await NoidaAppointment.findOne({ date, slot, status: "confirmed" });
-  if (alreadyBooked) {
-    const err = new Error("Sorry, that slot was just booked by someone else. Please pick another.");
+  if ((await slotIsFull(date, slot)).full) {
+    const err = new Error(SLOT_FULL_MESSAGE);
     err.status = 409;
     throw err;
+  }
+  // The asked-for psychologist already has someone at this time: the desk is told so it can
+  // pick again; a paid online booking still goes through, just without the preference.
+  let wantTherapist = therapistId;
+  if (await therapistBusy(date, slot, therapistId)) {
+    if (bookedByAdmin) {
+      const err = new Error(THERAPIST_BUSY_MESSAGE);
+      err.status = 409;
+      throw err;
+    }
+    wantTherapist = null;
   }
 
   let baseAmount = 0, platformFee = 0, totalAmount = 0, packageName = "", creditUsedId = null, sessionsCount = 0;
@@ -856,7 +933,7 @@ async function finalizeNoidaBooking({
   const clientCode = await ensureClientCode({ phone: phone.trim(), name: name.trim() });
   // The client's preferred therapist — looked up leniently: a booking that is already
   // paid for is never refused just because a therapist went off-air meanwhile.
-  const therapist = therapistId ? await resolveOfferedTherapist(therapistId) : null;
+  const therapist = wantTherapist ? await resolveOfferedTherapist(wantTherapist) : null;
 
   const appointment = await NoidaAppointment.create({
     name: name.trim(),
@@ -986,11 +1063,11 @@ function isLastMinuteSlot(date, slot) {
 // Why a public client can't book this slot right now, or null if they can.
 // Used both before taking payment (so nobody is charged for a taken slot) and
 // again after payment, since a slot can vanish while checkout is open.
-async function slotUnavailableReason({ date, slot, type, phone }) {
+async function slotUnavailableReason({ date, slot, type, phone, therapistId }) {
   const isOpen = await NoidaFollowupSlot.findOne({ date, slot, type });
   if (!isOpen) return { status: 400, message: "That slot isn't open for booking on the selected date." };
-  const booked = await NoidaAppointment.findOne({ date, slot, status: "confirmed" });
-  if (booked) return { status: 409, message: "Sorry, that slot was just booked by someone else. Please pick another." };
+  if ((await slotIsFull(date, slot)).full) return { status: 409, message: SLOT_FULL_MESSAGE };
+  if (await therapistBusy(date, slot, therapistId)) return { status: 409, message: THERAPIST_BUSY_MESSAGE };
   if (isLastMinuteSlot(date, slot)) {
     const approved = await NoidaLastMinuteRequest.findOne({ phone, date, slot, status: "accepted" });
     if (!approved) return { status: 400, message: "This slot needs staff approval first — please send a request and wait for it to be accepted." };
@@ -1333,8 +1410,8 @@ export const createLastMinuteRequest = expressAsyncHandler(async (req, res, next
     res.status(400);
     return next(new Error("That slot isn't open for booking."));
   }
-  const alreadyBooked = await NoidaAppointment.findOne({ date, slot, status: "confirmed" });
-  if (alreadyBooked) {
+  const occ = await slotIsFull(date, slot);
+  if (occ.full) {
     res.status(409);
     return next(new Error("Sorry, that slot was just booked by someone else."));
   }
@@ -1347,10 +1424,14 @@ export const createLastMinuteRequest = expressAsyncHandler(async (req, res, next
     return res.status(200).json({ status: true, data: ownExisting });
   }
 
-  const othersActive = await expireIfStale(
-    await NoidaLastMinuteRequest.findOne({ date, slot, status: { $in: ["pending", "accepted"] } })
-  );
-  if (othersActive && othersActive.status !== "expired") {
+  // other people's live requests for this slot each hold one of the places still free
+  const others = await NoidaLastMinuteRequest.find({ date, slot, phone: { $ne: phone.trim() }, status: { $in: ["pending", "accepted"] } });
+  let activeOthers = 0;
+  for (const r of others) {
+    const fresh = await expireIfStale(r);
+    if (fresh && fresh.status !== "expired") activeOthers++;
+  }
+  if (occ.count + activeOthers >= occ.capacity) {
     res.status(409);
     return next(new Error("Someone else has already requested this slot — please try another."));
   }
@@ -1468,8 +1549,7 @@ export const acceptLastMinuteRequest = expressAsyncHandler(async (req, res, next
     res.status(400);
     return next(new Error(`This request is no longer pending (${request.status}).`));
   }
-  const clash = await NoidaAppointment.findOne({ date: request.date, slot: request.slot, status: "confirmed" });
-  if (clash) {
+  if ((await slotIsFull(request.date, request.slot)).full) {
     request.status = "rejected";
     await request.save();
     res.status(409);
@@ -1803,8 +1883,7 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
     const before = status ? await NoidaAppointment.findById(id).select("status date slot type creditUsed receptionCreditClientId creditRefunded").lean() : null;
     if (status === "confirmed" && before && before.status === "cancelled") {
       // Bringing a cancelled booking back — only if nobody else has taken the slot since.
-      const taken = await NoidaAppointment.exists({ _id: { $ne: id }, date: before.date, slot: before.slot, status: "confirmed" });
-      if (taken) {
+      if ((await slotIsFull(before.date, before.slot, id)).full) {
         res.status(409);
         return next(new Error("Someone else has booked that slot since — it can't be re-confirmed."));
       }
@@ -1842,7 +1921,9 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
     // A booking cancelled by the admin closes its slot for good (reopen it from Manage
     // Slots); bringing the booking back reopens the slot so it shows up in the tables again.
     let slotClosed = false;
-    if (status === "cancelled" && before && before.status !== "cancelled" && req.body.closeSlot !== false) {
+    // (a slot that takes several clients stays open — cancelling one booking just frees a place)
+    if (status === "cancelled" && before && before.status !== "cancelled" && req.body.closeSlot !== false
+      && (await slotIsFull(appointment.date, appointment.slot)).capacity <= 1) {
       const r = await NoidaFollowupSlot.deleteMany({ date: appointment.date, slot: appointment.slot });
       slotClosed = r.deletedCount > 0;
     }
@@ -1999,10 +2080,9 @@ export const adminBookCreditSession = expressAsyncHandler(async (req, res, next)
       res.status(400);
       return next(new Error("That slot isn't open for booking on the selected date."));
     }
-    const clash = await NoidaAppointment.findOne({ date, slot, status: "confirmed" });
-    if (clash) {
+    if ((await slotIsFull(date, slot)).full) {
       res.status(409);
-      return next(new Error("That slot is already booked."));
+      return next(new Error("That slot is already full."));
     }
 
     // Same optimistic-lock claim pattern as the public credit-based flow.
@@ -2049,18 +2129,32 @@ export const getFollowupSlots = expressAsyncHandler(async (req, res, next) => {
 
     const slots = await NoidaFollowupSlot.find(filter).sort({ date: 1, slot: 1 }).lean();
     const dates = [...new Set(slots.map((s) => s.date))];
+    const [capDocs, def] = await Promise.all([
+      NoidaFollowupSlot.find({ date: { $in: dates } }).select("date slot capacity").lean(),
+      centreCapacity(),
+    ]);
+    const caps = capacityMap(capDocs, def);
     const booked = await NoidaAppointment.find({ status: "confirmed", archived: { $ne: true }, date: { $in: dates } })
-      .select("date slot name clientCode therapistName age phone email concern type sessionMode format address packageName paymentStatus paymentMethod amount couponCode discountAmount attendance adminNote bookedByAdmin previousDate previousSlot createdAt")
+      .select("date slot name clientCode therapist therapistName age phone email concern type sessionMode format address packageName paymentStatus paymentMethod amount couponCode discountAmount attendance adminNote bookedByAdmin previousDate previousSlot createdAt")
       .lean();
-    const byKey = new Map(booked.map((b) => [`${b.date}|${b.slot}`, b]));
+    const byKey = new Map();
+    booked.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)).forEach((b) => {
+      const k = `${b.date}|${b.slot}`;
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(b);
+    });
 
     // Who holds a booked slot travels with it — this endpoint is admin-only, and the
-    // reception screen shows the name in the box and the full details on tap.
+    // reception screen shows the names in the box and the full details on tap.
+    // booked = has at least one booking; full = no place left; booking = the first (older screens).
     const data = slots.map((s) => {
-      const b = byKey.get(`${s.date}|${s.slot}`);
-      if (!b) return { ...s, booked: false };
-      const { date, slot, bookedByAdmin, ...rest } = b;
-      return { ...s, booked: true, booking: { ...rest, bookedByAdmin: !!bookedByAdmin } };
+      const k = `${s.date}|${s.slot}`;
+      const capacity = caps.get(k) || def;
+      const list = (byKey.get(k) || []).map(({ date, slot, bookedByAdmin, ...rest }) => ({ ...rest, bookedByAdmin: !!bookedByAdmin }));
+      return {
+        ...s, capacity, bookedCount: list.length, full: list.length >= capacity, booked: list.length > 0,
+        ...(list.length ? { booking: list[0], bookings: list } : {}),
+      };
     });
     return res.status(200).json({ status: true, data });
   } catch (err) {
@@ -2170,6 +2264,38 @@ export const deleteFollowupSlot = expressAsyncHandler(async (req, res, next) => 
   }
 });
 
+
+// PATCH /noida-followup-slots/:id/capacity  { capacity: 1..20 | null } — null = centre default
+export const setFollowupSlotCapacity = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(400);
+    return next(new Error("Invalid slot ID format."));
+  }
+  const raw = req.body.capacity;
+  const capacity = raw === null || raw === "" || raw === undefined ? null : Math.floor(Number(raw));
+  if (capacity !== null && (!Number.isFinite(capacity) || capacity < 1 || capacity > 20)) {
+    res.status(400);
+    return next(new Error("Clients per slot must be between 1 and 20."));
+  }
+  try {
+    const slot = await NoidaFollowupSlot.findById(id);
+    if (!slot) {
+      res.status(404);
+      return next(new Error("Slot not found."));
+    }
+    const def = await centreCapacity();
+    const count = await NoidaAppointment.countDocuments({ date: slot.date, slot: slot.slot, status: "confirmed" });
+    if ((capacity ?? def) < count) {
+      res.status(409);
+      return next(new Error(`This slot already has ${count} bookings — it can't take fewer than that.`));
+    }
+    await NoidaFollowupSlot.updateMany({ date: slot.date, slot: slot.slot }, { $set: { capacity } });
+    return res.status(200).json({ status: true, message: "Slot updated.", data: { capacity: capacity ?? def, custom: capacity !== null } });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
 
 // ── Payment problems (admin) ────────────────────────────────────────────────
 // Public bookings that were paid for but couldn't be finished, and what
