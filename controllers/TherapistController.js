@@ -350,7 +350,11 @@ export const getFilteredTherapists = expressAsyncHandler(
               is_mail_sent: 0,
               is_aproved: 0,
               "user.password": 0,
-              "user.__v": 0
+              "user.__v": 0,
+              // public endpoint: never the therapist's contact details, login secrets or reviewers' emails
+              "user.email": 0, "user.phone": 0, "user.resetToken": 0, "user.tokenExpiration": 0,
+              "user.otp": 0, "user.otp_count": 0, "user.dob": 0, "user.age": 0, "user.last_visit": 0, "user.role": 0,
+              "reviews.email": 0
             }
           }
         ]),
@@ -379,7 +383,7 @@ export const getProfile = expressAsyncHandler(async (req, res, next) => {
     }
    let therapist = await Therapists.findById(userId)
       .select(" -resume -__v -is_mail_sent")
-      .populate("user", "name phone email bio profile age gender dob").lean();;
+      .populate("user", "name bio profile gender").lean(); // public profile: no phone / email / date of birth
     
     if (!therapist) {
       return res.status(404).json({
@@ -391,7 +395,7 @@ export const getProfile = expressAsyncHandler(async (req, res, next) => {
      const today = new Date().toISOString().split("T")[0]; 
     const workshop = await Workshop.find({ post_by: therapist._id, is_active: 1,event_date: { $gte: today } })
 
-    const reviews = await Review.find({ therapist_id: therapist._id }).sort({ createdAt: -1 });
+    const reviews = await Review.find({ therapist_id: therapist._id }).select("-email").sort({ createdAt: -1 });
 
      therapist.workshops = workshop;
      therapist.reviews = reviews;
