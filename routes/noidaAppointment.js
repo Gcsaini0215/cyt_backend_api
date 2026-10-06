@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { getPublicReviews, getReviewForm, submitReview, getAdminReviews, decideReview, getReviewLink } from "../controllers/NoidaReviewController.js";
 import { validateCoupon, getCoupons, createCoupon, updateCoupon, deleteCoupon, getPublicOffers, claimOffer, getOfferClaims } from "../controllers/NoidaCouponController.js";
 import {
   getAvailableSlots,
@@ -16,6 +17,8 @@ import {
   addFollowupSlotsBulk,
   deleteFollowupSlot,
   setFollowupSlotCapacity,
+  getAbandonedBookings,
+  updateAbandonedBooking,
   getUpcomingAppointment,
   rescheduleNoidaAppointment,
   adminRescheduleNoidaAppointment,
@@ -114,6 +117,16 @@ router.post("/noida-followup-slots", hasPermission("noidaCenter"), addFollowupSl
 router.post("/noida-followup-slots/bulk", hasPermission("noidaCenter"), addFollowupSlotsBulk);
 router.delete("/noida-followup-slots/:id", hasPermission("noidaCenter"), deleteFollowupSlot);
 router.patch("/noida-followup-slots/:id/capacity", hasPermission("noidaCenter"), setFollowupSlotCapacity);
+// abandoned checkouts (never paid) for the desk to follow up — registered before the :id routes
+router.get("/noida-appointments/abandoned", hasPermission("noidaCenter"), hideRevenueForTeam, getAbandonedBookings);
+router.patch("/noida-appointments/abandoned/:id", hasPermission("noidaCenter"), updateAbandonedBooking);
+// reviews: public form + approved list, admin moderation + the desk's WhatsApp link
+router.get("/noida-reviews", getPublicReviews);
+router.get("/noida-reviews/form/:token", leadRateLimit, getReviewForm);
+router.post("/noida-reviews/form/:token", leadRateLimit, submitReview);
+router.get("/noida-reviews/admin", hasPermission("noidaCenter"), getAdminReviews);
+router.patch("/noida-reviews/:id", hasPermission("noidaCenter"), decideReview);
+router.post("/noida-appointments/:id/review-link", hasPermission("noidaCenter"), getReviewLink);
 
 router.get("/noida-coupons", hasPermission("noidaCenter"), getCoupons);
 router.get("/noida-coupons/:id/claims", hasPermission("noidaCenter"), getOfferClaims);

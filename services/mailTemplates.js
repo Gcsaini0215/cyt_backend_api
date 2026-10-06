@@ -335,6 +335,19 @@ export const noidaAppointmentConfirmationEmail = ({ name, date, slot, concern, r
         : `Reschedule policy: each session can be rescheduled once, from the Reschedule tab on the booking page. For any further change or to cancel, WhatsApp us at ${BRAND.phone} or reply to this email.`),
   });
 
+// Asked after the desk marks a CYT Noida session "Done".
+export const noidaReviewRequestEmail = ({ name, date, therapistName, link }) =>
+  shell({
+    preheader: "How was your session? It takes a minute.",
+    withBanner: true,
+    body:
+      eyebrow("Your session at CYT Noida", OK) +
+      heading(`How did it go, ${esc((name || "there").split(/\s+/)[0])}?`) +
+      para(`Thank you for visiting us${therapistName ? ` and meeting ${esc(therapistName)}` : ""}${date ? ` on ${esc(date)}` : ""}. Your feedback helps us care for you better — and helps someone else take their first step.`) +
+      button("Rate your session", link) +
+      note("It takes under a minute. You can choose not to show your name."),
+  });
+
 // ============================================================================
 // INTERNAL ALERTS  (sent to the CYT inbox, not to clients)
 // ============================================================================

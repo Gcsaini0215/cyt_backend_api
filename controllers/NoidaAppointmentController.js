@@ -10,6 +10,7 @@ import NoidaPackage from "../models/NoidaPackage.js";
 import { resolveCoupon, normalizeCouponCode } from "../helper/noidaCoupon.js";
 import { ensureClientCode, ensureBackfilled, phoneTailRegex, samePhone } from "../helper/noidaClient.js";
 import { resolveOfferedTherapist } from "../helper/noidaTherapist.js";
+import { requestReviewByEmail } from "./NoidaReviewController.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import Lead from "../models/Lead.js";
 import ReceptionClient from "../models/ReceptionClient.js";
@@ -228,7 +229,7 @@ export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
     const k = `${date}|${slot}`;
     const cap = caps.get(k) || def;
     const n = counts.get(k) || 0;
-    return { slot, booked: n >= cap, left: Math.max(0, cap - n), lastMinute, past };
+    return { slot, booked: n >= cap, left: Math.max(0, cap - n), cap, lastMinute, past };
   });
 
   return res.status(200).json({ status: true, data });
@@ -269,7 +270,7 @@ export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) =
       const k = `${date}|${slot}`;
       const cap = caps.get(k) || def;
       const n = counts.get(k) || 0;
-      data.push({ date, slot, booked: n >= cap, left: Math.max(0, cap - n), lastMinute, past });
+      data.push({ date, slot, booked: n >= cap, left: Math.max(0, cap - n), cap, lastMinute, past });
     }
   }
   data.sort((a, b) => a.date === b.date ? 0 : a.date < b.date ? -1 : 1);
@@ -1906,6 +1907,8 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
       return next(new Error("Appointment not found."));
     }
 
+    if (attendance === "completed") requestReviewByEmail(appointment); // not awaited — the desk shouldn't wait on email
+
     // Cancelling a package booking gives its session back to the package (once).
     if (status === "cancelled" && before && before.status !== "cancelled" && !before.creditRefunded
         && (before.receptionCreditClientId || before.creditUsed)) {
@@ -2295,6 +2298,59 @@ export const setFollowupSlotCapacity = expressAsyncHandler(async (req, res, next
   } catch (err) {
     return next(new Error(err.message || "Something went wrong"));
   }
+});
+
+// ── Abandoned bookings (admin) ──────────────────────────────────────────────
+// Public clients who got as far as payment but never paid: the order was created, no payment
+// came in for ABANDONED_AFTER_MIN minutes, and that phone hasn't booked since. One row per
+// phone (its latest attempt), last 7 days, so the desk can call / WhatsApp them.
+const ABANDONED_AFTER_MIN = 5;
+export const getAbandonedBookings = expressAsyncHandler(async (req, res, next) => {
+  try {
+    const now = Date.now();
+    const rows = await NoidaPendingBooking.find({
+      status: "pending",
+      createdAt: { $lte: new Date(now - ABANDONED_AFTER_MIN * 60000), $gte: new Date(now - 7 * 86400000) },
+    }).sort({ createdAt: -1 }).lean();
+    const phones = [...new Set(rows.map((r) => r.payload?.phone).filter(Boolean))];
+    const later = await NoidaAppointment.find({ phone: { $in: phones }, createdAt: { $gte: new Date(now - 8 * 86400000) } }).select("phone createdAt").lean();
+    const lastBooked = new Map();
+    later.forEach((b) => { const t = new Date(b.createdAt).getTime(); if (t > (lastBooked.get(b.phone) || 0)) lastBooked.set(b.phone, t); });
+    const byPhone = new Map();
+    for (const r of rows) {
+      const phone = r.payload?.phone || r.orderId;
+      if ((lastBooked.get(phone) || 0) > new Date(r.createdAt).getTime()) continue; // they booked after this attempt
+      if (!byPhone.has(phone)) byPhone.set(phone, { ...r, attempts: 1 });
+      else byPhone.get(phone).attempts += 1;
+    }
+    const all = [...byPhone.values()];
+    const showAll = req.query.all === "1";
+    const data = all.filter((r) => showAll || !r.followUp?.status).map((r) => ({
+      id: r._id, name: r.payload?.name || "", phone: r.payload?.phone || "", email: r.payload?.email || "",
+      date: r.payload?.date || "", slot: r.payload?.slot || "", type: r.payload?.type || "new",
+      sessionMode: r.payload?.sessionMode || "", format: r.payload?.format || "", concern: r.payload?.concern || "",
+      amount: r.amount, createdAt: r.createdAt, attempts: r.attempts,
+      followUp: r.followUp?.status ? r.followUp : null,
+    }));
+    return res.status(200).json({ status: true, open: all.filter((r) => !r.followUp?.status).length, data });
+  } catch (err) {
+    return next(new Error(err.message || "Something went wrong"));
+  }
+});
+
+// PATCH /noida-appointments/abandoned/:id  { status: "contacted" | "dismissed" | "", note }
+export const updateAbandonedBooking = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  const status = String(req.body?.status ?? "");
+  if (!mongoose.Types.ObjectId.isValid(id) || !["", "contacted", "dismissed"].includes(status)) {
+    res.status(400);
+    return next(new Error("Mark it contacted or dismissed."));
+  }
+  const r = await NoidaPendingBooking.findByIdAndUpdate(id, {
+    $set: { followUp: { status, note: String(req.body?.note || "").slice(0, 500), by: req.user?.name || "", at: status ? new Date() : null } },
+  }, { new: true });
+  if (!r) { res.status(404); return next(new Error("Not found.")); }
+  return res.status(200).json({ status: true, data: { id: r._id, followUp: r.followUp } });
 });
 
 // ── Payment problems (admin) ────────────────────────────────────────────────

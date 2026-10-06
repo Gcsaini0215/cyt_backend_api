@@ -42,6 +42,14 @@ const noidaPendingBookingSchema = new Schema({
   resolved: { type: Boolean, default: false },
   resolvedNote: { type: String, default: "" },
   resolvedAt: { type: Date, default: null },
+
+  // Never paid ("abandoned"): the desk's follow-up — "" = still to do, contacted, dismissed.
+  followUp: {
+    status: { type: String, enum: ["", "contacted", "dismissed"], default: "" },
+    note:   { type: String, default: "" },
+    by:     { type: String, default: "" },
+    at:     { type: Date, default: null },
+  },
 }, { timestamps: true });
 
 // Abandoned checkouts (never paid) and settled ones clean themselves up.

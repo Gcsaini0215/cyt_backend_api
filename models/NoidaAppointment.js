@@ -54,6 +54,10 @@ const noidaAppointmentSchema = new Schema({
   previousDate:    { type: String, default: "" }, // set on reschedule — the slot this booking moved FROM
   previousSlot:    { type: String, default: "" },
   rescheduleCount: { type: Number, default: 0 },
+
+  // review request (see NoidaReviewController): link token, and when it was emailed
+  reviewToken:       { type: String, index: { unique: true, sparse: true } }, // no default: absent until asked (a null would break the unique index)
+  reviewRequestedAt: { type: Date, default: null },
 }, { timestamps: true });
 
 noidaAppointmentSchema.index({ date: 1, slot: 1 });
