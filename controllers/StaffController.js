@@ -60,7 +60,7 @@ const officeConfigured = (s) => (s.office?.lat != null && s.office?.lng != null)
 const weekday = (date) => { const [y, m, d] = date.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); };
 function modeOf(s, adminId) {
   const m = (s.modes || []).find((x) => String(x.admin) === String(adminId));
-  return { mode: m?.mode || "office", wfhDays: m?.wfhDays || [] };
+  return { mode: m?.mode || "office", wfhDays: m?.wfhDays || [], phone: m?.phone || "", weekOff: Array.isArray(m?.weekOff) ? m.weekOff : [0] };
 }
 // may this person work from anywhere on `date`? (WFH mode, a hybrid WFH weekday, or an approved WFH request)
 async function wfhAllowed(s, adminId, date) {
@@ -280,7 +280,7 @@ export const getMyDay = expressAsyncHandler(async (req, res) => {
   res.json({
     status: true,
     data: {
-      me: { id: admin._id, name: admin.name, designation: admin.designation || "", isSuper, canManage, joined: admin.createdAt ? istDate(admin.createdAt) : "" },
+      me: { id: admin._id, name: admin.name, designation: admin.designation || "", isSuper, canManage, joined: admin.createdAt ? istDate(admin.createdAt) : "", weekOff: work.weekOff },
       settings: { startTime: settings.startTime, endTime: settings.endTime, graceMinutes: settings.graceMinutes },
       serverNow: nowUtc.toISOString(),
       today: todayRow && {
@@ -431,7 +431,8 @@ export const getTeam = expressAsyncHandler(async (req, res) => {
     const row = attBy.get(id);
     const mine = tasks.filter((t) => String(t.assignee) === id);
     const target = settings.targets.find((t) => String(t.admin) === id && t.month === month) || null;
-    const state = row?.checkOut ? "out" : row?.checkIn ? "in" : leaveToday[id] ? "leave" : nowMin > lateCutoff ? "absent" : "notyet";
+    const offToday = modeOf(settings, id).weekOff.includes(weekday(today));
+    const state = row?.checkOut ? "out" : row?.checkIn ? "in" : leaveToday[id] ? "leave" : offToday ? "off" : nowMin > lateCutoff ? "absent" : "notyet";
     return {
       id, name: a.name, email: a.email, designation: a.designation || "", profile: a.profile,
       role: a.roleId ? { name: a.roleId.name, color: a.roleId.color } : null,
@@ -441,6 +442,8 @@ export const getTeam = expressAsyncHandler(async (req, res) => {
       inPlace: row?.inPlace || "", outPlace: row?.outPlace || "", earlyMinutes: row?.earlyMinutes || 0, autoOut: !!row?.autoOut,
       inLoc: row?.inLoc?.lat != null ? row.inLoc : null, inDistance: row?.inDistance ?? null,
       mode: modeOf(settings, id).mode,
+      phone: modeOf(settings, id).phone,
+      weekOff: modeOf(settings, id).weekOff,
       wfhToday: (() => { const m = modeOf(settings, id); return m.mode === "wfh" || (m.mode === "hybrid" && m.wfhDays.includes(weekday(today))) || wfhReq.has(id); })(),
       tasks: {
         open: mine.filter((t) => t.status === "open").length,
@@ -464,6 +467,7 @@ export const getTeam = expressAsyncHandler(async (req, res) => {
         late: staff.filter((s) => s.lateMinutes > 0).length,
         absent: staff.filter((s) => s.state === "absent").length,
         leave: staff.filter((s) => s.state === "leave").length,
+        off: staff.filter((s) => s.state === "off").length,
         early: staff.filter((s) => s.earlyMinutes > 0).length,
         outside: staff.filter((s) => s.inPlace === "outside").length,
         pendingLeaves,
@@ -481,7 +485,7 @@ export const getAttendance = expressAsyncHandler(async (req, res) => {
   const first = monthStartDate(month);
   const last = addDays(nextMonthStart(month), -1);
   const until = last < today ? last : today;
-  const roster = await staffRoster();
+  const [roster, settings] = await Promise.all([staffRoster(), getSettings()]);
   const [rows, leaves] = await Promise.all([
     StaffAttendance.find({ admin: { $in: roster.map((a) => a._id) }, date: { $gte: first, $lte: last } }).lean(),
     approvedLeaveDays(roster.map((a) => a._id), first, last),
@@ -494,6 +498,7 @@ export const getAttendance = expressAsyncHandler(async (req, res) => {
     mine.forEach((r) => { records[r.date] = { checkIn: r.checkIn, checkOut: r.checkOut, lateMinutes: r.lateMinutes, note: r.note, edited: !!r.editedBy, place: r.inPlace || "", early: r.earlyMinutes || 0, autoOut: !!r.autoOut }; });
     return {
       id: a._id, name: a.name, role: a.roleId?.name || "", joined: a.createdAt ? istDate(a.createdAt) : "",
+      weekOff: modeOf(settings, a._id).weekOff,
       leaveDays: [...(leaves[String(a._id)] || [])],
       present: mine.filter((r) => r.checkIn).length,
       late: mine.filter((r) => r.lateMinutes > 0).length,
@@ -637,11 +642,12 @@ export const getStaffSettings = expressAsyncHandler(async (req, res) => {
       startTime: s.startTime, endTime: s.endTime, graceMinutes: s.graceMinutes, month,
       office: { lat: s.office?.lat ?? null, lng: s.office?.lng ?? null, radius: s.office?.radius || 200 },
       officeIps: s.officeIps || [], enforceOffice: !!s.enforceOffice, yourIp: cleanIp(req.ip),
+      annualLeave: s.annualLeave ?? 12,
       roles: roles.map((r) => ({ id: r._id, name: r.name, color: r.color })),
       staff: roster.map((a) => {
         const t = s.targets.find((x) => String(x.admin) === String(a._id) && x.month === month);
         const m = modeOf(s, a._id);
-        return { id: a._id, name: a.name, role: a.roleId?.name || "", mode: m.mode, wfhDays: m.wfhDays, target: t ? { bookings: t.bookings, collections: req.staff.isSuper ? t.collections : undefined, leads: t.leads } : null };
+        return { id: a._id, name: a.name, role: a.roleId?.name || "", mode: m.mode, wfhDays: m.wfhDays, phone: m.phone, weekOff: m.weekOff, target: t ? { bookings: t.bookings, collections: req.staff.isSuper ? t.collections : undefined, leads: t.leads } : null };
       }),
     },
   });
@@ -650,7 +656,7 @@ export const getStaffSettings = expressAsyncHandler(async (req, res) => {
 // PUT /api/staff/settings  { startTime, endTime, graceMinutes, office, officeIps, enforceOffice, modes }
 const isIp = (ip) => (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip) ? ip.split(".").every((n) => Number(n) <= 255) : /^[0-9a-f:]{2,39}$/i.test(ip) && ip.includes(":"));
 export const updateStaffSettings = expressAsyncHandler(async (req, res) => {
-  const { startTime, endTime, graceMinutes, office, officeIps, enforceOffice, modes } = req.body || {};
+  const { startTime, endTime, graceMinutes, office, officeIps, enforceOffice, modes, annualLeave } = req.body || {};
   const s = await getSettings();
   if (startTime !== undefined) { if (!TIME_RE.test(startTime)) { res.status(400); throw new Error("Start time must be HH:MM."); } s.startTime = startTime; }
   if (endTime !== undefined) { if (!TIME_RE.test(endTime)) { res.status(400); throw new Error("End time must be HH:MM."); } s.endTime = endTime; }
@@ -665,12 +671,18 @@ export const updateStaffSettings = expressAsyncHandler(async (req, res) => {
     s.officeIps = clean.slice(0, 20);
   }
   if (enforceOffice !== undefined) s.enforceOffice = !!enforceOffice;
+  if (annualLeave !== undefined) s.annualLeave = Math.max(0, Math.min(60, Math.round(Number(annualLeave) || 0)));
   if (Array.isArray(modes)) {
     modes.forEach((m) => {
       if (!isId(m?.admin) || !["office", "wfh", "hybrid"].includes(m.mode)) return;
       const wfhDays = (Array.isArray(m.wfhDays) ? m.wfhDays : []).map(Number).filter((d) => d >= 0 && d <= 6);
+      // phone: digits only, last 10 for an Indian mobile (+91 / 0 prefixes dropped); "" clears it
+      const digits = String(m.phone ?? "").replace(/\D/g, "");
+      const phone = digits.length >= 10 ? digits.slice(-10) : "";
       const cur = s.modes.find((x) => String(x.admin) === String(m.admin));
-      if (cur) { cur.mode = m.mode; cur.wfhDays = wfhDays; } else s.modes.push({ admin: m.admin, mode: m.mode, wfhDays });
+      const weekOff = Array.isArray(m.weekOff) ? [...new Set(m.weekOff.map(Number).filter((d) => d >= 0 && d <= 6))].slice(0, 3) : undefined;
+      if (cur) { cur.mode = m.mode; cur.wfhDays = wfhDays; if (m.phone !== undefined) cur.phone = phone; if (weekOff) cur.weekOff = weekOff; }
+      else s.modes.push({ admin: m.admin, mode: m.mode, wfhDays, phone, ...(weekOff ? { weekOff } : {}) });
     });
   }
   if (s.enforceOffice && !officeConfigured(s)) { res.status(400); throw new Error("Set the office location or office network first."); }
@@ -696,8 +708,46 @@ export const setTarget = expressAsyncHandler(async (req, res) => {
   res.json({ status: true });
 });
 
+// GET /api/staff/performance?month=YYYY-MM — any past month's bookings / collections / lead
+// updates per team member, with that month's targets (the team board only carries this month)
+export const getPerformance = expressAsyncHandler(async (req, res) => {
+  const { isSuper } = req.staff;
+  const today = istDate();
+  const current = monthOf(today);
+  const month = MONTH_RE.test(req.query.month || "") && req.query.month <= current ? req.query.month : current;
+  const [roster, s] = await Promise.all([staffRoster(), getSettings()]);
+  const ids = roster.map((a) => a._id);
+  const end = month === current ? new Date() : dayStart(nextMonthStart(month));
+  const perf = await perfFor(ids, dayStart(monthStartDate(month)), end);
+  const staff = roster.map((a) => {
+    const id = String(a._id);
+    const t = s.targets.find((x) => String(x.admin) === id && x.month === month) || null;
+    return {
+      id, name: a.name, role: a.roleId ? { name: a.roleId.name, color: a.roleId.color } : null,
+      month: isSuper ? perf[id] : noMoney(perf[id]),
+      target: t && (isSuper ? { bookings: t.bookings, collections: t.collections, leads: t.leads } : { bookings: t.bookings, leads: t.leads }),
+    };
+  });
+  res.json({ status: true, data: { month, current: month === current, isSuper, staff } });
+});
+
 /* ── leave ─────────────────────────────────────────────────────────────── */
 const LEAVE_TYPES = ["casual", "sick", "emergency", "other"];
+
+// approved leave taken in a calendar year (counted by the year it starts in; a half day = 0.5)
+// against the yearly allowance: { [adminId]: { annual, used, left } }
+async function leaveBalances(adminIds, year, annual) {
+  const rows = await StaffLeave.find({ admin: { $in: adminIds }, status: "approved", from: { $gte: `${year}-01-01`, $lte: `${year}-12-31` } })
+    .select("admin days halfDay").lean();
+  const out = {};
+  adminIds.forEach((id) => { out[String(id)] = { annual, used: 0, left: annual }; });
+  rows.forEach((l) => {
+    const b = out[String(l.admin)] || (out[String(l.admin)] = { annual, used: 0, left: annual });
+    b.used += l.halfDay ? 0.5 : (l.days || 1);
+  });
+  Object.values(out).forEach((b) => { b.left = Math.max(0, annual - b.used); });
+  return out;
+}
 
 // POST /api/staff/leaves  { from, to, halfDay, type, reason } — a team member applies
 export const applyLeave = expressAsyncHandler(async (req, res) => {
@@ -708,8 +758,9 @@ export const applyLeave = expressAsyncHandler(async (req, res) => {
   if (to < from) { res.status(400); throw new Error("The end date can't be before the start date."); }
   if (from < addDays(today, -30)) { res.status(400); throw new Error("Leave can be applied up to 30 days back."); }
   if (datesBetween(from, to).length > 60) { res.status(400); throw new Error("Apply for at most 60 days at a time."); }
-  const workDays = datesBetween(from, to, true).length;
-  if (!workDays) { res.status(400); throw new Error("Those dates are all Sundays."); }
+  const off = modeOf(await getSettings(), admin._id).weekOff;
+  const workDays = datesBetween(from, to).filter((d) => !off.includes(weekday(d))).length;
+  if (!workDays) { res.status(400); throw new Error("Those dates are all your weekly off — no leave needed."); }
   if (!String(reason).trim()) { res.status(400); throw new Error("Please write a short reason."); }
   const clash = await StaffLeave.exists({ admin: admin._id, status: { $in: ["pending", "approved"] }, from: { $lte: to }, to: { $gte: from } });
   if (clash) { res.status(400); throw new Error("You already have leave on some of these dates."); }
@@ -745,7 +796,12 @@ export const listLeaves = expressAsyncHandler(async (req, res) => {
     .populate("decidedBy", "name").lean();
   const order = { pending: 0, approved: 1, rejected: 2, cancelled: 3 };
   list.sort((a, b) => order[a.status] - order[b.status] || (a.status === "pending" ? (a.from < b.from ? -1 : 1) : (a.from < b.from ? 1 : -1)));
-  res.json({ status: true, data: list.map(leaveOut) });
+  // this year's balance for everyone in the list, so a manager sees it while deciding
+  const year = istDate().slice(0, 4);
+  const annual = (await getSettings()).annualLeave ?? 12;
+  const people = [...new Set(list.map((l) => String(l.admin?._id || l.admin)).filter(isId))];
+  const balances = await leaveBalances(people, year, annual);
+  res.json({ status: true, data: list.map(leaveOut), balances, year, annualLeave: annual });
 });
 
 // PATCH /api/staff/leaves/:id  { status: "approved" | "rejected", note } — manager

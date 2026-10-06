@@ -16,8 +16,11 @@ const StaffSettingSchema = new Schema({
     admin:   { type: Schema.Types.ObjectId, ref: "Admin" },
     mode:    { type: String, enum: ["office", "wfh", "hybrid"], default: "office" },
     wfhDays: { type: [Number], default: [] },
+    phone:   { type: String, default: "" },   // for the Team board's call / WhatsApp buttons
+    weekOff: { type: [Number], default: [0] }, // weekly day(s) off, 0 = Sunday — not absent, not leave
     _id: false,
   }],
+  annualLeave: { type: Number, default: 12 },        // leave days each person gets per calendar year
   // monthly targets per staff member; month "YYYY-MM"
   targets: [{
     admin:       { type: Schema.Types.ObjectId, ref: "Admin" },

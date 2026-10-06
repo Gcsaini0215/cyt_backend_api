@@ -5,7 +5,7 @@ import {
   getTeam, getAttendance, editAttendance,
   listTasks, createTask, updateTask, deleteTask,
   listNotices, createNotice, deleteNotice,
-  getStaffSettings, updateStaffSettings, setTarget,
+  getStaffSettings, updateStaffSettings, setTarget, getPerformance,
   applyLeave, cancelLeave, listLeaves, decideLeave,
   applyWfh, cancelWfh, listWfh, decideWfh,
 } from "../controllers/StaffController.js";
@@ -38,6 +38,7 @@ router.delete("/staff/notices/:id", staffAuth, staffManager, deleteNotice);
 router.get("/staff/settings", staffAuth, staffManager, getStaffSettings);
 router.put("/staff/settings", staffAuth, staffManager, updateStaffSettings);
 router.put("/staff/targets", staffAuth, staffManager, setTarget);
+router.get("/staff/performance", staffAuth, staffManager, getPerformance);
 router.get("/staff/leaves", staffAuth, staffManager, listLeaves);
 router.patch("/staff/leaves/:id", staffAuth, staffManager, decideLeave);
 router.get("/staff/wfh", staffAuth, staffManager, listWfh);
