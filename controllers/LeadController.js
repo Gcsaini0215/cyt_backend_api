@@ -16,8 +16,9 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
       "string.min": "Name must be at least 2 characters long",
       "any.required": "Name is required",
     }),
-    phone: Joi.string().pattern(/^[0-9]{10}$/).required().messages({
-      "string.pattern.base": "Phone number must be exactly 10 digits",
+    // Indian numbers come as 10 digits; other countries in full international form ("+966501234567")
+    phone: Joi.string().pattern(/^([0-9]{10}|\+[1-9][0-9]{6,14})$/).required().messages({
+      "string.pattern.base": "Please enter a valid mobile number",
       "any.required": "Phone number is required",
     }),
     email: Joi.string().email().allow("", null).optional().messages({
