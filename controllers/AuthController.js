@@ -8,11 +8,13 @@ import Users from "../models/Users.js";
 import Admin from "../models/Admin.js";
 import Role from "../models/Role.js";
 import Therapists from "../models/Therapists.js";
+import TherapistSubscriptionPayment from "../models/TherapistSubscriptionPayment.js";
+import { mailProfileLiveOnce } from "../helper/profileLive.js";
 import { emitStaff } from "../services/staffEvents.js";
 import { sendMail } from "../helper/mailer.js";
 import { getTimeDifferenceInSeconds } from "../helper/time.js";
 import { generate6DigitOTP, generateProfileCode } from "../helper/generate.js";
-import { loginOtpEmail, otpVerificationEmail, registrationOtpEmail, therapistVerificationEmail, therapistApprovedMail, welcomeCredentialsMail, passwordResetMail } from "../services/mailTemplates.js";
+import { loginOtpEmail, otpVerificationEmail, registrationOtpEmail, therapistVerificationEmail, therapistApprovedMail, welcomeCredentialsMail, passwordResetMail, therapistSubscriptionMail, adminSubscriptionMail } from "../services/mailTemplates.js";
 
 // A code sent in the last 15 minutes is sent again instead of a new one, so re-submitting the form or
 // tapping "Resend" never leaves an older email with a code that no longer works.
@@ -42,6 +44,8 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
       email: Joi.string().email().required(),
       mode: Joi.number().required(),
       idCardType: Joi.string().required(),
+      preferredPlan: Joi.string().valid("1_month", "6_month", "annual").optional(),
+      planTermsAccepted: Joi.string().valid("true").optional(),
       phone: Joi.number()
         .integer()
         .min(10 ** 9)
@@ -77,6 +81,9 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
       // In-person / both: where they practise (address + PIN + map pin)
       const inPerson = String(mode) === "2" || String(mode) === "3";
       const clean = (v) => String(v || "").replace(/<[^>]*>/g, "").trim();
+      // package chosen on the form; only recorded together with the accepted terms
+      const plan = req.body.preferredPlan && req.body.planTermsAccepted === "true"
+        ? { preferred_plan: req.body.preferredPlan, plan_terms_accepted_at: new Date() } : {};
       const office = {};
       if (req.body.officeAddress !== undefined || req.body.officePincode !== undefined) {
         const addr = clean(req.body.officeAddress);
@@ -129,6 +136,7 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
             id_card: idCardUrl,
             id_card_type: idCardType,
             ...office,
+            ...plan,
             verification_status: "pending",
             verification_note: "",
             reupload_docs: [],
@@ -165,6 +173,7 @@ export const therapistRegister = expressAsyncHandler(async (req, res, next) => {
           id_card: idCardUrl,
           id_card_type: idCardType,
           ...office,
+          ...plan,
           profile_code: generateProfileCode()
         }], { session });
 
@@ -255,8 +264,9 @@ export const checkTherapistStatus = expressAsyncHandler(async (req, res, next) =
   });
 });
 
-const PLAN_MONTHS = { "3_month": 3, "6_month": 6, "annual": 12 };
-const PLAN_AMOUNTS = { "3_month": 1999, "6_month": 4999, "annual": 9500 };
+// "3_month" is no longer sold; kept so an order already paid on an old page still activates
+const PLAN_MONTHS = { "1_month": 1, "3_month": 3, "6_month": 6, "annual": 12 };
+const PLAN_AMOUNTS = { "1_month": 999, "3_month": 1999, "6_month": 4999, "annual": 7300 }; // annual = ₹20 / day
 
 export const verifyTherapistSubscriptionPayment = expressAsyncHandler(async (req, res, next) => {
   const {
@@ -313,6 +323,25 @@ export const verifyTherapistSubscriptionPayment = expressAsyncHandler(async (req
     },
     { new: true, upsert: true }
   );
+
+  if (therapist?._id) mailProfileLiveOnce(therapist._id); // first time live → public link mail
+
+  // payment history + receipts — once per Razorpay payment, even if verify is called twice
+  try {
+    const exists = await TherapistSubscriptionPayment.exists({ paymentId: razorpay_payment_id });
+    if (!exists) {
+      await TherapistSubscriptionPayment.create({
+        user: user._id, name: user.name, email: user.email, plan, months: PLAN_MONTHS[plan], amount: PLAN_AMOUNTS[plan],
+        startedAt, expiresAt, orderId: razorpay_order_id, paymentId: razorpay_payment_id,
+        termsVersion: String(terms_version || "v1").slice(0, 20),
+      });
+      const info = { name: user.name, email: user.email, phone: user.phone, plan, amount: PLAN_AMOUNTS[plan], startedAt, expiresAt, paymentId: razorpay_payment_id };
+      sendMail(user.email, "Payment received — your CYT listing is active", `Your listing is active until ${expiresAt.toDateString()}. Payment ID ${razorpay_payment_id}.`, therapistSubscriptionMail(info), "Choose Your Therapist").catch(() => {});
+      sendMail("hello@chooseyourtherapist.in", `Listing payment: ${user.name || user.email} (₹${PLAN_AMOUNTS[plan]})`, `${user.name} paid ₹${PLAN_AMOUNTS[plan]} for ${plan}.`, adminSubscriptionMail(info), "CYT Alerts").catch(() => {});
+    }
+  } catch (err) {
+    if (err?.code !== 11000) console.error("subscription payment record/email failed:", err.message);
+  }
 
   res.status(200).json({
     status: true,

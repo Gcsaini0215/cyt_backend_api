@@ -93,6 +93,10 @@ const TherapistSchema = new Schema(
     qualification_certificate: { type: String, default: null },
     id_card: { type: String, default: null },
     id_card_type: { type: String, default: null },
+    // package picked on the registration form (paid only after approval) + when they accepted
+    // the listing charge and the 70:30 split on every booking
+    preferred_plan: { type: String, enum: ["1_month", "3_month", "6_month", "annual", null], default: null },
+    plan_terms_accepted_at: { type: Date, default: null },
 
     // Admin review of a new application (documents + About)
     // In-person practice location (asked at registration for In-Person / Both)
@@ -125,6 +129,8 @@ const TherapistSchema = new Schema(
     subscription_transaction_id: { type: String, default: null },
     subscription_terms_accepted_at: { type: Date, default: null }, // when they ticked "I agree" before paying
     subscription_terms_version: { type: String, default: null },
+    subscription_reminded_at: { type: Date, default: null },
+    profile_live_mailed_at: { type: Date, default: null },    // "you're live — here's your public link" (sent once)    // last "please subscribe / renew" email from admin
 
     // "Please complete your profile" request: which items are missing, a one-time link (hash only), and re-check
     completion_items: { type: [String], default: [] },

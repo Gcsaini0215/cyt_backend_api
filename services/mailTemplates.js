@@ -434,21 +434,67 @@ export const leadNotificationEmail = (data) => {
 // ONBOARDING & LIFECYCLE
 // ============================================================================
 
-const PLAN_ROWS = [["3 months", "₹1,999"], ["6 months", "₹4,999"], ["12 months", "₹9,500"]];
+const PLAN_ROWS = [["Monthly", "₹999"], ["6 months", "₹4,999"], ["12 months", "₹7,300"]];
 const paymentLink = (email) => `${BRAND.site.replace("://", "://www.")}/therapist-payment?email=${encodeURIComponent(email || "")}`;
 const visibilityNote = note("Your subscription is for listing and visibility on Choose Your Therapist. We don't promise a number of clients — bookings depend on how complete and active your profile is. The full terms are shown before you pay.");
 
+export const therapistSubscriptionReminderMail = ({ name, email, expired }) =>
+  shell({
+    preheader: expired ? "Your CYT listing has ended — renew to stay visible" : "Choose a package to put your CYT profile live",
+    body:
+      eyebrow(expired ? "Listing ended" : "Your profile is approved", WARN) +
+      heading(expired ? `${name ? esc(name) + ", your" : "Your"} listing has ended` : `${name ? esc(name) + ", one" : "One"} step left to go live`) +
+      para(expired
+        ? "Your listing package on Choose Your Therapist has ended, so your profile may no longer show in our directory. Renew to stay visible to clients."
+        : "Your therapist profile is approved. Choose a listing package so your profile goes live and clients can find and book you.") +
+      kvTable([["Login email", esc(email || "—"), true], ...PLAN_ROWS]) +
+      para("<b>On every booking through CYT:</b> 70% of the session fee goes to you and 30% to CYT.") +
+      button(expired ? "Renew my listing" : "Choose a package", paymentLink(email)) +
+      visibilityNote +
+      note(`Questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
+  });
+
+const goLiveSteps = () => `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin-bottom:16px;">
+    ${[
+      ["1", "Choose a listing package", "Monthly, 6 months or 12 months — pay securely online."],
+      ["2", "Complete your full profile", "Photo, About you, specialisations, fees and weekly availability."],
+      ["3", "Goes live within 1 hour", "Once your package and profile are done, your profile shows on the website within an hour."],
+      ["4", "We email your public link", "Share it on WhatsApp, Instagram and LinkedIn so clients can find you."],
+    ].map(([n, t, d]) => `<tr>
+      <td style="width:30px;padding:0 10px 12px 0;vertical-align:top;"><div style="width:24px;height:24px;border-radius:50%;background:#e8f2ec;color:${BRAND.green};font-size:12px;font-weight:700;text-align:center;line-height:24px;">${n}</div></td>
+      <td style="padding:0 0 12px;vertical-align:top;font-size:12.5px;color:${BRAND.soft};line-height:1.55;"><b style="color:${BRAND.ink};">${t}</b><br>${d}</td>
+    </tr>`).join("")}
+  </table>`;
+
 export const therapistApprovedMail = ({ name, email }) =>
   shell({
-    preheader: "Your CYT therapist profile is approved — choose a plan to go live",
+    preheader: "Your CYT therapist profile is approved — choose a package to go live",
     body:
       eyebrow("Profile approved", OK) +
       heading(`You're approved${name ? ", " + esc(name) : ""}`) +
-      para("Your therapist profile has been approved. One step left: choose a subscription plan so your profile goes live and clients can find and book you.") +
+      para("Your therapist profile has been approved. Here's how to go live on Choose Your Therapist:") +
+      goLiveSteps() +
       kvTable([["Login email", esc(email || "—"), true], ...PLAN_ROWS]) +
-      button("Choose a plan & go live", paymentLink(email)) +
+      para("<b>On every booking through CYT:</b> 70% of the session fee goes to you and 30% to CYT.") +
+      button("Choose a package", paymentLink(email)) +
       visibilityNote +
       note(`Any issues or questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
+  });
+
+// sent the first time a profile actually shows on the website
+export const therapistProfileLiveMail = ({ name, link }) =>
+  shell({
+    preheader: "Your profile is live on Choose Your Therapist — here's your public link",
+    withBanner: true,
+    body:
+      eyebrow("You're live", OK) +
+      heading(`${name ? esc(name) + ", your" : "Your"} profile is now live`) +
+      para("Clients can now find your profile on Choose Your Therapist and book sessions with you. Here is your public profile link:") +
+      `<div style="background:#f0f4f1;border-radius:12px;padding:14px 16px;margin-bottom:16px;word-break:break-all;font-size:13px;"><a href="${link}" style="color:${BRAND.green};font-weight:700;text-decoration:none;">${esc(link)}</a></div>` +
+      button("View my public profile", link) +
+      para("<b>Tip:</b> share this link on WhatsApp, Instagram, LinkedIn and your website — profiles that are shared and kept up to date get found more often.") +
+      note("Keep your weekly availability and fees updated so clients can book open slots."),
   });
 
 export const therapistPaymentMail = ({ name, email }) =>
@@ -798,4 +844,51 @@ export const collabHoursMail = ({ name, slots = [], total = 0 }) =>
       para("<b>You only need to come in when a session is booked</b> — we'll let you know in advance. If you need to change an hour, tell us and we'll rearrange it.") +
       collabTerms(),
     foot: collabFoot,
+  });
+
+// ============================================================================
+// THERAPIST LISTING SUBSCRIPTION — payment received
+// ============================================================================
+
+const subDate = (d) => new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
+const subPlanLabel = (plan) => ({ "1_month": "Monthly", "3_month": "3 months", "6_month": "6 months", annual: "12 months", free: "Complimentary listing" }[plan] || plan);
+
+export const therapistSubscriptionMail = ({ name, plan, amount, startedAt, expiresAt, paymentId }) =>
+  shell({
+    preheader: `Your CYT listing is active until ${subDate(expiresAt)}`,
+    withBanner: true,
+    body:
+      eyebrow("Payment received", OK) +
+      heading(`Thank you${name ? ", " + esc(name) : ""} — your listing is active`) +
+      para("We've received your payment. Your profile is now listed on Choose Your Therapist for the period below.") +
+      kvTable([
+        ["Package", esc(subPlanLabel(plan))],
+        ["Amount paid", Number(amount) > 0 ? `₹${Number(amount).toLocaleString("en-IN")}` : "Complimentary — no charge"],
+        ["Listed from", esc(subDate(startedAt))],
+        ["Valid until", esc(subDate(expiresAt))],
+        ["Payment ID", esc(paymentId), true],
+      ]) +
+      para("<b>On every booking through CYT:</b> 70% of the session fee goes to you and 30% to CYT.") +
+      button("Open my dashboard", `${BRAND.site}/therapist-dashboard`) +
+      note("Your package is for listing and visibility — bookings depend on your profile, availability and client demand. Plans don't auto-renew — renew before the end date to stay listed.") +
+      note(`Questions about billing? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
+  });
+
+export const adminSubscriptionMail = ({ name, email, phone, plan, amount, startedAt, expiresAt, paymentId }) =>
+  shell({
+    preheader: `${name || email} paid for a ${subPlanLabel(plan)} listing`,
+    body:
+      eyebrow("New listing payment", OK) +
+      heading(`${esc(name || email)} subscribed — ${esc(subPlanLabel(plan))}`) +
+      kvTable([
+        ["Therapist", esc(name || "—")],
+        ["Email", esc(email || "—"), true],
+        ["Phone", esc(phone || "—")],
+        ["Package", esc(subPlanLabel(plan))],
+        ["Amount", `₹${Number(amount).toLocaleString("en-IN")}`],
+        ["Valid", `${esc(subDate(startedAt))} → ${esc(subDate(expiresAt))}`],
+        ["Payment ID", esc(paymentId), true],
+      ]) +
+      note("See all subscriptions in the admin panel → Subscriptions."),
+    foot: `${BRAND.name} &middot; Internal notification`,
   });

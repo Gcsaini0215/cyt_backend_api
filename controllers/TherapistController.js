@@ -1,4 +1,5 @@
 import expressAsyncHandler from "express-async-handler";
+import { mailProfileLiveOnce } from "../helper/profileLive.js";
 import Therapists, { defaultFees } from "../models/Therapists.js";
 import Users from "../models/Users.js";
 import Bank from "../models/Bank.js";
@@ -645,6 +646,7 @@ export const ShowToPage = expressAsyncHandler(async (req, res, next) => {
       { show_to_page },
       { new: true }
     );
+    if (show_to_page) mailProfileLiveOnce(updatedUser._id);
 
     res.status(201).json({
       message: "Therapist set to page successfully",
@@ -675,6 +677,7 @@ export const ShowToPageSelf = expressAsyncHandler(async (req, res, next) => {
       { show_to_page },
       { new: true }
     );
+    if (show_to_page) mailProfileLiveOnce(updatedProfile._id);
 
     res.status(200).json({
       message: "Visibility updated successfully",
