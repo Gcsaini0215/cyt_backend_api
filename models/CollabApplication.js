@@ -11,6 +11,8 @@ const collabApplicationSchema = new Schema({
   email:           { type: String, default: "", trim: true, lowercase: true, maxlength: 120 },
   role:            { type: String, required: true, trim: true, maxlength: 60 },
   qualification:   { type: String, default: "", trim: true, maxlength: 200 },
+  // where they practise today: kind = clinic | hospital | centre | online | other, plus its name and area/city
+  currentPractice: { kind: { type: String, default: "" }, name: { type: String, default: "" }, location: { type: String, default: "" } },
   registrationNo:  { type: String, default: "", trim: true, maxlength: 80 },
   experienceYears: { type: Number, default: 0, min: 0, max: 60 },
   specialisations: { type: [String], default: [] },

@@ -149,6 +149,11 @@ export const submitCollabApplication = expressAsyncHandler(async (req, res, next
   const app = await CollabApplication.create({
     name: name.slice(0, 80), phone, email, role: role.slice(0, 60),
     qualification: String(b.qualification || "").trim().slice(0, 200),
+    currentPractice: {
+      kind: ["clinic", "hospital", "centre", "online", "other"].includes(b.practiceType) ? b.practiceType : "",
+      name: String(b.practiceName || "").trim().slice(0, 120),
+      location: String(b.practiceLocation || "").trim().slice(0, 120),
+    },
     registrationNo: String(b.registrationNo || "").trim().slice(0, 80),
     experienceYears: Number.isFinite(exp) ? Math.min(Math.max(Math.round(exp), 0), 60) : 0,
     specialisations: cleanList(b.specialisations),
