@@ -1,6 +1,6 @@
 import { Router } from "express";
 import {
-  getCollabMeta, submitCollabApplication, sendCollabEmailOtp, verifyCollabEmailOtp, getCollabApplications, updateCollabApplication, sendCollabHours,
+  getCollabMeta, submitCollabApplication, sendCollabEmailOtp, verifyCollabEmailOtp, getCollabApplications, updateCollabApplication, sendCollabHours, deleteCollabApplication,
   getCollabRoom, setCollabRoomSlot,
 } from "../controllers/CollabController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
@@ -18,6 +18,7 @@ router.post("/collab-applications", collabApplyRateLimit, submitCollabApplicatio
 router.get("/collab-applications", hasPermission("noidaCenter"), getCollabApplications);
 router.patch("/collab-applications/:id", hasPermission("noidaCenter"), updateCollabApplication);
 router.post("/collab-applications/:id/send-hours", hasPermission("noidaCenter"), sendCollabHours);
+router.delete("/collab-applications/:id", hasPermission("noidaCenter"), deleteCollabApplication);
 router.get("/collab-room", hasPermission("noidaCenter"), getCollabRoom);
 router.put("/collab-room/slot", hasPermission("noidaCenter"), setCollabRoomSlot);
 

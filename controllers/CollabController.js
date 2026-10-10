@@ -250,6 +250,18 @@ export const updateCollabApplication = expressAsyncHandler(async (req, res, next
   res.json({ status: true, emailed, data: { ...app, assignedSlots: slots.map(({ day, hour }) => ({ day, hour })) } });
 });
 
+// DELETE /collab-applications/:id — admin: remove an application (spam, duplicate, test) with its room hours
+export const deleteCollabApplication = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) { res.status(400); return next(new Error("Invalid application.")); }
+  const app = await CollabApplication.findByIdAndDelete(id).lean();
+  if (!app) { res.status(404); return next(new Error("Application not found.")); }
+  const { deletedCount } = await CollabRoomSlot.deleteMany({ application: app._id });
+  if (app.email) await CollabEmailOtp.deleteOne({ email: app.email });
+  console.log(`collab: ${req.user?.name || "admin"} deleted application ${app._id} (${app.name}, ${app.phone}), freed ${deletedCount} room hour(s)`);
+  res.json({ status: true, message: `Deleted ${app.name}'s application${deletedCount ? ` and freed ${deletedCount} room hour(s)` : ""}.` });
+});
+
 // POST /collab-applications/:id/send-hours — admin: email the professional their confirmed room hours
 export const sendCollabHours = expressAsyncHandler(async (req, res, next) => {
   const { id } = req.params;
