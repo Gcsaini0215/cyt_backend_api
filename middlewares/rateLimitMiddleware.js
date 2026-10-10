@@ -100,3 +100,29 @@ export const exitFeedbackRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Collaboration applications from the public /collaborate-noida page — a real applicant
+// sends one, maybe two after a typo, so a tight per-IP cap keeps the admin list clean.
+export const collabApplyRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5, // 5 applications per IP per hour
+  message: {
+    status: false,
+    message: "Too many applications from this connection. Please try again later or WhatsApp us.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Verification codes for the collaboration form — each one sends a real email, so keep it tight per IP
+// (per-email limits — 30s gap, 5 an hour — are enforced in CollabController on top of this).
+export const collabOtpRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 8, // 8 code requests per IP per 15 minutes
+  message: {
+    status: false,
+    message: "Too many code requests from this connection. Please try again in a few minutes.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

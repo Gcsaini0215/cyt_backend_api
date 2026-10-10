@@ -718,3 +718,84 @@ export const staffWfhDecisionMail = ({ name, date, approved, by, decisionNote })
       button("Open my dashboard", `${ADMIN_SITE}/home`),
     foot: teamFoot,
   });
+
+// ============================================================================
+// NOIDA COLLABORATION  (professionals practising at CYT Noida on a booking basis)
+// ============================================================================
+
+const COLLAB_FORM = `${BRAND.site}/collaborate-noida`;
+const collabTerms = () => kvTable([
+  ["Basis", "Booking basis — come in only for booked sessions"],
+  ["Your share", "70% of each session fee"],
+  ["Payout", "Weekly, with a statement"],
+]);
+const collabFoot = `${BRAND.name} &middot; CYT Noida, Sector 51 &middot; ${BRAND.phone}`;
+
+export const collabApplicationReceivedMail = ({ name, role, preferred }) =>
+  shell({
+    preheader: "We've received your application to practise at CYT Noida",
+    withBanner: true,
+    body:
+      eyebrow("Application received", INFO) +
+      heading(`Thank you${name ? ", " + esc(name) : ""}`) +
+      para("Thanks for applying to practise at <b>Choose Your Therapist, Noida (Sector 51)</b>. Our team will call you within <b>2 working days</b> for a short screening.") +
+      kvTable([role && ["Profession", esc(role)], preferred && ["Preferred timing", esc(preferred)]]) +
+      collabTerms() +
+      note("Your timing is a preference — your final consultation hours are confirmed with you once your profile is verified."),
+    foot: collabFoot,
+  });
+
+// status: screening | approved | on_hold | rejected
+export const collabStatusMail = ({ name, status, phone }) => {
+  const hi = `Hi${name ? " " + esc(name) : ""}`;
+  const v = {
+    screening: {
+      pre: "Your CYT Noida application is in screening",
+      body: eyebrow("In screening", WARN) + heading(`${hi}, your application is being reviewed`) +
+        para(`We've started screening your application. Expect a call from our team${phone ? ` on <b>+91 ${esc(phone)}</b>` : ""} soon to talk about your practice.`) +
+        para("Please keep your qualification and registration documents handy — we'll ask for them on the call."),
+    },
+    approved: {
+      pre: "You're approved to practise at CYT Noida",
+      body: eyebrow("Approved", OK) + heading(`Congratulations${name ? ", " + esc(name) : ""} — you're approved!`) +
+        para("Your profile has been verified and you're approved to practise at <b>CYT Noida, Sector 51</b>.") +
+        para("<b>Next step:</b> we'll confirm your consultation hours with you. Once they're set, you'll be listed on our Noida booking page and clients can book you.") +
+        collabTerms(),
+    },
+    on_hold: {
+      pre: "An update on your CYT Noida application",
+      body: eyebrow("On hold", WARN) + heading(`${hi}, your application is on hold`) +
+        para("We've paused your application for now — usually because the hours you'd like are full, or we're waiting on a document. We'll get back to you as soon as we can.") +
+        para("If anything has changed on your side, just reply to this email."),
+    },
+    rejected: {
+      pre: "An update on your CYT Noida application",
+      body: eyebrow("Application update", STOP) + heading(`${hi}, thank you for applying`) +
+        para("Thank you for your interest in practising at CYT Noida. After reviewing your application, we're unable to take it forward at this time.") +
+        para("This may change as the centre grows — you're welcome to apply again later.") +
+        button("Visit the application page", COLLAB_FORM),
+    },
+  }[status];
+  if (!v) return null;
+  return shell({
+    preheader: v.pre,
+    withBanner: status === "approved",
+    body: v.body + note(`Questions? Reply to this email or call ${BRAND.phone}.`),
+    foot: collabFoot,
+  });
+};
+
+// slots: [{ day: "Monday", hours: "5–6 PM, 6–7 PM" }]
+export const collabHoursMail = ({ name, slots = [], total = 0 }) =>
+  shell({
+    preheader: "Your confirmed consultation hours at CYT Noida",
+    withBanner: true,
+    body:
+      eyebrow("Hours confirmed", OK) +
+      heading(`${name ? esc(name) + ", your" : "Your"} consultation hours are set`) +
+      para(`These are your confirmed weekly hours at <b>CYT Noida, Sector 51</b> — <b>${total} hour${total === 1 ? "" : "s"} a week</b>. Clients will book into these hours.`) +
+      kvTable(slots.map((s) => [esc(s.day), esc(s.hours)])) +
+      para("<b>You only need to come in when a session is booked</b> — we'll let you know in advance. If you need to change an hour, tell us and we'll rearrange it.") +
+      collabTerms(),
+    foot: collabFoot,
+  });
