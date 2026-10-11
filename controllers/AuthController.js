@@ -2,6 +2,7 @@ import expressAsyncHandler from "express-async-handler";
 import Joi from "joi";
 import mongoose from "mongoose";
 import crypto from "crypto";
+import Razorpay from "razorpay";
 import passwordComplexity from "joi-password-complexity";
 import generateToken from "../config/generateToken.js";
 import Users from "../models/Users.js";
@@ -268,6 +269,12 @@ export const checkTherapistStatus = expressAsyncHandler(async (req, res, next) =
 const PLAN_MONTHS = { "1_month": 1, "3_month": 3, "6_month": 6, "annual": 12 };
 const PLAN_AMOUNTS = { "1_month": 999, "3_month": 1999, "6_month": 4999, "annual": 7300 }; // annual = ₹20 / day
 
+// Asks Razorpay what was actually paid — the order amount comes from the browser, so the
+// signature alone doesn't prove the right price was paid. Overridable in tests.
+export const subscriptionPaymentSource = {
+  fetchPayment: (paymentId) => new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET }).payments.fetch(paymentId),
+};
+
 export const verifyTherapistSubscriptionPayment = expressAsyncHandler(async (req, res, next) => {
   const {
     email, plan,
@@ -297,6 +304,29 @@ export const verifyTherapistSubscriptionPayment = expressAsyncHandler(async (req
   if (razorpay_signature !== expectedSign) {
     res.status(400);
     return next(new Error("Invalid payment signature"));
+  }
+
+  // the paid amount must be the plan's price, in rupees, for this very order
+  let payment;
+  try {
+    payment = await subscriptionPaymentSource.fetchPayment(razorpay_payment_id);
+  } catch (err) {
+    console.error("subscription verify: could not fetch payment", razorpay_payment_id, err?.error?.description || err.message);
+    res.status(502);
+    return next(new Error("We couldn't confirm your payment with Razorpay just now. Please try again in a minute or contact support — your money is safe."));
+  }
+  const expectedPaise = PLAN_AMOUNTS[plan] * 100;
+  const paidOk = payment
+    && payment.order_id === razorpay_order_id
+    && ["captured", "authorized"].includes(payment.status)
+    && (payment.currency || "INR") === "INR"
+    && Number(payment.amount) === expectedPaise;
+  if (!paidOk) {
+    console.error("subscription verify: amount/order mismatch", JSON.stringify({
+      email, plan, expectedPaise, paid: payment?.amount, status: payment?.status, order: payment?.order_id, sentOrder: razorpay_order_id, paymentId: razorpay_payment_id,
+    }));
+    res.status(400);
+    return next(new Error("This payment doesn't match the selected package. Please contact support at hello@chooseyourtherapist.in with your payment ID."));
   }
 
   const user = await Users.findOne({ email: email.toLowerCase().trim(), role: 1 });

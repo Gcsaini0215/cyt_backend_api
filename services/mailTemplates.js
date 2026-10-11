@@ -435,7 +435,8 @@ export const leadNotificationEmail = (data) => {
 // ============================================================================
 
 const PLAN_ROWS = [["Monthly", "₹999"], ["6 months", "₹4,999"], ["12 months", "₹7,300"]];
-const paymentLink = (email) => `${BRAND.site.replace("://", "://www.")}/therapist-payment?email=${encodeURIComponent(email || "")}`;
+// opens the packages modal on /therapist-registration with their email filled in
+const paymentLink = (email) => `${BRAND.site.replace("://", "://www.")}/therapist-registration?packages=1&email=${encodeURIComponent(email || "")}`;
 const visibilityNote = note("Your subscription is for listing and visibility on Choose Your Therapist. We don't promise a number of clients — bookings depend on how complete and active your profile is. The full terms are shown before you pay.");
 
 export const therapistSubscriptionReminderMail = ({ name, email, expired }) =>
