@@ -269,6 +269,29 @@ export const checkTherapistStatus = expressAsyncHandler(async (req, res, next) =
 const PLAN_MONTHS = { "1_month": 1, "3_month": 3, "6_month": 6, "annual": 12 };
 const PLAN_AMOUNTS = { "1_month": 999, "3_month": 1999, "6_month": 4999, "annual": 7300 }; // annual = ₹20 / day
 
+// POST /therapist-subscription/order — { email, plan }: creates the Razorpay order with the
+// plan's own price, under the same account whose secret verifies the payment afterwards.
+const SELLABLE_PLANS = ["1_month", "6_month", "annual"];
+export const createTherapistSubscriptionOrder = expressAsyncHandler(async (req, res, next) => {
+  const email = String(req.body?.email || "").toLowerCase().trim();
+  const plan = String(req.body?.plan || "");
+  if (!SELLABLE_PLANS.includes(plan)) { res.status(400); return next(new Error("Choose a valid package.")); }
+  const user = await Users.findOne({ email, role: 1 }).select("_id is_verified").lean();
+  if (!user || user.is_verified !== 1) { res.status(403); return next(new Error("Packages can be bought once your therapist profile is approved.")); }
+  try {
+    const order = await new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET }).orders.create({
+      amount: PLAN_AMOUNTS[plan] * 100,
+      currency: "INR",
+      receipt: `sub_${String(user._id).slice(-10)}_${Date.now().toString(36)}`,
+      notes: { purpose: "therapist_listing", plan, email },
+    });
+    res.json({ status: true, data: { orderId: order.id, amount: PLAN_AMOUNTS[plan], keyId: process.env.RAZORPAY_KEY_ID } });
+  } catch (err) {
+    console.error("subscription order failed:", err?.error?.description || err.message);
+    res.status(502); return next(new Error("Couldn't start the payment right now. Please try again in a minute."));
+  }
+});
+
 // Asks Razorpay what was actually paid — the order amount comes from the browser, so the
 // signature alone doesn't prove the right price was paid. Overridable in tests.
 export const subscriptionPaymentSource = {

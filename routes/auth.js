@@ -16,6 +16,7 @@ import {
   checkTherapistEmail,
   checkTherapistStatus,
   verifyTherapistSubscriptionPayment,
+  createTherapistSubscriptionOrder,
   resendTherapistOtp,
   verifyOtp,
   sendAproveMail,
@@ -47,6 +48,7 @@ router.post("/send-otp-to-mail", sendOtpToMail);
 
 router.post("/check-therapist-email", checkTherapistEmail);
 router.post("/check-therapist-status", leadRateLimit, checkTherapistStatus);
+router.post("/therapist-subscription/order", leadRateLimit, createTherapistSubscriptionOrder);
 router.post("/verify-therapist-subscription", leadRateLimit, verifyTherapistSubscriptionPayment);
 router.post("/resend-therapist-otp", resendTherapistOtp);
 
