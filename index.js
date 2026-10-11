@@ -4,6 +4,7 @@ dns.setServers(["8.8.8.8", "1.1.1.1"]);
 import mongoose from "mongoose";
 import app from "./app.js";
 import { startAvailabilityReminders } from "./services/availabilityReminder.js";
+import { startSubscriptionReconcile } from "./helper/therapistSubscription.js";
 
 mongoose.set("strictQuery", true);
 mongoose.connect(process.env.MONGODB_URI).then(() => {
@@ -11,5 +12,6 @@ mongoose.connect(process.env.MONGODB_URI).then(() => {
   app.listen(PORT, () => {
     console.log("Server running");
     startAvailabilityReminders();
+    startSubscriptionReconcile();
   });
 }).catch((err) => console.log(err));

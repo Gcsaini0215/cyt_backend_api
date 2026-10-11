@@ -2,6 +2,8 @@ import crypto from "crypto";
 import expressAsyncHandler from "express-async-handler";
 import NoidaPendingBooking from "../models/NoidaPendingBooking.js";
 import { processPaidOrder } from "./NoidaAppointmentController.js";
+import TherapistSubscriptionOrder from "../models/TherapistSubscriptionOrder.js";
+import { activateFromRazorpayPayment } from "../helper/therapistSubscription.js";
 
 // Razorpay -> us: "this payment was captured". For Noida bookings that's the
 // safety net behind the browser callback — if the client paid but closed the
@@ -42,6 +44,12 @@ export const razorpayWebhook = expressAsyncHandler(async (req, res) => {
   const payment = event?.payload?.payment?.entity;
   if (!payment?.id || !payment?.order_id) {
     return res.status(200).json({ status: true, ignored: true });
+  }
+
+  // therapist listing package → activate it (once), same as the browser would have
+  if (await TherapistSubscriptionOrder.exists({ orderId: payment.order_id })) {
+    await activateFromRazorpayPayment(payment, "webhook");
+    return res.status(200).json({ status: true });
   }
 
   // Not every Razorpay payment on this account is a Noida booking.

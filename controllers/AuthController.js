@@ -10,7 +10,8 @@ import Admin from "../models/Admin.js";
 import Role from "../models/Role.js";
 import Therapists from "../models/Therapists.js";
 import TherapistSubscriptionPayment from "../models/TherapistSubscriptionPayment.js";
-import { mailProfileLiveOnce } from "../helper/profileLive.js";
+import { PLAN_MONTHS, PLAN_AMOUNTS, activateTherapistSubscription, razorpayClient } from "../helper/therapistSubscription.js";
+import TherapistSubscriptionOrder from "../models/TherapistSubscriptionOrder.js";
 import { emitStaff } from "../services/staffEvents.js";
 import { sendMail } from "../helper/mailer.js";
 import { getTimeDifferenceInSeconds } from "../helper/time.js";
@@ -266,8 +267,6 @@ export const checkTherapistStatus = expressAsyncHandler(async (req, res, next) =
 });
 
 // "3_month" is no longer sold; kept so an order already paid on an old page still activates
-const PLAN_MONTHS = { "1_month": 1, "3_month": 3, "6_month": 6, "annual": 12 };
-const PLAN_AMOUNTS = { "1_month": 999, "3_month": 1999, "6_month": 4999, "annual": 7300 }; // annual = ₹20 / day
 
 // POST /therapist-subscription/order — { email, plan }: creates the Razorpay order with the
 // plan's own price, under the same account whose secret verifies the payment afterwards.
@@ -279,11 +278,16 @@ export const createTherapistSubscriptionOrder = expressAsyncHandler(async (req, 
   const user = await Users.findOne({ email, role: 1 }).select("_id is_verified").lean();
   if (!user || user.is_verified !== 1) { res.status(403); return next(new Error("Packages can be bought once your therapist profile is approved.")); }
   try {
-    const order = await new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET }).orders.create({
+    const order = await razorpayClient().orders.create({
       amount: PLAN_AMOUNTS[plan] * 100,
       currency: "INR",
       receipt: `sub_${String(user._id).slice(-10)}_${Date.now().toString(36)}`,
       notes: { purpose: "therapist_listing", plan, email },
+    });
+    // recorded so the reconcile job / webhook can activate it even if the browser never comes back
+    await TherapistSubscriptionOrder.create({
+      orderId: order.id, user: user._id, email, plan, amount: PLAN_AMOUNTS[plan],
+      termsVersion: String(req.body?.terms_version || "").slice(0, 20),
     });
     res.json({ status: true, data: { orderId: order.id, amount: PLAN_AMOUNTS[plan], keyId: process.env.RAZORPAY_KEY_ID } });
   } catch (err) {
@@ -358,52 +362,18 @@ export const verifyTherapistSubscriptionPayment = expressAsyncHandler(async (req
     return next(new Error("This email is not an approved therapist account"));
   }
 
-  const startedAt = new Date();
-  const expiresAt = new Date(startedAt);
-  expiresAt.setMonth(expiresAt.getMonth() + PLAN_MONTHS[plan]);
-
-  const therapist = await Therapists.findOneAndUpdate(
-    { user: user._id },
-    {
-      subscription_plan: plan,
-      subscription_amount: PLAN_AMOUNTS[plan],
-      subscription_started_at: startedAt,
-      subscription_expires_at: expiresAt,
-      subscription_transaction_id: razorpay_payment_id,
-      subscription_terms_accepted_at: new Date(),
-      subscription_terms_version: String(terms_version || "v1").slice(0, 20),
-      show_to_page: 1, // payment activates the public profile
-    },
-    { new: true, upsert: true }
-  );
-
-  if (therapist?._id) mailProfileLiveOnce(therapist._id); // first time live → public link mail
-
-  // payment history + receipts — once per Razorpay payment, even if verify is called twice
-  try {
-    const exists = await TherapistSubscriptionPayment.exists({ paymentId: razorpay_payment_id });
-    if (!exists) {
-      await TherapistSubscriptionPayment.create({
-        user: user._id, name: user.name, email: user.email, plan, months: PLAN_MONTHS[plan], amount: PLAN_AMOUNTS[plan],
-        startedAt, expiresAt, orderId: razorpay_order_id, paymentId: razorpay_payment_id,
-        termsVersion: String(terms_version || "v1").slice(0, 20),
-      });
-      const info = { name: user.name, email: user.email, phone: user.phone, plan, amount: PLAN_AMOUNTS[plan], startedAt, expiresAt, paymentId: razorpay_payment_id };
-      sendMail(user.email, "Payment received — your CYT listing is active", `Your listing is active until ${expiresAt.toDateString()}. Payment ID ${razorpay_payment_id}.`, therapistSubscriptionMail(info), "Choose Your Therapist").catch(() => {});
-      sendMail("hello@chooseyourtherapist.in", `Listing payment: ${user.name || user.email} (₹${PLAN_AMOUNTS[plan]})`, `${user.name} paid ₹${PLAN_AMOUNTS[plan]} for ${plan}.`, adminSubscriptionMail(info), "CYT Alerts").catch(() => {});
-    }
-  } catch (err) {
-    if (err?.code !== 11000) console.error("subscription payment record/email failed:", err.message);
-  }
+  const out = await activateTherapistSubscription({
+    userId: user._id, plan, orderId: razorpay_order_id, paymentId: razorpay_payment_id, termsVersion: terms_version, source: "browser",
+  });
 
   res.status(200).json({
     status: true,
     message: "Subscription activated successfully",
     data: {
-      plan,
-      amount: PLAN_AMOUNTS[plan],
-      startedAt,
-      expiresAt,
+      plan: out?.plan || plan,
+      amount: out?.amount ?? PLAN_AMOUNTS[plan],
+      startedAt: out?.startedAt,
+      expiresAt: out?.expiresAt,
     },
   });
 });
