@@ -130,6 +130,7 @@ const TherapistSchema = new Schema(
     subscription_terms_accepted_at: { type: Date, default: null }, // when they ticked "I agree" before paying
     subscription_terms_version: { type: String, default: null },
     subscription_reminded_at: { type: Date, default: null },
+    subscription_reminders: { type: [{ _id: false, template: String, at: Date, by: String }], default: [] }, // which fun reminder went when
     profile_live_mailed_at: { type: Date, default: null },    // "you're live — here's your public link" (sent once)    // last "please subscribe / renew" email from admin
 
     // "Please complete your profile" request: which items are missing, a one-time link (hash only), and re-check

@@ -897,3 +897,72 @@ export const adminSubscriptionMail = ({ name, email, phone, plan, amount, starte
       note("See all subscriptions in the admin panel → Subscriptions."),
     foot: `${BRAND.name} &middot; Internal notification`,
   });
+
+// ============================================================================
+// FUN REMINDERS — light, food-app-style nudges for approved therapists who haven't picked a
+// package (and for expired ones). Kind, never mocking; never promise clients.
+// ============================================================================
+
+export const REMINDER_TEMPLATES = [
+  // ── approved, never subscribed ──
+  { id: "tadka", kind: "unpaid", subject: "Profile ready hai, bas package ka tadka baaki 🌶️",
+    heading: "Approved ho gaye — par profile abhi kitchen me hai 🍳",
+    lines: ["Aapki profile verify ho chuki hai. Bas ek package ka tadka lagaiye aur clients ki plate tak pahunchaiye.", "Monthly sirf ₹999 — yaani roz ka ek cutting chai jitna ☕"] },
+  { id: "darwaza", kind: "unpaid", subject: "Clients knock kar rahe hain 🚪… darwaza khol dein?",
+    heading: "Darwaza band hai, aur log bahar khade hain 🚪",
+    lines: ["Aapki profile approved hai, par clients ko abhi dikh nahi rahi.", "Package lijiye — darwaza khulega aur aapki profile directory me chamkegi ✨"] },
+  { id: "aboutme", kind: "unpaid", subject: "Aapka 'About me' itna achha… kisi ko dikh hi nahi raha 😅",
+    heading: "Itni achhi profile, aur audience zero? 😅",
+    lines: ["Aapne mehnat se profile banayi — ab use dikhane ka time hai.", "Ek package aur aapki profile live ho jaati hai, within an hour ⏱️"] },
+  { id: "chai", kind: "unpaid", subject: "₹33 = ek chai ☕ ya ek poora din listing? 🤔",
+    heading: "Chai vs Listing — aaj ka sawaal ☕",
+    lines: ["Monthly package ₹999 ka hai — roz ka lagbhag ₹33.", "Chai kal bhi pee sakte hain, profile aaj live kar lijiye 😉"] },
+  { id: "tick", kind: "unpaid", subject: "Approved ✅ Verified ✅ Live ❌ — bas ek tick baaki!",
+    heading: "Teen me se do tick ho gaye ✅✅",
+    lines: ["Approved — done. Verified — done. Live — bas ek package door.", "Teesra tick lagaiye aur clients ke liye available ho jaiye 🎯"] },
+  { id: "spoiler", kind: "unpaid", subject: "Spoiler alert 👀 clients online hain. Aap?",
+    heading: "Spoiler: log abhi therapist dhoondh rahe hain 👀",
+    lines: ["Har din log CYT pe sahi therapist search karte hain.", "Aapki profile approved hai — bas package lijiye aur search me dikhna shuru kijiye 🔎"] },
+  { id: "missyou", kind: "unpaid", subject: "Aapki profile ne aapko yaad kiya 💌",
+    heading: "Ek chhoti si chitthi aapki profile ki taraf se 💌",
+    lines: ["\"Main ready hoon, bas mujhe live kar do\" — aapki profile 😄", "Package chuniye, profile poori kijiye, aur ho jaiye live 🚀"] },
+  { id: "oneclick", kind: "unpaid", subject: "Live hone se sirf 1 click door 🖱️",
+    heading: "Aap live hone se sirf ek click door hain 🖱️",
+    lines: ["Neeche wala button dabaiye, package chuniye — baaki hum sambhal lenge.", "Bookings, reminders, payments — sab ek jagah 📅"] },
+  { id: "weekend", kind: "unpaid", subject: "Is weekend ka plan: profile live karna ✨",
+    heading: "Weekend plan sorted? ✨",
+    lines: ["Netflix bhi theek hai, par 5 minute me profile live karna bhi ek option hai 😌", "Monthly ₹999 · 6 months ₹4,999 · 12 months ₹7,300 (sirf ₹20/day)"] },
+  { id: "seventy", kind: "unpaid", subject: "Har booking ka 70% aapka 💚 — shuru karein?",
+    heading: "Har session ka 70% seedha aapka 💚",
+    lines: ["CYT pe har booking ka 70% aapko milta hai — booking, reminders aur payments hum sambhalte hain.", "Shuru karne ke liye bas ek package chahiye 🌱"] },
+
+  // ── package ended, profile no longer live ──
+  { id: "missing", kind: "expired", subject: "Hum aapko miss kar rahe hain 🥺 — profile wapas laayein?",
+    heading: "Aapki profile chhutti pe chali gayi 🏖️",
+    lines: ["Aapka package khatam ho gaya, isliye profile abhi clients ko nahi dikh rahi.", "Renew kijiye aur wapas directory me aa jaiye 🔆"] },
+  { id: "plottwist", kind: "expired", subject: "Plot twist 🙈 aapki profile chhup gayi",
+    heading: "Plot twist: profile chhup gayi 🙈",
+    lines: ["Package expire hote hi profile directory se hat gayi.", "Ek renew aur — wapas spotlight me 🎬"] },
+  { id: "seat", kind: "expired", subject: "Aapki seat khaali hai 🪑 — wapas aayenge?",
+    heading: "Aapki jagah abhi bhi aapka intezaar kar rahi hai 🪑",
+    lines: ["Profile, reviews, details — sab safe hai. Bas listing band hai.", "Renew kijiye aur wahi se shuru kijiye jahan chhoda tha ↩️"] },
+  { id: "battery", kind: "expired", subject: "Listing ki battery 0% 🔋 — recharge karein?",
+    heading: "Battery low hai 🔋",
+    lines: ["Aapke listing package ki battery khatam ho gayi — profile ab dikh nahi rahi.", "Recharge (renew) kijiye: Monthly ₹999 se shuru ⚡"] },
+  { id: "comeback", kind: "expired", subject: "Comeback ka time 💪 — profile renew karein",
+    heading: "Har achhi kahani me ek comeback hota hai 💪",
+    lines: ["Aapki profile ka comeback bas ek renewal door hai.", "Renew kijiye — profile phir se clients ko dikhne lagegi 🌟"] },
+];
+
+export const funReminderMail = ({ template, name, email }) =>
+  shell({
+    preheader: template.lines[0],
+    body:
+      eyebrow(template.kind === "expired" ? "Not live — package ended" : "Approved · not live yet", WARN) +
+      heading(`${name ? esc(name.split(/\s+/).find((w) => !/^(dr|prof|mr|mrs|ms)\.?$/i.test(w)) || name) + ", " : ""}${esc(template.heading)}`) +
+      template.lines.map((l) => para(esc(l))).join("") +
+      kvTable([["Login email", esc(email || "—"), true], ...PLAN_ROWS]) +
+      button(template.kind === "expired" ? "Renew & go live again" : "Choose a package", paymentLink(email)) +
+      visibilityNote +
+      note(`Questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
+  });

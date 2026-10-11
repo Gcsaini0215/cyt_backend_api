@@ -5,7 +5,7 @@ import Therapists from "../models/Therapists.js";
 import TherapistSubscriptionPayment from "../models/TherapistSubscriptionPayment.js";
 import { sendMail } from "../helper/mailer.js";
 import { mailProfileLiveOnce } from "../helper/profileLive.js";
-import { therapistSubscriptionReminderMail, therapistSubscriptionMail } from "../services/mailTemplates.js";
+import { therapistSubscriptionReminderMail, therapistSubscriptionMail, REMINDER_TEMPLATES, funReminderMail } from "../services/mailTemplates.js";
 
 const DAY = 86400000;
 // the admin "show on page" toggle stores true/false, payments store 1 — both mean live
@@ -24,7 +24,7 @@ export const getTherapistSubscriptions = expressAsyncHandler(async (req, res) =>
   const ids = users.map((u) => u._id);
   const [therapists, paid] = await Promise.all([
     Therapists.find({ user: { $in: ids } })
-      .select("user profile_type show_to_page preferred_plan subscription_plan subscription_amount subscription_started_at subscription_expires_at subscription_transaction_id subscription_reminded_at")
+      .select("user profile_type show_to_page preferred_plan subscription_plan subscription_amount subscription_started_at subscription_expires_at subscription_transaction_id subscription_reminded_at subscription_reminders")
       .lean(),
     TherapistSubscriptionPayment.aggregate([
       { $match: { user: { $in: ids } } },
@@ -45,6 +45,7 @@ export const getTherapistSubscriptions = expressAsyncHandler(async (req, res) =>
       approved: u.is_verified === 1,
       free: t.subscription_plan === "free",
       remindedAt: t.subscription_reminded_at || null,
+      reminders: (t.subscription_reminders || []).slice(-10),
       preferredPlan: t.preferred_plan || null,
       plan: t.subscription_plan || null,
       amount: t.subscription_amount ?? null,
@@ -63,7 +64,7 @@ export const remindTherapistSubscription = expressAsyncHandler(async (req, res, 
   if (!mongoose.Types.ObjectId.isValid(userId)) { res.status(400); return next(new Error("Invalid therapist.")); }
   const [user, t] = await Promise.all([
     Users.findOne({ _id: userId, role: 1 }).select("name email").lean(),
-    Therapists.findOne({ user: userId }).select("subscription_expires_at subscription_reminded_at show_to_page").lean(),
+    Therapists.findOne({ user: userId }).select("subscription_expires_at subscription_reminded_at subscription_reminders show_to_page").lean(),
   ]);
   if (!user?.email) { res.status(404); return next(new Error("Therapist not found.")); }
   const active = t?.subscription_expires_at && new Date(t.subscription_expires_at) > new Date();
@@ -74,15 +75,35 @@ export const remindTherapistSubscription = expressAsyncHandler(async (req, res, 
     res.status(429); return next(new Error("A reminder was just sent — wait a few minutes before sending another."));
   }
   const expired = Boolean(t?.subscription_expires_at);
-  const ok = await sendMail(user.email,
-    expired ? "Your CYT profile is no longer live — renew to show up again" : "Your CYT profile is not live yet — choose a package to go live",
-    "Choose a listing package to go live on Choose Your Therapist.",
-    therapistSubscriptionReminderMail({ name: user.name, email: user.email, expired }), "Choose Your Therapist");
+  const kind = expired ? "expired" : "unpaid";
+
+  // a chosen fun template, "plain" for the straightforward one, or the next one this therapist hasn't had yet
+  const want = String(req.body?.template || "auto");
+  let template = null;
+  if (want !== "plain") {
+    template = REMINDER_TEMPLATES.find((x) => x.id === want && x.kind === kind);
+    if (!template) {
+      const sent = new Set((t?.subscription_reminders || []).map((r) => r.template));
+      template = REMINDER_TEMPLATES.find((x) => x.kind === kind && !sent.has(x.id))
+        || REMINDER_TEMPLATES.filter((x) => x.kind === kind)[(t?.subscription_reminders?.length || 0) % REMINDER_TEMPLATES.filter((x) => x.kind === kind).length];
+    }
+  }
+  const ok = template
+    ? await sendMail(user.email, template.subject, template.lines.join(" "), funReminderMail({ template, name: user.name, email: user.email }), "Choose Your Therapist")
+    : await sendMail(user.email,
+      expired ? "Your CYT profile is no longer live — renew to show up again" : "Your CYT profile is not live yet — choose a package to go live",
+      "Choose a listing package to go live on Choose Your Therapist.",
+      therapistSubscriptionReminderMail({ name: user.name, email: user.email, expired }), "Choose Your Therapist");
   if (!ok) { res.status(502); return next(new Error("Couldn't send the email right now. Try again.")); }
   const remindedAt = new Date();
-  await Therapists.updateOne({ user: userId }, { $set: { subscription_reminded_at: remindedAt } });
-  res.json({ status: true, message: `Reminder sent to ${user.email}`, data: { remindedAt } });
+  const entry = { template: template ? template.id : "plain", at: remindedAt, by: req.user?.name || "Admin" };
+  await Therapists.updateOne({ user: userId }, { $set: { subscription_reminded_at: remindedAt }, $push: { subscription_reminders: entry } });
+  res.json({ status: true, message: `Sent “${template ? template.subject : "plain reminder"}” to ${user.email}`, data: { remindedAt, reminder: entry } });
 });
+
+// GET /admin/therapist-subscriptions/reminder-templates — the fun reminders, for the picker
+export const getReminderTemplates = (req, res) =>
+  res.json({ status: true, data: REMINDER_TEMPLATES.map(({ id, kind, subject, heading, lines }) => ({ id, kind, subject, heading, lines })) });
 
 // POST /admin/therapist-subscriptions/:userId/free — { months } : Super Admin grants a free listing
 export const grantFreeSubscription = expressAsyncHandler(async (req, res, next) => {
