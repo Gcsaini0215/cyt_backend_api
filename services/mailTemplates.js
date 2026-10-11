@@ -441,16 +441,20 @@ const visibilityNote = note("Your subscription is for listing and visibility on 
 
 export const therapistSubscriptionReminderMail = ({ name, email, expired }) =>
   shell({
-    preheader: expired ? "Your CYT listing has ended — renew to stay visible" : "Choose a package to put your CYT profile live",
+    preheader: expired
+      ? "Your CYT profile is no longer live — renew to show up for clients again"
+      : "Your CYT profile is not live yet — choose a package to go live",
     body:
-      eyebrow(expired ? "Listing ended" : "Your profile is approved", WARN) +
-      heading(expired ? `${name ? esc(name) + ", your" : "Your"} listing has ended` : `${name ? esc(name) + ", one" : "One"} step left to go live`) +
+      eyebrow(expired ? "Not live — package ended" : "Approved · not live yet", WARN) +
+      heading(expired
+        ? `${name ? esc(name) + ", your" : "Your"} profile is no longer live`
+        : `${name ? esc(name) + ", your" : "Your"} profile is not live yet`) +
       para(expired
-        ? "Your listing package on Choose Your Therapist has ended, so your profile may no longer show in our directory. Renew to stay visible to clients."
-        : "Your therapist profile is approved. Choose a listing package so your profile goes live and clients can find and book you.") +
+        ? "Your listing package on Choose Your Therapist has ended, so clients can no longer find your profile in our directory. Renew to show up for clients again."
+        : "Your therapist profile is approved, but <b>clients can't see it yet</b>. Choose a listing package and complete your profile — it goes live within an hour after that.") +
       kvTable([["Login email", esc(email || "—"), true], ...PLAN_ROWS]) +
       para("<b>On every booking through CYT:</b> 70% of the session fee goes to you and 30% to CYT.") +
-      button(expired ? "Renew my listing" : "Choose a package", paymentLink(email)) +
+      button(expired ? "Renew to go live again" : "Choose a package", paymentLink(email)) +
       visibilityNote +
       note(`Questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
   });

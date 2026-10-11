@@ -75,7 +75,7 @@ export const remindTherapistSubscription = expressAsyncHandler(async (req, res, 
   }
   const expired = Boolean(t?.subscription_expires_at);
   const ok = await sendMail(user.email,
-    expired ? "Your CYT listing has ended — renew to stay visible" : "Choose a package to put your CYT profile live",
+    expired ? "Your CYT profile is no longer live — renew to show up again" : "Your CYT profile is not live yet — choose a package to go live",
     "Choose a listing package to go live on Choose Your Therapist.",
     therapistSubscriptionReminderMail({ name: user.name, email: user.email, expired }), "Choose Your Therapist");
   if (!ok) { res.status(502); return next(new Error("Couldn't send the email right now. Try again.")); }
