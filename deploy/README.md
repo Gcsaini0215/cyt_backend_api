@@ -23,3 +23,5 @@ cd /root/cyt_backend_src && git rev-parse origin/main > /root/.cyt_backend_deplo
 - Undo an install: `crontab -e` and delete the line.
 - Never copied: `.env`, `uploads/`, `node_modules/`, `*.log`, `.github/`, `deploy/`.
 - Files deleted in git are left on the server (logged), to be safe.
+
+Installed on the VPS on 2026-10-11 (cron every 2 minutes).
