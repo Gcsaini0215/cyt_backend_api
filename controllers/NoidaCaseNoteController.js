@@ -60,3 +60,32 @@ export const saveCaseNote = expressAsyncHandler(async (req, res, next) => {
   ).lean();
   return res.json({ status: true, data: { updatedAt: note.updatedAt } });
 });
+
+// The same client's notes from their other sessions (matched by phone), newest session first —
+// the reception iPad shows them read-only next to today's notes. Empty notes are left out.
+export const getCaseHistory = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) { res.status(400); return next(new Error("Invalid booking")); }
+  const appt = await NoidaAppointment.findById(id).select("phone").lean();
+  if (!appt) { res.status(404); return next(new Error("Booking not found")); }
+  const phone = String(appt.phone || "").trim();
+  if (!phone) return res.json({ status: true, data: [] });
+  const notes = await NoidaCaseNote.find({ phone, appointment: { $ne: id } })
+    .populate("appointment", "date slot therapistName type sessionMode format status")
+    .sort({ updatedAt: -1 }).limit(40).lean();
+  const data = notes
+    .filter((n) => Array.isArray(n.pages) && n.pages.some((pg) => Array.isArray(pg?.strokes) && pg.strokes.length))
+    .map((n) => ({
+      id: String(n._id),
+      appointment: n.appointment?._id ? String(n.appointment._id) : String(n.appointment),
+      date: n.appointment?.date || "",
+      slot: n.appointment?.slot || "",
+      therapistName: n.appointment?.therapistName || "",
+      type: n.appointment?.type || "",
+      pages: n.pages,
+      updatedAt: n.updatedAt,
+      updatedByName: n.updatedByName || "",
+    }))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  return res.json({ status: true, data });
+});

@@ -61,7 +61,7 @@ import {
 import { pingNoidaPresence, getNoidaPresence } from "../controllers/NoidaPresenceController.js";
 import { createExitFeedback, getExitFeedback, updateExitFeedback, deleteExitFeedback } from "../controllers/NoidaExitFeedbackController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
-import { getCaseNote, saveCaseNote } from "../controllers/NoidaCaseNoteController.js";
+import { getCaseNote, saveCaseNote, getCaseHistory } from "../controllers/NoidaCaseNoteController.js";
 import { getPublicStats } from "../controllers/PublicStatsController.js";
 import { hideRevenueForTeam } from "../middlewares/hideRevenueMiddleware.js";
 import { leadRateLimit, phoneLookupRateLimit, pollingRateLimit, lastMinuteRequestRateLimit, exitFeedbackRateLimit } from "../middlewares/rateLimitMiddleware.js";
@@ -132,6 +132,7 @@ router.post("/noida-appointments/:id/review-link", hasPermission("noidaCenter"),
 // public trust numbers for the website: sessions booked so far + Google rating
 router.get("/public/stats", getPublicStats);
 // handwritten case notes (reception iPad + pen), saved as the therapist writes
+router.get("/noida-case-notes/history/:id", hasPermission("noidaCenter"), getCaseHistory); // same client's other sessions
 router.get("/noida-case-notes/:id", hasPermission("noidaCenter"), getCaseNote);
 router.put("/noida-case-notes/:id", hasPermission("noidaCenter"), saveCaseNote);
 
