@@ -17,7 +17,9 @@ async function sessionCounts() {
     Booking.countDocuments({ payment_status: "Paid" }),
     NoidaAppointment.countDocuments({ status: "confirmed", paymentStatus: { $in: ["paid", "package-credit"] } }),
   ]);
-  const data = { total: online + noida, online, noida, updatedAt: new Date().toISOString() };
+  // the badge counts on from SESSIONS_BASE (sessions before bookings were recorded here; default 5000)
+  const base = Number(process.env.SESSIONS_BASE ?? 5000) || 0;
+  const data = { total: base + online + noida, base, online, noida, updatedAt: new Date().toISOString() };
   sessionsCache = { at: Date.now(), data };
   return data;
 }
