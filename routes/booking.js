@@ -12,6 +12,7 @@ import {
   generatePaymentQR,
   getBookedSlots,
   releaseBookingSlot,
+  getBookingPayInfo,
   getBookings,
   getBookingsForAdmin,
   saveTransactionId,
@@ -33,6 +34,8 @@ router.get("/get-payment/:id", generatePaymentQR);
 router.get("/booked-slots/:therapistId", getBookedSlots);
 
 router.post("/booking/:id/release-slot", releaseBookingSlot);
+
+router.get("/booking/:id/pay-info", getBookingPayInfo);
 
 router.get("/get-bookings", isAuthCommon, getBookings);
 

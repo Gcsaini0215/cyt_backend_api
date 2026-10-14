@@ -39,6 +39,7 @@ export async function runPendingPaymentMails() {
       therapistName: b.therapist?.user?.name || "your therapist",
       service: b.service, format: b.format, sessionDateTime: slotText(b.booking_date), sessionMode: b.session_type,
       whom: b.whom, cname: b.cname, relation_with_client: b.relation_with_client, notes: b.notes,
+      bookingId: String(b._id),
     });
     const ok = await sendMail(b.client.email, "Complete your booking — Choose Your Therapist",
       `Hi ${b.client.name || "there"}, your session request for ${slotText(b.booking_date)} is saved. It's confirmed once payment is completed.`, html);

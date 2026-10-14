@@ -523,6 +523,20 @@ export const createRazorpayOrder = expressAsyncHandler(async (req, res, next) =>
     return next(new Error("Amount and Booking ID are required"));
   }
 
+  if (mongoose.Types.ObjectId.isValid(booking_id)) {
+    const b = await Booking.findById(booking_id).select("therapist client booking_date payment_status slot_released_at");
+    if (b?.payment_status === "Paid") {
+      res.status(409);
+      return next(new Error("This booking is already paid."));
+    }
+    if (b && (await slotTakenByOther(b))) {
+      res.status(409);
+      return next(new Error("Sorry, this time slot has just been booked by someone else. Please pick another slot."));
+    }
+    // paying again → hold the slot again
+    if (b?.slot_released_at) await Booking.updateOne({ _id: b._id }, { $set: { slot_released_at: null } });
+  }
+
   try {
     const options = {
       amount: Math.round(amount * 100), // amount in the smallest currency unit
@@ -831,6 +845,47 @@ export const releaseBookingSlot = expressAsyncHandler(async (req, res) => {
     { $set: { slot_released_at: new Date() } }
   );
   return res.status(200).json({ status: true, released: r.modifiedCount === 1 });
+});
+
+// Is this booking's slot taken by somebody else — a paid booking, or another person's live checkout?
+async function slotTakenByOther(b) {
+  const pendingCutoff = mongoose.Types.ObjectId.createFromTime(Math.floor((Date.now() - 20 * 60 * 1000) / 1000));
+  return !!(await Booking.exists({
+    _id: { $ne: b._id },
+    therapist: b.therapist,
+    booking_date: b.booking_date,
+    status: { $ne: "Cancelled" },
+    $or: [
+      { payment_status: "Paid" },
+      { payment_status: "Pending Payment", _id: { $ne: b._id, $gt: pendingCutoff }, slot_released_at: null, client: { $ne: b.client } },
+    ],
+  }));
+}
+
+// GET /booking/:id/pay-info — what the "Complete payment" link from the reminder email needs:
+// the saved session (no client details) and whether it can still be paid for.
+// state: payable | paid | taken | past | cancelled
+export const getBookingPayInfo = expressAsyncHandler(async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ status: false, message: "Booking not found" });
+  const b = await Booking.findById(id)
+    .select("therapist client service format session_type booking_date amount payment_status status")
+    .lean();
+  if (!b) return res.status(404).json({ status: false, message: "Booking not found" });
+  const ther = await Therapists.findById(b.therapist).select("_id user profile_type state").populate("user", "name profile").lean();
+  let state = "payable";
+  if (b.payment_status === "Paid") state = "paid";
+  else if (b.status === "Cancelled" || b.payment_status === "Payment Failed") state = "cancelled";
+  else if (new Date(b.booking_date).getTime() <= Date.now()) state = "past";
+  else if (await slotTakenByOther(b)) state = "taken";
+  return res.status(200).json({
+    status: true,
+    data: {
+      id: String(b._id), state,
+      therapist: ther ? { id: String(ther._id), name: ther.user?.name || "", profile: ther.user?.profile || "", profile_type: ther.profile_type || "", state: ther.state || "" } : null,
+      service: b.service, format: b.format, session_type: b.session_type || "", booking_date: b.booking_date, amount: b.amount,
+    },
+  });
 });
 
 // does this therapist (Users _id) own the booking?

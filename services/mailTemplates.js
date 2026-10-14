@@ -189,7 +189,7 @@ export const passwordResetMail = ({ name, otp }) =>
 // ============================================================================
 
 export const bookingRequestReceivedMail = ({
-  clientName, therapistName, service, format, sessionDateTime, sessionMode, whom, cname, relation_with_client, notes,
+  clientName, therapistName, service, format, sessionDateTime, sessionMode, whom, cname, relation_with_client, notes, bookingId,
 }) =>
   shell({
     preheader: "Complete payment to confirm your session",
@@ -206,7 +206,8 @@ export const bookingRequestReceivedMail = ({
         cname && ["Patient", esc(cname)],
       ]) +
       note("You'll get your full confirmation by email as soon as payment succeeds — for online sessions it includes the meeting link.") +
-      button("Complete payment"),
+      // opens this same booking ready to pay (no need to fill the form again)
+      button("Complete payment", bookingId ? `${BRAND.site}/complete-payment/${bookingId}` : BRAND.site),
   });
 
 export const bookingConfirmationMail = ({
