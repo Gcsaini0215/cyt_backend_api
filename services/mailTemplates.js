@@ -967,3 +967,59 @@ export const funReminderMail = ({ template, name, email }) =>
       visibilityNote +
       note(`Questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
   });
+
+/* ── Therapist portal: notices, requests, payouts, report replies ── */
+const PORTAL = "https://www.chooseyourtherapist.in";
+const prefsFoot = note(`You can turn these emails off in <a href="${PORTAL}/settings?tab=account" style="color:${BRAND.green};">Settings → Account</a>.`);
+const nl2br = (s) => esc(s || "").replace(/\n/g, "<br/>");
+
+export const therapistNoticeMail = ({ name, title, body, link, linkLabel, important }) =>
+  shell({
+    preheader: title,
+    body:
+      eyebrow(important ? "Important notice" : "Notice from the CYT team", important ? WARN : INFO) +
+      heading(esc(title)) +
+      (name ? para(`Hi ${esc(name)},`) : "") +
+      (body ? para(nl2br(body)) : "") +
+      (link ? button(linkLabel || "Open", link) : button("Open your dashboard", `${PORTAL}/therapist-dashboard`)) +
+      prefsFoot,
+  });
+
+export const therapistActionMail = ({ name, title, body, link, due }) =>
+  shell({
+    preheader: `Action needed: ${title}`,
+    body:
+      eyebrow("Action needed", WARN) +
+      heading(esc(title)) +
+      (name ? para(`Hi ${esc(name)},`) : "") +
+      (body ? para(nl2br(body)) : "") +
+      (due ? kvTable([["Please complete by", esc(due), true]]) : "") +
+      button("Do it now", link || `${PORTAL}/therapist-dashboard`) +
+      para("Once it's done, tap <b>Mark as done</b> on your dashboard so the team knows.") +
+      prefsFoot,
+  });
+
+export const therapistPayoutMail = ({ name, amount, method, reference, period }) =>
+  shell({
+    preheader: `Payout sent · ${amount}`,
+    body:
+      eyebrow("Payout sent", OK) +
+      heading(`${name ? esc(name) + ", your" : "Your"} payout is on its way`) +
+      kvTable([["Amount", esc(amount), true], ...(period ? [["For", esc(period)]] : []), ["Sent to", esc(method)], ...(reference ? [["Reference", esc(reference)]] : [])]) +
+      button("See all payouts", `${PORTAL}/therapists/payouts`) +
+      note("Bank transfers can take up to 1 working day to show in your account.") +
+      prefsFoot,
+  });
+
+export const therapistFeedbackReplyMail = ({ name, message, reply }) =>
+  shell({
+    preheader: "The CYT team replied to your report",
+    body:
+      eyebrow("Reply from the CYT team", INFO) +
+      heading("We've replied to your message") +
+      (name ? para(`Hi ${esc(name)},`) : "") +
+      `<div style="border-left:3px solid ${BRAND.line};padding:4px 0 4px 12px;margin:0 0 14px;color:${BRAND.faint};font-size:13px;line-height:1.55;">${nl2br(message)}</div>` +
+      para(nl2br(reply)) +
+      button("Open Help & support", `${PORTAL}/therapists/help`) +
+      prefsFoot,
+  });
