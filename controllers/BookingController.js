@@ -37,7 +37,7 @@ const formatSessionMode = (t) =>
   ({ video: "Video Call", audio: "Voice Call", "in-person": "In-Person" }[
     String(t || "").toLowerCase()
   ] || (t ? String(t) : "—"));
-import { createMeetWithTimeout } from "../helper/googleMeet.js";
+import { createMeetWithTimeout, isOnlineFormat } from "../helper/googleMeet.js";
 import { adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
 import { pushToUsers } from "./PushController.js";
 
@@ -873,7 +873,23 @@ export const joinSession = expressAsyncHandler(async (req, res) => {
   if (isTherapistUser ? !(await ownsBooking(req.user._id, b)) : String(b.client) !== String(req.user._id)) {
     return res.status(403).json({ status: false, message: "This booking isn't yours." });
   }
-  if (!b.meet_link) return res.status(404).json({ status: false, message: "No meeting link for this session." });
+  if (!b.meet_link) {
+    // online session without a link yet (booked before Google was connected) → create it now
+    if (!isOnlineFormat(b.format)) return res.status(400).json({ status: false, message: "This is an in-person session — tap Start instead." });
+    const full = await Booking.findById(b._id).populate("client", "name email").populate({ path: "therapist", select: "_id user", populate: { path: "user", select: "_id" } });
+    const meet = await createMeetWithTimeout(full, 12000);
+    if (!meet) {
+      return res.status(409).json({
+        status: false,
+        code: isTherapistUser ? "NO_GOOGLE" : "NO_LINK",
+        message: isTherapistUser
+          ? "Connect your Google account in Settings → Account to create a Meet link for this session."
+          : "Your therapist hasn't shared a meeting link yet — please check back closer to the session time.",
+      });
+    }
+    b.meet_link = meet.link;
+    b.calendar_event_id = meet.eventId;
+  }
   const now = new Date();
   const at = new Date(b.booking_date).getTime();
   const inWindow = now.getTime() >= at - START_EARLY_MIN * 60000 && now.getTime() <= at + START_LATE_HOURS * 3600000;
@@ -884,8 +900,8 @@ export const joinSession = expressAsyncHandler(async (req, res) => {
       b.status = SESSION_STATUS.STARTED;
       b.session_started_at = now;
     }
-    await b.save();
   }
+  await b.save();
   res.json({ status: true, data: { meet_link: b.meet_link, status: b.status, therapist_joined_at: b.therapist_joined_at, client_joined_at: b.client_joined_at } });
 });
 
