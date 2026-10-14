@@ -37,7 +37,7 @@ const formatSessionMode = (t) =>
   ({ video: "Video Call", audio: "Voice Call", "in-person": "In-Person" }[
     String(t || "").toLowerCase()
   ] || (t ? String(t) : "—"));
-import { createMeetWithTimeout, isOnlineFormat } from "../helper/googleMeet.js";
+import { createMeetWithTimeout, isOnlineFormat, sessionWindow, deleteMeetEvent, JOIN_EARLY_MIN } from "../helper/googleMeet.js";
 import { adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
 import { pushToUsers } from "./PushController.js";
 
@@ -836,8 +836,7 @@ async function ownsBooking(userId, booking) {
   return !!t && String(booking.therapist) === String(t._id);
 }
 
-const START_EARLY_MIN = 15;   // Start unlocks this long before the slot
-const START_LATE_HOURS = 6;   // ...and stays open this long after it
+const fmtIstTime = (ms) => new Date(ms).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
 
 // POST /start-session-now { bookingId } — one tap, no PIN (replaces the emailed-PIN step)
 export const startSessionNow = expressAsyncHandler(async (req, res) => {
@@ -849,13 +848,13 @@ export const startSessionNow = expressAsyncHandler(async (req, res) => {
   if (b.payment_status !== "Paid" && !b.transaction) return res.status(400).json({ status: false, message: "This booking isn't paid yet." });
   if (b.status === SESSION_STATUS.STARTED) return res.json({ status: true, message: "Session already started.", data: b });
   if (b.status !== SESSION_STATUS.NEW) return res.status(400).json({ status: false, message: `Session is ${String(b.status).toLowerCase()}.` });
-  const at = new Date(b.booking_date).getTime();
+  const w = sessionWindow(b.booking_date);
   const now = Date.now();
-  if (now < at - START_EARLY_MIN * 60000) {
-    const mins = Math.ceil((at - START_EARLY_MIN * 60000 - now) / 60000);
-    return res.status(400).json({ status: false, message: `You can start ${START_EARLY_MIN} minutes before the session (in ${mins >= 60 ? Math.round(mins / 60) + " h" : mins + " min"}).` });
+  if (now < w.opens) {
+    const mins = Math.ceil((w.opens - now) / 60000);
+    return res.status(400).json({ status: false, message: `You can start ${JOIN_EARLY_MIN} minutes before the session — at ${fmtIstTime(w.opens)} (in ${mins >= 60 ? Math.round(mins / 60) + " h" : mins + " min"}).` });
   }
-  if (now > at + START_LATE_HOURS * 3600000) return res.status(400).json({ status: false, message: "This session's time has passed. Contact support if it did happen." });
+  if (now > w.closes) return res.status(400).json({ status: false, message: "This session's time has passed. Contact support if it did happen." });
   b.status = SESSION_STATUS.STARTED;
   b.session_started_at = new Date();
   await b.save();
@@ -873,6 +872,12 @@ export const joinSession = expressAsyncHandler(async (req, res) => {
   if (isTherapistUser ? !(await ownsBooking(req.user._id, b)) : String(b.client) !== String(req.user._id)) {
     return res.status(403).json({ status: false, message: "This booking isn't yours." });
   }
+  if (b.status === SESSION_STATUS.COMPLETED || b.status === SESSION_STATUS.CANCELED) {
+    return res.status(400).json({ status: false, code: "CLOSED", message: `This session is ${String(b.status).toLowerCase()}.` });
+  }
+  const w = sessionWindow(b.booking_date);
+  if (Date.now() < w.opens) return res.status(400).json({ status: false, code: "EARLY", message: `Join opens at ${fmtIstTime(w.opens)} — ${JOIN_EARLY_MIN} minutes before the session.` });
+  if (Date.now() > w.closes) return res.status(400).json({ status: false, code: "ENDED", message: "This session's time is over, so the meeting link is closed." });
   if (!b.meet_link) {
     // online session without a link yet (booked before Google was connected) → create it now
     if (!isOnlineFormat(b.format)) return res.status(400).json({ status: false, message: "This is an in-person session — tap Start instead." });
@@ -891,15 +896,11 @@ export const joinSession = expressAsyncHandler(async (req, res) => {
     b.calendar_event_id = meet.eventId;
   }
   const now = new Date();
-  const at = new Date(b.booking_date).getTime();
-  const inWindow = now.getTime() >= at - START_EARLY_MIN * 60000 && now.getTime() <= at + START_LATE_HOURS * 3600000;
-  if (inWindow) {
-    if (isTherapistUser && !b.therapist_joined_at) b.therapist_joined_at = now;
-    if (!isTherapistUser && !b.client_joined_at) b.client_joined_at = now;
-    if (b.therapist_joined_at && b.client_joined_at && b.status === SESSION_STATUS.NEW) {
-      b.status = SESSION_STATUS.STARTED;
-      b.session_started_at = now;
-    }
+  if (isTherapistUser && !b.therapist_joined_at) b.therapist_joined_at = now;
+  if (!isTherapistUser && !b.client_joined_at) b.client_joined_at = now;
+  if (b.therapist_joined_at && b.client_joined_at && b.status === SESSION_STATUS.NEW) {
+    b.status = SESSION_STATUS.STARTED;
+    b.session_started_at = now;
   }
   await b.save();
   res.json({ status: true, data: { meet_link: b.meet_link, status: b.status, therapist_joined_at: b.therapist_joined_at, client_joined_at: b.client_joined_at } });
@@ -990,6 +991,7 @@ export const EndSession = expressAsyncHandler(async (req, res, next) => {
     result.session_completed_at = new Date();
     result.status = SESSION_STATUS.COMPLETED;
     await result.save();
+    deleteMeetEvent(result); // lock the Meet link (in the background)
 
     res.status(200).json({
       status: true,
@@ -1110,6 +1112,7 @@ export const cancelBooking = expressAsyncHandler(async (req, res, next) => {
 
     booking.status = SESSION_STATUS.CANCELED;
     await booking.save();
+    deleteMeetEvent(booking);
 
     await notifyBookingRemoved(booking, "cancelled");
 

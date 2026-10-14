@@ -2,6 +2,8 @@ import crypto from "crypto";
 import axios from "axios";
 import Jwt from "jsonwebtoken";
 import TherapistGoogle from "../models/TherapistGoogle.js";
+import Therapists from "../models/Therapists.js";
+import Booking from "../models/Booking.js";
 
 /* Google Calendar + Meet for therapists who connected their own Google account.
    Plain REST calls (no googleapis dependency). Keys: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET. */
@@ -10,7 +12,15 @@ const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/calendar.eve
 const API_BASE = process.env.API_PUBLIC_URL || "https://api.chooseyourtherapist.in";
 export const SITE_URL = process.env.SITE_URL || "https://www.chooseyourtherapist.in";
 const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || `${API_BASE}/api/google/callback`;
-const SESSION_MINUTES = 60;
+export const SESSION_MINUTES = 60;   // calendar event length
+export const JOIN_EARLY_MIN = 15;    // Join / Start open this long before the slot
+export const JOIN_AFTER_END_MIN = 30; // ...and stay open this long after the scheduled end
+
+// the window in which a session can be joined / started (ms timestamps)
+export function sessionWindow(bookingDate) {
+  const at = new Date(bookingDate).getTime();
+  return { opens: at - JOIN_EARLY_MIN * 60000, closes: at + (SESSION_MINUTES + JOIN_AFTER_END_MIN) * 60000, scheduledEnd: at + SESSION_MINUTES * 60000 };
+}
 
 export const googleConfigured = () => !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 
@@ -150,4 +160,25 @@ export async function createTestMeet(userId) {
     { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
   );
   return { link: data.hangoutLink || "", calendarLink: data.htmlLink || "", start };
+}
+
+/* Remove a booking's calendar event when the session is over or cancelled, so the old Meet
+   link isn't left on the calendars to be reused. Never throws. */
+export async function deleteMeetEvent(booking) {
+  try {
+    if (!googleConfigured() || !booking?.calendar_event_id) return false;
+    const t = await Therapists.findById(booking.therapist?._id || booking.therapist).select("user").lean();
+    const conn = t && (await TherapistGoogle.findOne({ user: t.user }));
+    if (!conn) return false;
+    const token = await accessTokenFor(conn);
+    await axios.delete(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(booking.calendar_event_id)}?sendUpdates=none`,
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }).catch((e) => {
+      if (![404, 410].includes(e?.response?.status)) throw e; // already gone is fine
+    });
+    await Booking.updateOne({ _id: booking._id }, { $set: { calendar_event_id: "" } });
+    return true;
+  } catch (err) {
+    console.error(`[google-meet] delete event for booking ${booking?._id}: ${err?.response?.data?.error?.message || err.message}`);
+    return false;
+  }
 }

@@ -94,6 +94,7 @@ const bookingSchema = new Schema({
   // who clicked Join (through CYT) and when — both joined = session started
   therapist_joined_at: { type: Date, default: null },
   client_joined_at: { type: Date, default: null },
+  auto_completed: { type: Boolean, default: false }, // closed by the system because End wasn't tapped
 });
 
 // the therapist / client portals list bookings newest-first by these fields
