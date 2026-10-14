@@ -40,6 +40,7 @@ const formatSessionMode = (t) =>
 import { createMeetWithTimeout, isOnlineFormat, sessionWindow, deleteMeetEvent, moveMeetEvent, JOIN_EARLY_MIN } from "../helper/googleMeet.js";
 import { adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, sessionRescheduledMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
 import { pushToUsers } from "./PushController.js";
+import { notifyTherapists, therapistUserId } from "../services/therapistNotify.js";
 
 export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
   const validateSchema = Joi.object({
@@ -476,6 +477,11 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       `${clientName} booked a ${service || 'General'} session with you.`,
       "/appointments"
     );
+    notifyTherapists([isBookingDetail.therapist.user._id], {
+      type: "booking", title: "New session booked",
+      body: `${clientName} · ${service || "Session"} · ${sessionDateTime}`,
+      link: "/appointments", ref: `booking:${isBookingDetail._id}`,
+    });
 
     //Admin Mail
     const subjectAdmin = `CONFIRMED BOOKING: ${clientName} booked ${isBookingDetail.therapist.user.name} | ₹${paymentAmount}`;
@@ -710,6 +716,11 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
       `${clientName} booked a ${service || 'General'} session with you.`,
       "/appointments"
     );
+    notifyTherapists([isBookingDetail.therapist.user._id], {
+      type: "booking", title: "New session booked",
+      body: `${clientName} · ${service || "Session"} · ${sessionDateTime}`,
+      link: "/appointments", ref: `booking:${isBookingDetail._id}`,
+    });
 
     //Admin Mail
     const subjectAdmin = `CONFIRMED BOOKING: ${clientName} booked ${isBookingDetail.therapist.user.name} | ₹${paymentAmount}`;
@@ -954,6 +965,7 @@ export const joinSession = expressAsyncHandler(async (req, res) => {
     b.calendar_event_id = meet.eventId;
   }
   const now = new Date();
+  const clientJustJoined = !isTherapistUser && !b.client_joined_at;
   if (isTherapistUser && !b.therapist_joined_at) b.therapist_joined_at = now;
   if (!isTherapistUser && !b.client_joined_at) b.client_joined_at = now;
   if (b.therapist_joined_at && b.client_joined_at && b.status === SESSION_STATUS.NEW) {
@@ -961,6 +973,14 @@ export const joinSession = expressAsyncHandler(async (req, res) => {
     b.session_started_at = now;
   }
   await b.save();
+  if (clientJustJoined) {
+    // the client is in the meeting → tell the therapist right away
+    notifyTherapists([await therapistUserId(b.therapist)], {
+      type: "joined", title: `${req.user.name || "Your client"} has joined the session`,
+      body: b.therapist_joined_at ? "They're in the meeting now." : "Tap Join to start — they're waiting for you.",
+      link: "/appointments", ref: `joined:${b._id}`,
+    });
+  }
   res.json({ status: true, data: { meet_link: b.meet_link, status: b.status, therapist_joined_at: b.therapist_joined_at, client_joined_at: b.client_joined_at } });
 });
 
@@ -1172,6 +1192,13 @@ const notifyBookingRemoved = async (booking, action) => {
 
   const therapistName = populated.therapist?.user?.name || "your therapist";
   const clientName = populated.client?.name || "the client";
+  if (populated.payment_status === "Paid") {
+    notifyTherapists([populated.therapist?.user?._id], {
+      type: "cancelled", title: `Session ${action}`,
+      body: `${clientName} · ${populated.service || "Session"} · ${formatSlotIST(populated.booking_date)}`,
+      link: "/appointments", ref: `${action}:${populated._id}`,
+    });
+  }
 
   if (populated.client?.email) {
     const html = bookingCancelledMail({

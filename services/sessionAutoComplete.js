@@ -1,5 +1,6 @@
 import Booking from "../models/Booking.js";
 import { SESSION_MINUTES, JOIN_AFTER_END_MIN, deleteMeetEvent } from "../helper/googleMeet.js";
+import { notifyTherapists, therapistUserId } from "./therapistNotify.js";
 
 /* Every 5 minutes: sessions still "Started" after their join window (scheduled end + 30 min)
    are marked Completed (the therapist forgot to tap End), and calendar events of sessions whose
@@ -9,11 +10,17 @@ let timer = null;
 
 export async function runSessionAutoComplete() {
   const cutoff = new Date(Date.now() - (SESSION_MINUTES + JOIN_AFTER_END_MIN) * 60000);
-  const stale = await Booking.find({ status: "Started", booking_date: { $lte: cutoff } }).select("_id booking_date therapist calendar_event_id").limit(200);
+  const stale = await Booking.find({ status: "Started", booking_date: { $lte: cutoff } }).select("_id booking_date therapist calendar_event_id client").populate("client", "name").limit(200);
   for (const b of stale) {
-    await Booking.updateOne({ _id: b._id, status: "Started" }, {
+    const r = await Booking.updateOne({ _id: b._id, status: "Started" }, {
       $set: { status: "Completed", session_completed_at: new Date(new Date(b.booking_date).getTime() + SESSION_MINUTES * 60000), auto_completed: true },
     });
+    if (r.modifiedCount) {
+      notifyTherapists([await therapistUserId(b.therapist)], {
+        type: "session", title: "Session marked completed",
+        body: `${b.client?.name || "Client"} — completed automatically after the session time.`, link: "/appointments", ref: `completed:${b._id}`,
+      });
+    }
     await deleteMeetEvent(b);
   }
   // window closed but the event is still on the calendar (completed, cancelled or never joined)

@@ -15,6 +15,7 @@ import FavriouteTherapist from "../models/FavriouteTherapist.js";
 import UserInfo from "../models/UserInfo.js";
 import ChatMessage from "../models/ChatMessage.js";
 import { deleteMeetEvent } from "../helper/googleMeet.js";
+import { notifyTherapists, therapistUserId } from "../services/therapistNotify.js";
 export const updateprofile = expressAsyncHandler(async (req, res, next) => {
   const {
     phone,
@@ -750,6 +751,10 @@ export const saveReview = expressAsyncHandler(async (req, res, next) => {
       email,
       rating,
       description,
+    });
+    notifyTherapists([await therapistUserId(therapistId).catch(() => null)], {
+      type: "review", title: `New ${Number(rating) ? `${Number(rating)}★ ` : ""}review from ${name}`,
+      body: String(description || "").slice(0, 160), link: "/therapists/reviews", ref: `review:${review._id}`,
     });
 
     res.status(201).json({

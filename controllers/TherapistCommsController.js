@@ -8,6 +8,7 @@ import TherapistPayout from "../models/TherapistPayout.js";
 import TherapistFeedback from "../models/TherapistFeedback.js";
 import TherapistPrefs from "../models/TherapistPrefs.js";
 import { sendMail } from "../helper/mailer.js";
+import { notifyTherapists } from "../services/therapistNotify.js";
 import {
   therapistNoticeMail, therapistActionMail, therapistPayoutMail, therapistFeedbackReplyMail,
 } from "../services/mailTemplates.js";
@@ -206,6 +207,10 @@ export const adminCreateAnnouncement = expressAsyncHandler(async (req, res) => {
     title, body: str(req.body?.body, 4000), link: safeLink(req.body?.link), linkLabel: str(req.body?.linkLabel, 60),
     city: str(req.body?.city, 80), important: !!req.body?.important, createdBy: req.user?._id || null,
   });
+  resolveAudience({ all: !doc.city, city: doc.city }).then((ids) => notifyTherapists(ids, {
+    type: "notice", title: `${doc.important ? "Important: " : ""}${doc.title}`, body: (doc.body || "").slice(0, 200),
+    link: "/therapists/notifications", ref: `notice:${doc._id}`,
+  })).catch(() => {});
   if (req.body?.email) {
     const ids = await resolveAudience({ all: !doc.city, city: doc.city });
     await TherapistAnnouncement.updateOne({ _id: doc._id }, { $set: { emailed: ids.length } });
@@ -249,6 +254,7 @@ export const adminCreateActions = expressAsyncHandler(async (req, res) => {
   const batch = new mongoose.Types.ObjectId().toString();
   const base = { title, body: str(req.body?.body, 2000), link: safeLink(req.body?.link), dueDate: due && !isNaN(due) ? due : null, batch, createdBy: req.user?._id || null };
   await TherapistActionRequest.insertMany(ids.map((user) => ({ ...base, user })));
+  notifyTherapists(ids, { type: "action", title: `Action needed: ${title}`, body: (base.body || "").slice(0, 200), link: "/therapists/notifications", ref: `action:${batch}` });
   if (req.body?.email) {
     mailInBackground(ids, "action_email", (u) => ({
       subject: `Action needed: ${title}`,
@@ -289,6 +295,13 @@ const payoutFields = (b) => {
   return out;
 };
 
+function notifyPayout(p) {
+  notifyTherapists([p.user?._id || p.user], {
+    type: "payout", title: `Payout sent: ${inr(p.amount)}`,
+    body: p.reference ? `Reference: ${p.reference}` : "It's on its way to your account.", link: "/therapists/payouts", ref: `payout:${p._id}`,
+  });
+}
+
 function mailPayout(p) {
   const period = p.periodFrom && p.periodTo ? `${fmtDay(p.periodFrom)} – ${fmtDay(p.periodTo)}` : "";
   mailInBackground([p.user], "payout_email", (u) => ({
@@ -304,6 +317,7 @@ export const adminCreatePayout = expressAsyncHandler(async (req, res) => {
   const f = payoutFields(req.body || {});
   if (!f.amount) return res.status(400).json({ status: false, message: "Enter the amount" });
   const doc = await TherapistPayout.create({ ...f, user: req.body.user, paidAt: f.status === "paid" ? new Date() : null, createdBy: req.user?._id || null });
+  if (doc.status === "paid") notifyPayout(doc);
   if (doc.status === "paid" && req.body?.email !== false) mailPayout(doc);
   res.json({ status: true, data: await TherapistPayout.findById(doc._id).populate("user", "name email").lean(), message: "Payout saved" });
 });
@@ -317,6 +331,7 @@ export const adminUpdatePayout = expressAsyncHandler(async (req, res) => {
   if (f.status === "paid" && before.status !== "paid") f.paidAt = new Date();
   if (f.status === "pending") f.paidAt = null;
   const doc = await TherapistPayout.findByIdAndUpdate(req.params.id, { $set: f }, { new: true }).populate("user", "name email").lean();
+  if (f.status === "paid" && before.status !== "paid") notifyPayout(doc);
   if (f.status === "paid" && before.status !== "paid" && req.body?.email !== false) mailPayout({ ...doc, user: doc.user._id });
   res.json({ status: true, data: doc, message: "Payout updated" });
 });
@@ -346,6 +361,7 @@ export const adminReplyFeedback = expressAsyncHandler(async (req, res) => {
   const doc = await TherapistFeedback.findByIdAndUpdate(req.params.id, { $set: set }, { new: true }).populate("user", "name email phone").lean();
   if (!doc) return res.status(404).json({ status: false, message: "Not found" });
   if (reply && doc.user?._id) {
+    notifyTherapists([doc.user._id], { type: "reply", title: "The CYT team replied to your message", body: reply.slice(0, 200), link: "/therapists/help", ref: `reply:${doc._id}:${Date.now()}` });
     mailInBackground([doc.user._id], "reply_email", (u) => ({
       subject: "The CYT team replied to your message",
       text: reply,
