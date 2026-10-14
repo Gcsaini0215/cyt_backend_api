@@ -205,7 +205,7 @@ export const bookingRequestReceivedMail = ({
         ["Requested slot", esc(sessionDateTime || "To be confirmed")],
         cname && ["Patient", esc(cname)],
       ]) +
-      note("You'll get your session PIN and full confirmation by email as soon as payment succeeds.") +
+      note("You'll get your full confirmation by email as soon as payment succeeds — for online sessions it includes the meeting link.") +
       button("Complete payment"),
   });
 
@@ -225,7 +225,11 @@ export const bookingConfirmationMail = ({
         cname && ["Patient", `${esc(cname)}${clientAge ? " (" + esc(clientAge) + ")" : ""}`],
         transactionId && ["Transaction", esc(transactionId), true],
       ]) +
-      (meetLink ? meetBlock(meetLink, "Join from My Bookings at the session time — the same Google Meet link is in your Google Calendar invite.") : "") +
+      (meetLink
+        ? meetBlock(meetLink, "Join from My Bookings — it opens 15 minutes before your session. The same link is in your Google Calendar invite.")
+        : /offline|in[- ]?person|clinic/i.test(`${format || ""} ${sessionMode || ""}`)
+          ? note("This is an in-person session — please reach the clinic a few minutes early.")
+          : note("Your meeting link will appear in My Bookings (and as a Google Calendar invite) before the session. Tap Join there — it opens 15 minutes before your session time.")) +
       button("View in dashboard"),
     foot: `${BRAND.name} LLP &middot; Keep this email as your receipt.`,
   });
