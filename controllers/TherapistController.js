@@ -792,7 +792,10 @@ export const getMyReviews = expressAsyncHandler(async (req, res, next) => {
   try {
     const therapist = await Therapists.findOne({ user: req.user._id }).select("_id");
     if (!therapist) return res.status(404).json({ status: false, message: "Therapist profile not found" });
-    const reviews = await Review.find({ therapist_id: therapist._id }).sort({ createdAt: -1 }).limit(10);
+    // ?limit= (the Reviews page asks for all of them; the dashboard keeps the latest 10).
+    // Reviewers' emails stay private — the therapist sees name, rating and text.
+    const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 10));
+    const reviews = await Review.find({ therapist_id: therapist._id }).select("-email").sort({ createdAt: -1 }).limit(limit);
     res.status(200).json({ status: true, message: "Fetched successfully", data: reviews });
   } catch (error) {
     res.status(400);
