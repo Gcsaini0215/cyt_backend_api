@@ -399,6 +399,13 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
     isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
 
+    // tell the therapist this instant — before the Meet link and emails, which take a few seconds
+    notifyTherapists([isBookingDetail.therapist.user._id], {
+      type: "booking", title: "New session booked",
+      body: `${isBookingDetail.client?.name || "A client"} · ${isBookingDetail.service || "Session"} · ${formatSlotIST(isBookingDetail.booking_date)}`,
+      link: "/appointments", ref: `booking:${isBookingDetail._id}`,
+    });
+
     // online session + therapist connected Google → a Meet link on their calendar (never blocks confirmation)
     const meet = await createMeetWithTimeout(isBookingDetail);
     if (meet) {
@@ -477,11 +484,6 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       `${clientName} booked a ${service || 'General'} session with you.`,
       "/appointments"
     );
-    notifyTherapists([isBookingDetail.therapist.user._id], {
-      type: "booking", title: "New session booked",
-      body: `${clientName} · ${service || "Session"} · ${sessionDateTime}`,
-      link: "/appointments", ref: `booking:${isBookingDetail._id}`,
-    });
 
     //Admin Mail
     const subjectAdmin = `CONFIRMED BOOKING: ${clientName} booked ${isBookingDetail.therapist.user.name} | ₹${paymentAmount}`;
@@ -638,6 +640,13 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
 
+    // tell the therapist this instant — before the Meet link and emails, which take a few seconds
+    notifyTherapists([isBookingDetail.therapist.user._id], {
+      type: "booking", title: "New session booked",
+      body: `${isBookingDetail.client?.name || "A client"} · ${isBookingDetail.service || "Session"} · ${formatSlotIST(isBookingDetail.booking_date)}`,
+      link: "/appointments", ref: `booking:${isBookingDetail._id}`,
+    });
+
     // online session + therapist connected Google → a Meet link on their calendar (never blocks confirmation)
     const meet = await createMeetWithTimeout(isBookingDetail);
     if (meet) {
@@ -716,11 +725,6 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
       `${clientName} booked a ${service || 'General'} session with you.`,
       "/appointments"
     );
-    notifyTherapists([isBookingDetail.therapist.user._id], {
-      type: "booking", title: "New session booked",
-      body: `${clientName} · ${service || "Session"} · ${sessionDateTime}`,
-      link: "/appointments", ref: `booking:${isBookingDetail._id}`,
-    });
 
     //Admin Mail
     const subjectAdmin = `CONFIRMED BOOKING: ${clientName} booked ${isBookingDetail.therapist.user.name} | ₹${paymentAmount}`;
