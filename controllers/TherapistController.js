@@ -10,6 +10,11 @@ import Workshop from "../models/Workshop.js";
 import Review from "../models/Review.js";
 import Booking from "../models/Booking.js";
 import WorkshopBooking from "../models/WorkshopBooking.js";
+import Transaction from "../models/Transaction.js";
+import FavriouteTherapist from "../models/FavriouteTherapist.js";
+import UserInfo from "../models/UserInfo.js";
+import ChatMessage from "../models/ChatMessage.js";
+import { deleteMeetEvent } from "../helper/googleMeet.js";
 export const updateprofile = expressAsyncHandler(async (req, res, next) => {
   const {
     phone,
@@ -797,9 +802,29 @@ export const deleteUser = expressAsyncHandler(async (req, res, next) => {
     throw new Error("ids array is required");
   }
   try {
+    // deleting a CLIENT also removes everything that belongs to them — their bookings (and the
+    // Google Calendar events of upcoming ones), payment records, workshop bookings, saved
+    // therapists, profile details and chats — so no nameless bookings are left on any dashboard
+    const clientIds = (await Users.find({ _id: { $in: ids }, role: 0 }).select("_id").lean()).map((u) => u._id);
+    let removed = { bookings: 0 };
+    if (clientIds.length) {
+      const bookings = await Booking.find({ client: { $in: clientIds } }).select("_id therapist calendar_event_id").lean();
+      for (const b of bookings) if (b.calendar_event_id) await deleteMeetEvent(b);
+      const bookingIds = bookings.map((b) => b._id);
+      removed.bookings = (await Booking.deleteMany({ _id: { $in: bookingIds } })).deletedCount;
+      removed.payments = (await Transaction.deleteMany({ $or: [{ user: { $in: clientIds } }, { booking: { $in: bookingIds } }] })).deletedCount;
+      removed.workshops = (await WorkshopBooking.deleteMany({ user: { $in: clientIds } })).deletedCount;
+      await FavriouteTherapist.deleteMany({ user: { $in: clientIds } });
+      await UserInfo.deleteMany({ _id: { $in: clientIds } });
+      await ChatMessage.deleteMany({ userId: { $in: clientIds } });
+    }
     await Therapists.deleteMany({ user: { $in: ids } });
     await Users.deleteMany({ _id: { $in: ids } });
-    res.status(200).json({ status: true, message: "User(s) deleted successfully" });
+    res.status(200).json({
+      status: true,
+      message: removed.bookings ? `Deleted — including ${removed.bookings} booking(s) and their payment records.` : "User(s) deleted successfully",
+      data: removed,
+    });
   } catch (error) {
     res.status(400);
     throw new Error(error.message);
