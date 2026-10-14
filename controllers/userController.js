@@ -1,3 +1,4 @@
+import Booking from "../models/Booking.js";
 import expressAsyncHandler from "express-async-handler";
 import Users from "../models/Users.js";
 import UserInfo from "../models/UserInfo.js";
@@ -93,6 +94,14 @@ export const getUser = expressAsyncHandler(async (req, res, next) => {
       });
     } else {
       const userInfo = await UserInfo.findById(user._id);
+      // details given while booking / signing up live on the account (and the booking) —
+      // use them when the profile itself is still empty
+      const pick = (...v) => v.find((x) => x !== undefined && x !== null && x !== "" && x !== "Select") ?? "";
+      let bookedAge = null;
+      if (!pick(userInfo?.age, user.age, userInfo?.dob, user.dob)) {
+        const b = await Booking.findOne({ client: user._id, age: { $ne: null }, whom: { $not: /other/i } }).sort({ _id: -1 }).select("age").lean();
+        bookedAge = b?.age || null;
+      }
 
       res.status(201).json({
         message: "Fetched successfully",
@@ -103,12 +112,12 @@ export const getUser = expressAsyncHandler(async (req, res, next) => {
           email: user.email,
           bio: user.bio,
           profile: user.profile,
-          nickname: userInfo ? userInfo.nickname : "",
-          anumber: userInfo ? userInfo.anumber : "",
-          dob: userInfo ? userInfo.dob : "",
-          age: userInfo ? userInfo.age : "",
-          state: userInfo ? userInfo.state : "",
-          gender: userInfo ? userInfo.gender : "",
+          nickname: pick(userInfo?.nickname),
+          anumber: pick(userInfo?.anumber),
+          dob: pick(userInfo?.dob, user.dob),
+          age: pick(userInfo?.age, user.age, bookedAge),
+          state: pick(userInfo?.state),
+          gender: pick(userInfo?.gender, user.gender),
         },
         status: true,
       });
