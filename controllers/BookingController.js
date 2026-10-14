@@ -755,7 +755,7 @@ export const getBookings = expressAsyncHandler(async (req, res, next) => {
       })
       .populate({
         path: "therapist",
-        select: "_id user profile_code",
+        select: "_id user profile_code profile_type state",
         populate: {
           path: "user",
           select: "name email profile",

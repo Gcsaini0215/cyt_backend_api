@@ -56,16 +56,15 @@ export const updateUser = expressAsyncHandler(async (req, res, next) => {
         message: "Profile updated successfully",
       });
     } else {
-      await Users.findByIdAndUpdate(
-        user._id,
-        { profile, name, phone },
-        { new: true }
-      );
+      // only replace the photo when a new one was uploaded (an empty value used to wipe it)
+      const set = { name, phone };
+      if (profile) set.profile = profile;
+      await Users.findByIdAndUpdate(user._id, set, { new: true });
 
       // upsert option
       await UserInfo.updateOne(filter, update, options);
       res.status(200).json({
-        data: [],
+        data: profile ? { profile } : [],
         status: true,
         message: "Profile updated successfully",
       });
