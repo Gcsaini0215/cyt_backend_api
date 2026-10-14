@@ -282,6 +282,24 @@ export const newSessionAdminMail = ({
     foot: "CYT Management System &middot; Internal notification",
   });
 
+export const sessionRescheduledMail = ({ clientName, therapistName, service, format, oldTime, newTime, meetLink, reason }) =>
+  shell({
+    preheader: `Your session moved to ${newTime}`,
+    body:
+      eyebrow("Session rescheduled", WARN) +
+      heading("Your session has a new time") +
+      para(`Dear ${esc(clientName || "there")}, ${esc(therapistName || "your therapist")} has moved your session.`) +
+      kvTable([
+        ["New time", esc(newTime), true],
+        oldTime && ["Was", esc(oldTime)],
+        ["Service", `${esc(service || "Counselling")} &middot; ${esc(format || "Online")}`],
+        reason && ["Note from therapist", esc(reason)],
+      ]) +
+      (meetLink ? meetBlock(meetLink, "Same meeting link as before — Join from My Bookings, it opens 15 minutes before the new time.") : "") +
+      button("View in My Bookings", `${BRAND.site.replace("://", "://www.")}/client/my-bookings`) +
+      note(`If the new time doesn't work for you, reply to this email or write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
+  });
+
 export const bookingCancelledMail = ({ recipientName, otherPartyName, service, format, booking_date, action }) => {
   const label = action === "deleted" ? "removed" : "cancelled";
   const when = booking_date ? new Date(booking_date).toLocaleString("en-IN") : null;

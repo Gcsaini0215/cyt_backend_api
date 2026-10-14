@@ -95,6 +95,7 @@ const bookingSchema = new Schema({
   therapist_joined_at: { type: Date, default: null },
   client_joined_at: { type: Date, default: null },
   auto_completed: { type: Boolean, default: false }, // closed by the system because End wasn't tapped
+  pending_mail_sent_at: { type: Date, default: null }, // "complete your payment" reminder (sent once, if still unpaid)
 });
 
 // the therapist / client portals list bookings newest-first by these fields

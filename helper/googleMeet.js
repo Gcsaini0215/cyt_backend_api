@@ -182,3 +182,23 @@ export async function deleteMeetEvent(booking) {
     return false;
   }
 }
+
+// Move a booking's calendar event to its (new) booking_date; Google notifies the guest. Never throws.
+export async function moveMeetEvent(booking) {
+  try {
+    if (!googleConfigured() || !booking?.calendar_event_id) return false;
+    const t = await Therapists.findById(booking.therapist?._id || booking.therapist).select("user").lean();
+    const conn = t && (await TherapistGoogle.findOne({ user: t.user }));
+    if (!conn) return false;
+    const start = new Date(booking.booking_date);
+    const end = new Date(start.getTime() + SESSION_MINUTES * 60000);
+    const token = await accessTokenFor(conn);
+    await axios.patch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(booking.calendar_event_id)}?sendUpdates=all`,
+      { start: { dateTime: start.toISOString(), timeZone: "Asia/Kolkata" }, end: { dateTime: end.toISOString(), timeZone: "Asia/Kolkata" } },
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 });
+    return true;
+  } catch (err) {
+    console.error(`[google-meet] move event for booking ${booking?._id}: ${err?.response?.data?.error?.message || err.message}`);
+    return false;
+  }
+}

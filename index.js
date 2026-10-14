@@ -6,6 +6,7 @@ import app from "./app.js";
 import { startAvailabilityReminders } from "./services/availabilityReminder.js";
 import { startSubscriptionReconcile } from "./helper/therapistSubscription.js";
 import { startSessionAutoComplete } from "./services/sessionAutoComplete.js";
+import { startPendingPaymentMails } from "./services/pendingPaymentMail.js";
 
 mongoose.set("strictQuery", true);
 mongoose.connect(process.env.MONGODB_URI).then(() => {
@@ -15,5 +16,6 @@ mongoose.connect(process.env.MONGODB_URI).then(() => {
     startAvailabilityReminders();
     startSubscriptionReconcile();
     startSessionAutoComplete();
+    startPendingPaymentMails();
   });
 }).catch((err) => console.log(err));

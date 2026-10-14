@@ -8,6 +8,7 @@ import {
   EndSession,
   startSessionNow,
   joinSession,
+  rescheduleSession,
   generatePaymentQR,
   getBookedSlots,
   getBookings,
@@ -43,6 +44,7 @@ router.post("/verify-razorpay-payment", verifyRazorpayPayment);
 router.post("/start-session",isTherapist, startSession);
 router.post("/start-session-now", isTherapist, startSessionNow);
 router.post("/bookings/:id/join", isAuthCommon, joinSession);
+router.post("/bookings/:id/reschedule", isTherapist, rescheduleSession);
 
 router.post("/end-session",isTherapist, EndSession);
 

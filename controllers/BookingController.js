@@ -37,8 +37,8 @@ const formatSessionMode = (t) =>
   ({ video: "Video Call", audio: "Voice Call", "in-person": "In-Person" }[
     String(t || "").toLowerCase()
   ] || (t ? String(t) : "—"));
-import { createMeetWithTimeout, isOnlineFormat, sessionWindow, deleteMeetEvent, JOIN_EARLY_MIN } from "../helper/googleMeet.js";
-import { adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
+import { createMeetWithTimeout, isOnlineFormat, sessionWindow, deleteMeetEvent, moveMeetEvent, JOIN_EARLY_MIN } from "../helper/googleMeet.js";
+import { adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, sessionRescheduledMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
 import { pushToUsers } from "./PushController.js";
 
 export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
@@ -272,23 +272,9 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       { session }
     );
 
-    const slotLabel = formatSlotIST(parsedBookingDate);
-    const modeLabel = formatSessionMode(session_type);
-    const subject = "Booking Request Received — Choose Your Therapist";
-    const text = `Hi ${name || "there"}, your booking request for ${slotLabel} has been received. Your session will be confirmed once payment is completed.`;
-    const html = bookingRequestReceivedMail({
-      clientName: name || email,
-      therapistName: isExist?.user?.name || "your therapist",
-      service,
-      format,
-      sessionDateTime: slotLabel,
-      sessionMode: modeLabel,
-      whom,
-      cname,
-      relation_with_client,
-      notes,
-    });
-    await sendMail(email, subject, text, html);
+    // The "complete your payment" email is no longer sent here (the client is usually still on
+    // the Razorpay screen). services/pendingPaymentMail.js sends it only if the booking is
+    // still unpaid 10 minutes later.
 
     await session.commitTransaction();
     session.endSession();
@@ -904,6 +890,44 @@ export const joinSession = expressAsyncHandler(async (req, res) => {
   }
   await b.save();
   res.json({ status: true, data: { meet_link: b.meet_link, status: b.status, therapist_joined_at: b.therapist_joined_at, client_joined_at: b.client_joined_at } });
+});
+
+// POST /bookings/:id/reschedule { booking_date, reason? } — therapist moves an upcoming session
+export const rescheduleSession = expressAsyncHandler(async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ status: false, message: "Invalid booking." });
+  const when = new Date(req.body?.booking_date);
+  if (isNaN(when)) return res.status(400).json({ status: false, message: "Pick a valid date and time." });
+  if (when.getTime() < Date.now() + 30 * 60000) return res.status(400).json({ status: false, message: "Pick a time at least 30 minutes from now." });
+  if (when.getTime() > Date.now() + 90 * 86400000) return res.status(400).json({ status: false, message: "Pick a time within the next 90 days." });
+  const b = await Booking.findById(id).populate("client", "name email").populate({ path: "therapist", select: "_id user", populate: { path: "user", select: "name" } });
+  if (!b) return res.status(404).json({ status: false, message: "Booking not found." });
+  if (!(await ownsBooking(req.user._id, { therapist: b.therapist._id }))) return res.status(403).json({ status: false, message: "This booking isn't yours." });
+  if (b.status !== SESSION_STATUS.NEW) return res.status(400).json({ status: false, message: `Only upcoming sessions can be rescheduled (this one is ${String(b.status).toLowerCase()}).` });
+  const clash = await Booking.findOne({
+    _id: { $ne: b._id }, therapist: b.therapist._id, status: { $nin: ["Cancelled", "Completed"] },
+    booking_date: { $gt: new Date(when.getTime() - 60 * 60000), $lt: new Date(when.getTime() + 60 * 60000) },
+    $or: [{ payment_status: "Paid" }, { transaction: { $ne: null } }],
+  }).select("_id booking_date").lean();
+  if (clash) return res.status(409).json({ status: false, message: `You already have a session at ${new Date(clash.booking_date).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" })} that day — pick a time at least an hour apart.` });
+
+  const oldTime = formatSlotIST(b.booking_date);
+  b.booking_date = when;
+  b.therapist_joined_at = null;
+  b.client_joined_at = null;
+  b.pending_mail_sent_at = b.pending_mail_sent_at || new Date();
+  await b.save();
+  const moved = await moveMeetEvent(b);
+
+  const newTime = formatSlotIST(when);
+  const reason = String(req.body?.reason || "").trim().slice(0, 300);
+  if (b.client?.email) {
+    sendMail(b.client.email, `Session rescheduled: ${newTime}`,
+      `Your session with ${b.therapist?.user?.name || "your therapist"} has moved to ${newTime} (was ${oldTime}).${b.meet_link ? " Meeting link: " + b.meet_link : ""}`,
+      sessionRescheduledMail({ clientName: b.cname || b.client.name, therapistName: b.therapist?.user?.name, service: b.service, format: b.format, oldTime, newTime, meetLink: b.meet_link, reason }))
+      .catch(() => {});
+  }
+  res.json({ status: true, message: `Moved to ${newTime}. ${b.client?.email ? "The client has been emailed." : ""}${moved ? " Calendar updated." : ""}`.trim(), data: { _id: b._id, booking_date: b.booking_date } });
 });
 
 export const startSession = expressAsyncHandler(async (req, res, next) => {
