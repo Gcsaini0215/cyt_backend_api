@@ -49,6 +49,12 @@ export const updateUser = expressAsyncHandler(async (req, res, next) => {
       },
     };
     const options = { upsert: true };
+    // keep the account in step — admin and the therapist's booking view read age / gender / dob from it
+    const mirror = {};
+    if (age !== undefined && age !== "" && !isNaN(Number(age))) mirror.age = Number(age);
+    if (gender && gender !== "Select") mirror.gender = gender;
+    if (dob) mirror.dob = dob;
+    if (Object.keys(mirror).length) await Users.updateOne({ _id: user._id }, { $set: mirror });
     if (profile === "" && name === user.name && phone === user.phone) {
       await UserInfo.updateOne(filter, update, options);
       res.status(200).json({
@@ -130,11 +136,37 @@ export const getUser = expressAsyncHandler(async (req, res, next) => {
 
 export const getAllUserForAdmin = expressAsyncHandler(async (req, res, next) => {
   try {
-     const userInfo = await Users.find({role:0}).select("name email phone profile age gender bio is_online dob").sort({ createdAt: -1 });
+     const users = await Users.find({ role: 0 }).select("name email phone profile age gender bio is_online dob createdAt").sort({ createdAt: -1 }).lean();
+     const ids = users.map((u) => u._id);
+     // details clients add on their Profile page live in UserInfo — merge them in
+     const infos = await UserInfo.find({ _id: { $in: ids } }).select("nickname anumber dob age state gender").lean();
+     const infoBy = new Map(infos.map((i) => [String(i._id), i]));
+     const stats = await Booking.aggregate([
+       { $match: { client: { $in: ids }, transaction: { $ne: null } } },
+       { $group: { _id: "$client", sessions: { $sum: 1 }, completed: { $sum: { $cond: [{ $eq: ["$status", "Completed"] }, 1, 0] } }, last: { $max: "$booking_date" }, bookedAge: { $max: "$age" } } },
+     ]);
+     const statBy = new Map(stats.map((s) => [String(s._id), s]));
+     const val = (...v) => v.find((x) => x !== undefined && x !== null && x !== "" && x !== "Select") ?? "";
+     const data = users.map((u) => {
+       const i = infoBy.get(String(u._id)) || {};
+       const s = statBy.get(String(u._id)) || {};
+       return {
+         ...u,
+         age: val(i.age, u.age, s.bookedAge),
+         gender: val(i.gender, u.gender),
+         dob: val(i.dob, u.dob),
+         state: val(i.state),
+         nickname: val(i.nickname),
+         anumber: val(i.anumber),
+         sessions: s.sessions || 0,
+         completed: s.completed || 0,
+         last_session: s.last || null,
+       };
+     });
 
       res.status(201).json({
         message: "Fetched successfully",
-        data:userInfo || [],
+        data,
         status: true,
       });
 

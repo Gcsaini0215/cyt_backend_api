@@ -214,6 +214,7 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         user.otp_count = otp_count;
         if (name && !user.name) user.name = name;
         if (phone && !user.phone) user.phone = phone;
+        if (age && whom !== "For Other" && !user.age) user.age = age;
         await user.save({ session });
       } else {
         user = await Users.create(
