@@ -15,6 +15,12 @@ import {
 /* Admin ↔ therapist communication: announcements, action requests, payouts, reports/feedback
    and the therapist's email preferences. Therapist routes use the Users _id (req.user._id). */
 
+// payouts are money: only the Super Admin (an admin without a role) manages them
+const superOnly = (req, res) => {
+  if (req.user?.roleId) { res.status(403).json({ status: false, message: "Only the Super Admin can manage payouts" }); return false; }
+  return true;
+};
+
 const PREF_KEYS = ["notice_email", "action_email", "payout_email", "reply_email"];
 const isId = (v) => mongoose.Types.ObjectId.isValid(v);
 const str = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
@@ -264,6 +270,7 @@ export const adminUpdateAction = expressAsyncHandler(async (req, res) => {
 });
 
 export const adminListPayouts = expressAsyncHandler(async (req, res) => {
+  if (!superOnly(req, res)) return;
   const q = {};
   if (req.query.user && isId(req.query.user)) q.user = req.query.user;
   const data = await TherapistPayout.find(q).sort({ createdAt: -1 }).limit(500).populate("user", "name email").lean();
@@ -292,6 +299,7 @@ function mailPayout(p) {
 }
 
 export const adminCreatePayout = expressAsyncHandler(async (req, res) => {
+  if (!superOnly(req, res)) return;
   if (!isId(req.body?.user)) return res.status(400).json({ status: false, message: "Choose a therapist" });
   const f = payoutFields(req.body || {});
   if (!f.amount) return res.status(400).json({ status: false, message: "Enter the amount" });
@@ -301,6 +309,7 @@ export const adminCreatePayout = expressAsyncHandler(async (req, res) => {
 });
 
 export const adminUpdatePayout = expressAsyncHandler(async (req, res) => {
+  if (!superOnly(req, res)) return;
   if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid id" });
   const before = await TherapistPayout.findById(req.params.id).lean();
   if (!before) return res.status(404).json({ status: false, message: "Not found" });
@@ -313,6 +322,7 @@ export const adminUpdatePayout = expressAsyncHandler(async (req, res) => {
 });
 
 export const adminDeletePayout = expressAsyncHandler(async (req, res) => {
+  if (!superOnly(req, res)) return;
   if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid id" });
   await TherapistPayout.deleteOne({ _id: req.params.id });
   res.json({ status: true, message: "Deleted" });
@@ -349,7 +359,7 @@ export const adminReplyFeedback = expressAsyncHandler(async (req, res) => {
 export const adminCommsSummary = expressAsyncHandler(async (req, res) => {
   const [openFeedback, pendingPayouts, openActions] = await Promise.all([
     TherapistFeedback.countDocuments({ status: "open" }),
-    TherapistPayout.countDocuments({ status: "pending" }),
+    req.user?.roleId ? 0 : TherapistPayout.countDocuments({ status: "pending" }),
     TherapistActionRequest.countDocuments({ status: "open" }),
   ]);
   res.json({ status: true, data: { openFeedback, pendingPayouts, openActions } });
