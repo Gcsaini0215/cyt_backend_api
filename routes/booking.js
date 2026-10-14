@@ -11,6 +11,7 @@ import {
   rescheduleSession,
   generatePaymentQR,
   getBookedSlots,
+  releaseBookingSlot,
   getBookings,
   getBookingsForAdmin,
   saveTransactionId,
@@ -30,6 +31,8 @@ router.post("/verify-guest-email-otp", verifyGuestEmailOtp);
 router.get("/get-payment/:id", generatePaymentQR);
 
 router.get("/booked-slots/:therapistId", getBookedSlots);
+
+router.post("/booking/:id/release-slot", releaseBookingSlot);
 
 router.get("/get-bookings", isAuthCommon, getBookings);
 

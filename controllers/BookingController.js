@@ -233,8 +233,9 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
     }
 
     // Prevent double-booking the same therapist slot. A slot is "taken" if a
-    // paid booking exists for it, or a pending one was started in the last 20
-    // minutes (someone's mid-checkout). Abandoned pending carts free up.
+    // paid booking exists for it, or someone else's pending one was started in the
+    // last 20 minutes (mid-checkout). Abandoned carts free up — at once when the
+    // client closes Razorpay (slot_released_at), otherwise after 20 minutes.
     const pendingCutoff = mongoose.Types.ObjectId.createFromTime(
       Math.floor((Date.now() - 20 * 60 * 1000) / 1000)
     );
@@ -244,7 +245,7 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       status: { $ne: "Cancelled" },
       $or: [
         { payment_status: "Paid" },
-        { payment_status: "Pending Payment", _id: { $gt: pendingCutoff } },
+        { payment_status: "Pending Payment", _id: { $gt: pendingCutoff }, slot_released_at: null, client: { $ne: user._id } },
       ],
     }).session(session);
     if (slotConflict) {
@@ -803,7 +804,7 @@ export const getBookedSlots = expressAsyncHandler(async (req, res, next) => {
       status: { $ne: "Cancelled" },
       $or: [
         { payment_status: "Paid" },
-        { payment_status: "Pending Payment", _id: { $gt: pendingCutoff } },
+        { payment_status: "Pending Payment", _id: { $gt: pendingCutoff }, slot_released_at: null },
       ],
     })
       .select("booking_date")
@@ -815,6 +816,21 @@ export const getBookedSlots = expressAsyncHandler(async (req, res, next) => {
   } catch (err) {
     return next(new Error(err.message));
   }
+});
+
+// POST /booking/:id/release-slot — the client closed Razorpay without paying: free the slot
+// now instead of holding it for 20 minutes. Only an unpaid booking from the last hour can be
+// released (the id is known only to whoever started that checkout); the booking itself stays,
+// so the "complete your booking" reminder still goes out.
+export const releaseBookingSlot = expressAsyncHandler(async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ status: false, message: "Invalid booking id" });
+  const recent = mongoose.Types.ObjectId.createFromTime(Math.floor((Date.now() - 60 * 60 * 1000) / 1000));
+  const r = await Booking.updateOne(
+    { payment_status: "Pending Payment", slot_released_at: null, _id: { $eq: new mongoose.Types.ObjectId(id), $gt: recent } },
+    { $set: { slot_released_at: new Date() } }
+  );
+  return res.status(200).json({ status: true, released: r.modifiedCount === 1 });
 });
 
 // does this therapist (Users _id) own the booking?
