@@ -88,6 +88,12 @@ const bookingSchema = new Schema({
     enum: ["Pending Payment", "Paid", "Payment Failed"],
     default: "Pending Payment",
   },
+  // Google Meet on the therapist's own calendar (helper/googleMeet.js)
+  meet_link: { type: String, default: "" },
+  calendar_event_id: { type: String, default: "" },
+  // who clicked Join (through CYT) and when — both joined = session started
+  therapist_joined_at: { type: Date, default: null },
+  client_joined_at: { type: Date, default: null },
 });
 
 // the therapist / client portals list bookings newest-first by these fields

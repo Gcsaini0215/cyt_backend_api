@@ -37,6 +37,7 @@ const formatSessionMode = (t) =>
   ({ video: "Video Call", audio: "Voice Call", "in-person": "In-Person" }[
     String(t || "").toLowerCase()
   ] || (t ? String(t) : "—"));
+import { createMeetWithTimeout } from "../helper/googleMeet.js";
 import { adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
 import { pushToUsers } from "./PushController.js";
 
@@ -409,6 +410,15 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
     isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
 
+    // online session + therapist connected Google → a Meet link on their calendar (never blocks confirmation)
+    const meet = await createMeetWithTimeout(isBookingDetail);
+    if (meet) {
+      isBookingDetail.meet_link = meet.link;
+      isBookingDetail.calendar_event_id = meet.eventId;
+      await Booking.updateOne({ _id: isBookingDetail._id }, { $set: { meet_link: meet.link, calendar_event_id: meet.eventId } });
+    }
+    const meetLink = isBookingDetail.meet_link || "";
+
     const therapistName = isBookingDetail.therapist.user.name;
     const therapistId = isBookingDetail.therapist.profile_code;
     const clientName = isBookingDetail.client.name;
@@ -426,7 +436,7 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
 
 
     //Client Mail
-    const subjectClient = `Session Confirmed! ${isBookingDetail.therapist.user.name} · ${sessionDateTime} | PIN: ${pin}`;
+    const subjectClient = `Session Confirmed! ${isBookingDetail.therapist.user.name} · ${sessionDateTime}`;
     const textClient = clientText(isBookingDetail, transactionId);
     const clientHtml = bookingConfirmationMail({
       clientName,
@@ -441,14 +451,14 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       cname,
       relation_with_client,
       notes,
-      pin
+      meetLink
 
     });
     const clientMailSent = await sendMail(isBookingDetail.client.email, subjectClient, textClient, clientHtml);
     if (!clientMailSent) console.error(`[saveTransactionId] Client mail FAILED to ${isBookingDetail.client.email} for booking ${isBookingDetail._id}`);
 
     //Therapist Mail
-    const subjectTherapist = `NEW SESSION: ${clientName} · ${sessionDateTime} · ${service || 'General'} | PIN: ${pin}`;
+    const subjectTherapist = `NEW SESSION: ${clientName} · ${sessionDateTime} · ${service || 'General'}`;
     const textTherapist = therapistText(isBookingDetail, transactionId);
     const therapistHtml = therapistSessionMail({
       therapistName,
@@ -463,7 +473,8 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       whom,
       cname,
       relation_with_client,
-      notes
+      notes,
+      meetLink
     })
     if (!isBookingDetail.therapist?.user?.email) {
       console.error(`[saveTransactionId] Therapist has no email on file — booking ${isBookingDetail._id}, therapist ${isBookingDetail.therapist?._id}`);
@@ -495,7 +506,8 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       whom,
       cname,
       relation_with_client,
-      notes
+      notes,
+      meetLink
     });
     await sendMail("hello@chooseyourtherapist.in", subjectAdmin, textAdmin, htmlAdmin);
 
@@ -618,6 +630,15 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
 
+    // online session + therapist connected Google → a Meet link on their calendar (never blocks confirmation)
+    const meet = await createMeetWithTimeout(isBookingDetail);
+    if (meet) {
+      isBookingDetail.meet_link = meet.link;
+      isBookingDetail.calendar_event_id = meet.eventId;
+      await Booking.updateOne({ _id: isBookingDetail._id }, { $set: { meet_link: meet.link, calendar_event_id: meet.eventId } });
+    }
+    const meetLink = isBookingDetail.meet_link || "";
+
     // Send emails (Reuse the logic from saveTransactionId)
     const therapistName = isBookingDetail.therapist.user.name;
     const therapistId = isBookingDetail.therapist.profile_code;
@@ -636,7 +657,7 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     const sessionMode = formatSessionMode(isBookingDetail.session_type);
 
     //Client Mail
-    const subjectClient = `Session Confirmed! ${isBookingDetail.therapist.user.name} · ${sessionDateTime} | PIN: ${pin}`;
+    const subjectClient = `Session Confirmed! ${isBookingDetail.therapist.user.name} · ${sessionDateTime}`;
     const textClient = clientText(isBookingDetail, transactionId);
     const clientHtml = bookingConfirmationMail({
       clientName,
@@ -651,13 +672,13 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
       cname,
       relation_with_client,
       notes,
-      pin
+      meetLink
     });
     const clientMailSent = await sendMail(isBookingDetail.client.email, subjectClient, textClient, clientHtml);
     if (!clientMailSent) console.error(`[verifyRazorpayPayment] Client mail FAILED to ${isBookingDetail.client.email} for booking ${isBookingDetail._id}`);
 
     //Therapist Mail
-    const subjectTherapist = `NEW SESSION: ${clientName} · ${sessionDateTime} · ${service || 'General'} | PIN: ${pin}`;
+    const subjectTherapist = `NEW SESSION: ${clientName} · ${sessionDateTime} · ${service || 'General'}`;
     const textTherapist = therapistText(isBookingDetail, transactionId);
     const therapistHtml = therapistSessionMail({
       therapistName,
@@ -672,7 +693,8 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
       whom,
       cname,
       relation_with_client,
-      notes
+      notes,
+      meetLink
     });
     if (!isBookingDetail.therapist?.user?.email) {
       console.error(`[verifyRazorpayPayment] Therapist has no email on file — booking ${isBookingDetail._id}, therapist ${isBookingDetail.therapist?._id}`);
@@ -704,7 +726,8 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
       whom,
       cname,
       relation_with_client,
-      notes
+      notes,
+      meetLink
     });
     await sendMail("hello@chooseyourtherapist.in", subjectAdmin, textAdmin, htmlAdmin);
 
@@ -807,6 +830,65 @@ export const getBookedSlots = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
+// does this therapist (Users _id) own the booking?
+async function ownsBooking(userId, booking) {
+  const t = await Therapists.findOne({ user: userId }).select("_id").lean();
+  return !!t && String(booking.therapist) === String(t._id);
+}
+
+const START_EARLY_MIN = 15;   // Start unlocks this long before the slot
+const START_LATE_HOURS = 6;   // ...and stays open this long after it
+
+// POST /start-session-now { bookingId } — one tap, no PIN (replaces the emailed-PIN step)
+export const startSessionNow = expressAsyncHandler(async (req, res) => {
+  const { bookingId } = req.body || {};
+  if (!mongoose.Types.ObjectId.isValid(bookingId)) return res.status(400).json({ status: false, message: "Booking id required." });
+  const b = await Booking.findById(bookingId);
+  if (!b) return res.status(404).json({ status: false, message: "Booking not found." });
+  if (!(await ownsBooking(req.user._id, b))) return res.status(403).json({ status: false, message: "This booking isn't yours." });
+  if (b.payment_status !== "Paid" && !b.transaction) return res.status(400).json({ status: false, message: "This booking isn't paid yet." });
+  if (b.status === SESSION_STATUS.STARTED) return res.json({ status: true, message: "Session already started.", data: b });
+  if (b.status !== SESSION_STATUS.NEW) return res.status(400).json({ status: false, message: `Session is ${String(b.status).toLowerCase()}.` });
+  const at = new Date(b.booking_date).getTime();
+  const now = Date.now();
+  if (now < at - START_EARLY_MIN * 60000) {
+    const mins = Math.ceil((at - START_EARLY_MIN * 60000 - now) / 60000);
+    return res.status(400).json({ status: false, message: `You can start ${START_EARLY_MIN} minutes before the session (in ${mins >= 60 ? Math.round(mins / 60) + " h" : mins + " min"}).` });
+  }
+  if (now > at + START_LATE_HOURS * 3600000) return res.status(400).json({ status: false, message: "This session's time has passed. Contact support if it did happen." });
+  b.status = SESSION_STATUS.STARTED;
+  b.session_started_at = new Date();
+  await b.save();
+  res.json({ status: true, message: "Session started.", data: b });
+});
+
+// POST /bookings/:id/join — therapist or client clicks Join; returns the Meet link.
+// When both have joined (within the session window) the session is marked started.
+export const joinSession = expressAsyncHandler(async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ status: false, message: "Invalid booking." });
+  const b = await Booking.findById(id);
+  if (!b) return res.status(404).json({ status: false, message: "Booking not found." });
+  const isTherapistUser = req.user.role === 1;
+  if (isTherapistUser ? !(await ownsBooking(req.user._id, b)) : String(b.client) !== String(req.user._id)) {
+    return res.status(403).json({ status: false, message: "This booking isn't yours." });
+  }
+  if (!b.meet_link) return res.status(404).json({ status: false, message: "No meeting link for this session." });
+  const now = new Date();
+  const at = new Date(b.booking_date).getTime();
+  const inWindow = now.getTime() >= at - START_EARLY_MIN * 60000 && now.getTime() <= at + START_LATE_HOURS * 3600000;
+  if (inWindow) {
+    if (isTherapistUser && !b.therapist_joined_at) b.therapist_joined_at = now;
+    if (!isTherapistUser && !b.client_joined_at) b.client_joined_at = now;
+    if (b.therapist_joined_at && b.client_joined_at && b.status === SESSION_STATUS.NEW) {
+      b.status = SESSION_STATUS.STARTED;
+      b.session_started_at = now;
+    }
+    await b.save();
+  }
+  res.json({ status: true, data: { meet_link: b.meet_link, status: b.status, therapist_joined_at: b.therapist_joined_at, client_joined_at: b.client_joined_at } });
+});
+
 export const startSession = expressAsyncHandler(async (req, res, next) => {
   const { bookingId, pin } = req.body;
   try {
@@ -821,6 +903,10 @@ export const startSession = expressAsyncHandler(async (req, res, next) => {
     if (!result) {
       res.status(404);
       throw new Error("Booking not found.");
+    }
+    if (!(await ownsBooking(req.user._id, result))) {
+      res.status(403);
+      throw new Error("This booking isn't yours.");
     }
     if (result.status === SESSION_STATUS.COMPLETED) {
       res.status(404);
@@ -868,6 +954,10 @@ export const EndSession = expressAsyncHandler(async (req, res, next) => {
     if (!result) {
       res.status(404);
       throw new Error("Booking not found.");
+    }
+    if (!(await ownsBooking(req.user._id, result))) {
+      res.status(403);
+      throw new Error("This booking isn't yours.");
     }
 
     if (result.status === SESSION_STATUS.COMPLETED) {

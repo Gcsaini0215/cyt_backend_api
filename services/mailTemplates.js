@@ -125,6 +125,13 @@ const pinBlock = (pin, caption = "Share with your therapist only when the sessio
     <div style="font-size:11px;color:#9a9f97;margin-top:6px;">${caption}</div>
   </div>`;
 
+const meetBlock = (link, caption) => `
+<div style="background:#f0f7f2;border:1px solid #cfe3d6;border-radius:12px;padding:14px 16px;margin:0 0 16px;">
+  <div style="font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:${BRAND.green};margin-bottom:6px;">Google Meet link</div>
+  <a href="${link}" style="font-size:15px;font-weight:700;color:${BRAND.green};text-decoration:none;word-break:break-all;">${esc(link)}</a>
+  ${caption ? `<div style="font-size:12px;color:${BRAND.soft};margin-top:6px;line-height:1.5;">${esc(caption)}</div>` : ""}
+</div>`;
+
 const button = (label, href = BRAND.site) => `
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:4px auto 0;"><tr>
     <td style="background:${BRAND.green};border-radius:999px;">
@@ -203,10 +210,10 @@ export const bookingRequestReceivedMail = ({
   });
 
 export const bookingConfirmationMail = ({
-  clientName, therapistName, clientAge, transactionId, service, format, sessionDateTime, sessionMode, whom, cname, relation_with_client, notes, pin,
+  clientName, therapistName, clientAge, transactionId, service, format, sessionDateTime, sessionMode, whom, cname, relation_with_client, notes, meetLink,
 }) =>
   shell({
-    preheader: `Confirmed · ${sessionDateTime || "your session"}${pin ? " · PIN " + pin : ""}`,
+    preheader: `Confirmed · ${sessionDateTime || "your session"}`,
     withBanner: true,
     body:
       eyebrow("Booking confirmed", OK) +
@@ -218,13 +225,13 @@ export const bookingConfirmationMail = ({
         cname && ["Patient", `${esc(cname)}${clientAge ? " (" + esc(clientAge) + ")" : ""}`],
         transactionId && ["Transaction", esc(transactionId), true],
       ]) +
-      (pin ? pinBlock(pin) : "") +
+      (meetLink ? meetBlock(meetLink, "Join from My Bookings at the session time — the same Google Meet link is in your Google Calendar invite.") : "") +
       button("View in dashboard"),
     foot: `${BRAND.name} LLP &middot; Keep this email as your receipt.`,
   });
 
 export const therapistSessionMail = ({
-  therapistName, clientName, clientAge, paymentAmount, transactionId, service, format, sessionDateTime, sessionMode, whom, cname, relation_with_client, notes,
+  therapistName, clientName, clientAge, paymentAmount, transactionId, service, format, sessionDateTime, sessionMode, whom, cname, relation_with_client, notes, meetLink,
 }) =>
   shell({
     preheader: `New session · ${clientName || ""} · ${sessionDateTime || ""}`,
@@ -242,7 +249,8 @@ export const therapistSessionMail = ({
         transactionId && ["Transaction", esc(transactionId), true],
         notes && ["Notes", esc(notes)],
       ]) +
-      note("Collect the client's PIN at the start of the session, then mark it complete when you're done.") +
+      (meetLink ? meetBlock(meetLink, "It's also on your Google Calendar. Join from your Appointments page so the session starts automatically when the client joins.") : "") +
+      note(meetLink ? "Tap Join in your dashboard at the session time; tap End when you're done." : "Tap Start in your dashboard at the session time (no PIN needed), then End when you're done.") +
       button("Open therapist dashboard"),
   });
 
@@ -661,7 +669,7 @@ const slotText = (d) => {
 };
 
 export const clientText = (booking, txId) =>
-  `Session Confirmed for ${slotText(booking.booking_date)}. Transaction: ${txId}. Your unique session PIN is ${booking.otp}. Please share this with your therapist at the start of the session.`;
+  `Session Confirmed for ${slotText(booking.booking_date)}. Transaction: ${txId}.${booking.meet_link ? ` Google Meet link: ${booking.meet_link}` : ""}`;
 
 export const therapistText = (booking, txId) =>
   `NEW SESSION assigned for ${slotText(booking.booking_date)}. Client: ${booking.client.name}. Transaction: ${txId}. Please log in to your dashboard for details.`;
