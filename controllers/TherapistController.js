@@ -555,7 +555,8 @@ export const getDashboardData = expressAsyncHandler(async (req, res, next) => {
       ...(since && { booking_date: { $gte: since } }),
     })
       .populate("client", "name email phone profile")
-      .sort({ _id: -1 });
+      .sort({ _id: -1 })
+      .lean();
 
     const appointmentRevenue = bookings.reduce((sum, booking) => {
       return sum + (booking.amount ? parseFloat(booking.amount.toString()) : 0);
@@ -570,7 +571,8 @@ export const getDashboardData = expressAsyncHandler(async (req, res, next) => {
     })
       .populate("user", "name email phone profile")
       .populate("workshop", "title category event_date")
-      .sort({ _id: -1 });
+      .sort({ _id: -1 })
+      .lean();
 
     const workshopRevenue = workshopBookings.reduce((sum, booking) => {
       return sum + (booking.amount ? parseFloat(booking.amount.toString()) : 0);

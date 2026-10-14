@@ -90,4 +90,8 @@ const bookingSchema = new Schema({
   },
 });
 
+// the therapist / client portals list bookings newest-first by these fields
+bookingSchema.index({ therapist: 1, _id: -1 });
+bookingSchema.index({ client: 1, _id: -1 });
+
 export default mongoose.model("Booking", bookingSchema);
