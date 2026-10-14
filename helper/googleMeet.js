@@ -130,3 +130,24 @@ export async function createMeetForBooking(booking) {
 export function createMeetWithTimeout(booking, ms = 9000) {
   return Promise.race([createMeetForBooking(booking), new Promise((r) => setTimeout(() => r(null), ms))]);
 }
+
+// A short test event with a Meet link, so a therapist can check the connection right after connecting.
+export async function createTestMeet(userId) {
+  const conn = await TherapistGoogle.findOne({ user: userId });
+  if (!conn) throw new Error("Google isn't connected");
+  const start = new Date(Date.now() + 30 * 60000);
+  const end = new Date(start.getTime() + 15 * 60000);
+  const token = await accessTokenFor(conn);
+  const { data } = await axios.post(
+    "https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=none",
+    {
+      summary: "Test meeting · Choose Your Therapist",
+      description: "Created from your CYT Settings to check that Google Meet links work. You can delete this event.",
+      start: { dateTime: start.toISOString(), timeZone: "Asia/Kolkata" },
+      end: { dateTime: end.toISOString(), timeZone: "Asia/Kolkata" },
+      conferenceData: { createRequest: { requestId: `cyt-test-${userId}-${Date.now()}`, conferenceSolutionKey: { type: "hangoutsMeet" } } },
+    },
+    { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+  );
+  return { link: data.hangoutLink || "", calendarLink: data.htmlLink || "", start };
+}

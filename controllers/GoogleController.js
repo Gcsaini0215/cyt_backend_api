@@ -1,6 +1,6 @@
 import expressAsyncHandler from "express-async-handler";
 import TherapistGoogle from "../models/TherapistGoogle.js";
-import { googleConfigured, authUrlFor, readState, exchangeCode, encrypt, revoke, SITE_URL } from "../helper/googleMeet.js";
+import { googleConfigured, authUrlFor, readState, exchangeCode, encrypt, revoke, createTestMeet, SITE_URL } from "../helper/googleMeet.js";
 
 // GET /google/status — is Google set up on the server, and has this therapist connected?
 export const googleStatus = expressAsyncHandler(async (req, res) => {
@@ -60,4 +60,20 @@ export const googleDisconnect = expressAsyncHandler(async (req, res) => {
     await TherapistGoogle.deleteOne({ _id: conn._id });
   }
   res.json({ status: true, message: "Google disconnected" });
+});
+
+// POST /google/test — create a short test event with a Meet link on the therapist's calendar
+const lastTest = new Map();
+export const googleTest = expressAsyncHandler(async (req, res) => {
+  const key = String(req.user._id);
+  if (Date.now() - (lastTest.get(key) || 0) < 60000) return res.status(429).json({ status: false, message: "Please wait a minute before creating another test meeting." });
+  lastTest.set(key, Date.now());
+  try {
+    const r = await createTestMeet(req.user._id);
+    if (!r.link) return res.status(502).json({ status: false, message: "Google created the event but didn't return a Meet link." });
+    res.json({ status: true, data: r, message: "Test meeting created" });
+  } catch (err) {
+    const msg = err?.response?.data?.error?.message || err?.response?.data?.error_description || err.message;
+    res.status(400).json({ status: false, message: `Google said: ${msg}` });
+  }
 });
