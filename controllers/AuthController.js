@@ -723,6 +723,7 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
       .messages({
         "string.pattern.base": "Please enter valid otp",
       }),
+    portal: Joi.string().valid("site").optional(), // the website's sign-in (see login)
   });
   const { error } = validateSchema.validate(req.body);
 
