@@ -89,6 +89,10 @@ const bookingSchema = new Schema({
     default: "Pending Payment",
   },
   // Google Meet on the therapist's own calendar (helper/googleMeet.js)
+  // clinical assessments booked with the session (fixed CYT fee each; therapist gets 30%)
+  assessments: { type: [{ tool: String, fee: Number, _id: false }], default: [] },
+  assessment_fee: { type: Number, default: 0 },
+  assessment_therapist_share: { type: Number, default: 0 },
   meet_link: { type: String, default: "" },
   calendar_event_id: { type: String, default: "" },
   // who clicked Join (through CYT) and when — both joined = session started

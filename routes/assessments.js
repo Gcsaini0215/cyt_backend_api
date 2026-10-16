@@ -1,26 +1,31 @@
 import express from "express";
-import { isAuth, isTherapist } from "../middlewares/authMiddleware.js";
+import { isAuth, isAuthCommon, isTherapist, hasPermission, isSuperAdmin } from "../middlewares/authMiddleware.js";
 import { saveAssessment, listAssessments } from "../controllers/AssessmentController.js";
-import { myLicences, saveLicence, removeLicence, licensedTherapists } from "../controllers/TherapistLicenceController.js";
-import { requestAssessment, myRequests, markDone, therapistRequests, therapistUpcoming, sendForBooking, saveScore, releaseScore } from "../controllers/AssessmentRequestController.js";
+import { myRequests, takeRequest, submitRequest, therapistRequests, reportRequest, releaseRequest } from "../controllers/AssessmentRequestController.js";
+import { myAddons, createAddonOrder, verifyAddonPayment, assessmentProviders } from "../controllers/TherapistAddonController.js";
+import { publicPricing, adminPricing, saveAdminPricing } from "../controllers/AssessmentPricingController.js";
 
 const router = express.Router();
+// free self-checks (client history)
 router.post("/assessments", isAuth, saveAssessment);
 router.get("/assessments", isAuth, listAssessments);
 
-// licences for copyrighted questionnaires
-router.get("/assessment-licences/public", licensedTherapists);
-router.get("/assessment-licences/mine", isTherapist, myLicences);
-router.post("/assessment-licences", isTherapist, saveLicence);
-router.delete("/assessment-licences/:tool", isTherapist, removeLicence);
-
-// licensed questionnaires taken before a session
-router.post("/assessment-requests/intent", isAuth, requestAssessment);
+// clinical assessments booked with a session
+router.get("/assessment-pricing", publicPricing);
+router.get("/assessment-providers", assessmentProviders);
 router.get("/assessment-requests/mine", isAuth, myRequests);
-router.post("/assessment-requests/:id/done", isAuth, markDone);
 router.get("/assessment-requests/therapist", isTherapist, therapistRequests);
-router.get("/assessment-requests/therapist/bookings", isTherapist, therapistUpcoming);
-router.post("/assessment-requests/send", isTherapist, sendForBooking);
-router.post("/assessment-requests/:id/score", isTherapist, saveScore);
-router.post("/assessment-requests/:id/release", isTherapist, releaseScore);
+router.get("/assessment-requests/:id/take", isAuth, takeRequest);
+router.post("/assessment-requests/:id/submit", isAuth, submitRequest);
+router.get("/assessment-requests/:id/report", isAuthCommon, reportRequest);
+router.post("/assessment-requests/:id/release", isTherapist, releaseRequest);
+
+// therapist add-on (Clinical Assessments, yearly)
+router.get("/therapist-addon", isTherapist, myAddons);
+router.post("/therapist-addon/order", isTherapist, createAddonOrder);
+router.post("/therapist-addon/verify", isTherapist, verifyAddonPayment);
+
+// admin: prices and offers
+router.get("/admin/assessment-pricing", hasPermission("therapists"), adminPricing);
+router.put("/admin/assessment-pricing", isSuperAdmin, saveAdminPricing);
 export default router;

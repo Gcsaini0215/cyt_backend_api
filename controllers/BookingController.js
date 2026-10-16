@@ -43,7 +43,9 @@ import { createMeetWithTimeout, isOnlineFormat, sessionWindow, deleteMeetEvent, 
 import { adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, sessionRescheduledMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
 import { pushToUsers } from "./PushController.js";
 import { notifyTherapists, therapistUserId } from "../services/therapistNotify.js";
-import { attachAssessmentIntents } from "./AssessmentRequestController.js";
+import { attachBookingAssessments } from "./AssessmentRequestController.js";
+import { assessmentsActive } from "./TherapistAddonController.js";
+import { getPricing } from "../helper/assessmentPricing.js";
 
 export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
   const validateSchema = Joi.object({
@@ -134,6 +136,25 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
   if (error) {
     res.status(400);
     return next(new Error(error));
+  }
+
+  // clinical assessments booked with the session: priced here (admin pricing), only with a therapist
+  // whose Clinical Assessments add-on is active; the amount must cover them
+  let assessmentLines = [], assessmentFee = 0, assessmentShare = 0;
+  const wanted = [...new Set((Array.isArray(req.body.assessments) ? req.body.assessments : []).map(String))];
+  if (wanted.length) {
+    if (wanted.length > 3) { res.status(400); return next(new Error("You can add up to 3 assessments to a session.")); }
+    const pricing = await getPricing();
+    const th = await Therapists.findById(req.body.therapist).select("user").lean();
+    if (!th || !(await assessmentsActive(th.user))) { res.status(400); return next(new Error("This therapist doesn't offer clinical assessments.")); }
+    for (const k of wanted) {
+      const t = pricing.tests[k];
+      if (!t || !t.active) { res.status(400); return next(new Error("One of the chosen assessments isn't available.")); }
+      assessmentLines.push({ tool: k, fee: t.price });
+    }
+    assessmentFee = assessmentLines.reduce((n, l) => n + l.fee, 0);
+    assessmentShare = Math.round(assessmentFee * pricing.therapistShare);
+    if (Number(req.body.amount) < assessmentFee) { res.status(400); return next(new Error("The amount doesn't cover the chosen assessments. Please refresh and try again.")); }
   }
 
   const session = await mongoose.startSession();
@@ -287,6 +308,9 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         referral_code,
         referral_discount,
         credit_used,
+        assessments: assessmentLines,
+        assessment_fee: assessmentFee,
+        assessment_therapist_share: assessmentShare,
       }],
       { session }
     );
@@ -414,7 +438,7 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
     isBookingDetail.transaction = savedTransaction._id;
     isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
-    attachAssessmentIntents(isBookingDetail); // licensed questionnaire the client asked for → sent before the session
+    attachBookingAssessments(isBookingDetail); // clinical assessments booked with it → sent to the client to complete before the session
 
     // tell the therapist this instant — before the Meet link and emails, which take a few seconds
     notifyTherapists([isBookingDetail.therapist.user._id], {
@@ -656,7 +680,7 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     isBookingDetail.transaction = savedTransaction._id;
     isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
-    attachAssessmentIntents(isBookingDetail); // licensed questionnaire the client asked for → sent before the session
+    attachBookingAssessments(isBookingDetail); // clinical assessments booked with it → sent to the client to complete before the session
     settleBookingRewards(isBookingDetail).catch((e) => console.error("[referral] settle failed:", e.message));
     notifyClient(isBookingDetail.client?._id, {
       type: "booking", title: `Session confirmed with ${isBookingDetail.therapist?.user?.name || "your therapist"}`,
