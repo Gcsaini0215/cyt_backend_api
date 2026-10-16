@@ -734,7 +734,8 @@ export const verifyOtp = expressAsyncHandler(async (req, res, next) => {
   try {
     // The same email can belong to a team (Admin) account AND a client / therapist (Users) account.
     // Verify whichever account's pending code matches; otherwise fall back to the old order (Admin first).
-    const [adminAcc, userAcc] = await Promise.all([Admin.findOne({ email }), Users.findOne({ email })]);
+    const site = req.body.portal === "site"; // website login: client / therapist accounts only (see login)
+    const [adminAcc, userAcc] = await Promise.all([site ? null : Admin.findOne({ email }), Users.findOne({ email })]);
     const code = otp?.toString();
     let isAdminUser;
     let user;
@@ -910,7 +911,11 @@ export const login = expressAsyncHandler(async (req, res, next) => {
     }
 
     email = email.toLowerCase();
-    let user = await Admin.findOne({ email });
+    // The website ({ portal: "site" }) signs in client / therapist accounts only. Without this a team
+    // member whose email also has a client account got the code on the Admin account, received an
+    // admin token the website can't use, and was logged straight back out.
+    const site = req.body.portal === "site";
+    let user = site ? null : await Admin.findOne({ email });
 
     if (!user) {
       user = await Users.findOne({ email });

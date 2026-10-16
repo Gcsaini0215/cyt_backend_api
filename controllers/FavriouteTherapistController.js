@@ -14,7 +14,8 @@ export const insertFavriouteTherapist = expressAsyncHandler(
       }
       let favorite = await FavoriteTherapist.findOne({ user: userId, therapist: therapistId });
       if (favorite) {
-        res.status(201).json({
+        // already saved — answer once (falling through used to create a duplicate and then fail)
+        return res.status(201).json({
           message: "Saved successfully.",
           data: favorite,
           status: true,
@@ -117,7 +118,7 @@ export const getFavriouteTherapists = expressAsyncHandler(
       const favorite = await FavoriteTherapist.find({ user:userId }).populate({
         path: "therapist",
         select:
-          "_id profile_type services year_of_exp language_spoken qualification serve_type services session_formats, experties fees availabilities",
+          "_id profile_type services year_of_exp language_spoken qualification serve_type session_formats experties fees state",
         populate: {
           path: "user",
           select: "_id name email profile"
@@ -126,7 +127,8 @@ export const getFavriouteTherapists = expressAsyncHandler(
 
       res.status(201).json({
         message: "Success",
-        data: favorite || {},
+        // a therapist who has since been removed populates as null — leave those out
+        data: (favorite || []).filter((f) => f.therapist && f.therapist.user),
         status: true,
       });
     } catch (error) {
@@ -141,21 +143,13 @@ export const getFavriouteTherapistsList = expressAsyncHandler(
     const userId = req.user._id;
 
     try {
-      const favorite = await FavoriteTherapist.findOne({ userId });
-
-      if (!favorite) {
-        res.status(201).json({
-          message: "Success",
-          data: {},
-          status: false,
-        });
-      } else {
-        res.status(201).json({
-          message: "Success",
-          data: favorite,
-          status: true,
-        });
-      }
+      // ids of the therapists this client saved — profile cards use it to fill in the heart
+      const ids = await FavoriteTherapist.find({ user: userId }).distinct("therapist");
+      res.status(201).json({
+        message: "Success",
+        data: { therapists: ids.map(String) },
+        status: true,
+      });
     } catch (error) {
       res.status(400);
       throw new Error(error);

@@ -1,6 +1,9 @@
 import Booking from "../models/Booking.js";
 import expressAsyncHandler from "express-async-handler";
 import Users from "../models/Users.js";
+import Review from "../models/Review.js";
+import Referral from "../models/Referral.js";
+import { ensureReferralCode, REFERRAL_AMOUNT } from "../helper/referral.js";
 import UserInfo from "../models/UserInfo.js";
 import Lead from "../models/Lead.js";
 import EmailLog from "../models/EmailLog.js";
@@ -332,3 +335,26 @@ export const getEmailLogs = expressAsyncHandler(async (req, res) => {
   res.status(200).json({ status: true, data: logs, total, page, pages: Math.ceil(total / limit) });
 });
 
+// Client dashboard "Give ₹200, get ₹200": the client's code, unspent credit and friends who booked.
+export const getMyReferral = expressAsyncHandler(async (req, res) => {
+  const user = await Users.findById(req.user._id).select("_id name referral_code referral_credit");
+  const code = await ensureReferralCode(user);
+  const rewards = await Referral.find({ referrer: user._id }).select("amount").lean();
+  res.status(200).json({
+    status: true,
+    data: {
+      code,
+      amount: REFERRAL_AMOUNT,
+      credit: Number(user.referral_credit) || 0,
+      friends: rewards.length,
+      earned: rewards.reduce((s, r) => s + (r.amount || 0), 0),
+    },
+  });
+});
+
+// Therapists this client has already reviewed (reviews are stored by email), so the dashboard
+// only asks about the others.
+export const getMyReviewedTherapists = expressAsyncHandler(async (req, res) => {
+  const ids = req.user.email ? await Review.distinct("therapist_id", { email: req.user.email }) : [];
+  res.status(200).json({ status: true, data: ids.map(String) });
+});

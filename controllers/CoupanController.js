@@ -2,6 +2,7 @@ import expressAsyncHandler from "express-async-handler";
 import Joi from "joi";
 import Coupon from "../models/Coupan.js";
 import Therapists from "../models/Therapists.js";
+import { resolveReferral, applicantEmail, REFERRAL_AMOUNT } from "../helper/referral.js";
 
 export const CreateCoupan = expressAsyncHandler(
     async (req, res, next) => {
@@ -300,7 +301,31 @@ export const DeleteCoupon = expressAsyncHandler(async (req, res, next) => {
 
 export const ApplyCoupon = expressAsyncHandler(async (req, res, next) => {
     try {
-        const { therapist_id, code, apply_for } = req.body;
+        // the booking page sends { coupon_code, amount }, older checkouts { code } — accept both
+        const { therapist_id } = req.body;
+        const apply_for = req.body.apply_for || "Therapist";
+        const code = String(req.body.code || req.body.coupon_code || "").trim().toUpperCase();
+        const amount = Math.max(0, Number(req.body.amount) || 0);
+        const discountOf = (type, value) => {
+            if (!amount) return 0;
+            return Math.min(amount, type === "percentage" ? Math.round((amount * value) / 100) : value);
+        };
+
+        // a friend's referral code works on any therapist's session
+        if (code && apply_for === "Therapist") {
+            const coupon = therapist_id ? await Coupon.exists({ therapist: therapist_id, code }) : null;
+            if (!coupon) {
+                const ref = await resolveReferral({ code, email: await applicantEmail(req) });
+                if (ref?.error) return res.status(400).json({ status: false, message: ref.error });
+                if (ref) {
+                    return res.status(200).json({
+                        status: true,
+                        message: `Referral applied — ₹${REFERRAL_AMOUNT} off your first session`,
+                        data: { code, referral: true, discount_type: "flat", discount_value: REFERRAL_AMOUNT, discount: discountOf("flat", REFERRAL_AMOUNT) },
+                    });
+                }
+            }
+        }
 
         if (!therapist_id || !code) {
             return res.status(400).json({
@@ -321,7 +346,7 @@ export const ApplyCoupon = expressAsyncHandler(async (req, res, next) => {
 
         const coupon = await Coupon.findOne({
             therapist: therapist_id,
-            code: code.trim().toUpperCase(),
+            code,
         });
 
         if (!coupon) {
@@ -368,8 +393,10 @@ export const ApplyCoupon = expressAsyncHandler(async (req, res, next) => {
             message: "Coupon applied successfully",
             data: {
                 _id: coupon._id,
+                code,
                 discount_type: coupon.discount_type,
                 discount_value: coupon.discount_value,
+                discount: discountOf(coupon.discount_type, coupon.discount_value),
             },
         });
     } catch (error) {

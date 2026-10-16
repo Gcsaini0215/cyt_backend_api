@@ -78,7 +78,10 @@ const UserSchema = new Schema(
     dob: {
       type: String,
       default: null
-    }
+    },
+    // "Give ₹200, get ₹200" (helper/referral.js): the client's share code and unspent reward
+    referral_code: { type: String, unique: true, sparse: true, uppercase: true, trim: true },
+    referral_credit: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

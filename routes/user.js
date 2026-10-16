@@ -8,6 +8,8 @@ import {
   sendBulkUserMail,
   getEmailLogs,
   updateContactMeta,
+  getMyReferral,
+  getMyReviewedTherapists,
 } from "../controllers/userController.js";
 import { isAuth, isAuthCommon, hasPermission } from "../middlewares/authMiddleware.js";
 import { upload } from "../services/fileUpload.js";
@@ -16,6 +18,8 @@ const router = Router();
 
 router.get("/profile", isAuth, getProfile);
 router.get("/get-user", isAuthCommon, getUser);
+router.get("/my-referral", isAuth, getMyReferral);
+router.get("/my-reviewed-therapists", isAuth, getMyReviewedTherapists);
 
 router.post("/update-user", isAuth, upload.single("file"), updateUser);
 

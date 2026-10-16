@@ -13,6 +13,7 @@ import generateToken from "../config/generateToken.js";
 import PaymentStatus from "../models/PaymentStatus.js";
 import Razorpay from "razorpay";
 import crypto from "crypto";
+import { resolveReferral, settleBookingRewards, REFERRAL_AMOUNT } from "../helper/referral.js";
 
 const getRazorpayInstance = () => {
   return new Razorpay({
@@ -233,6 +234,16 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       }
     }
 
+    // A friend's referral code (first session only) and the client's own referral credit.
+    // Re-checked here — the discount shown on the booking page is only a preview.
+    let referral_code = "", referral_discount = 0, credit_used = 0;
+    if (req.body.referral_code) {
+      const ref = await resolveReferral({ code: req.body.referral_code, email: user.email });
+      if (ref && !ref.error) { referral_code = ref.referrer.referral_code; referral_discount = REFERRAL_AMOUNT; }
+    }
+    const wantCredit = Math.max(0, Number(req.body.credit_used) || 0);
+    if (wantCredit && is_logged_in) credit_used = Math.min(wantCredit, Number(user.referral_credit) || 0);
+
     // Prevent double-booking the same therapist slot. A slot is "taken" if a
     // paid booking exists for it, or someone else's pending one was started in the
     // last 20 minutes (mid-checkout). Abandoned carts free up — at once when the
@@ -271,6 +282,9 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         otp: generatedOtp,
         guest_email_verified: !is_logged_in && !!guest_email_verified,
         payment_status: "Pending Payment",
+        referral_code,
+        referral_discount,
+        credit_used,
       }],
       { session }
     );
@@ -639,6 +653,7 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     isBookingDetail.transaction = savedTransaction._id;
     isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
+    settleBookingRewards(isBookingDetail).catch((e) => console.error("[referral] settle failed:", e.message));
 
     // tell the therapist this instant — before the Meet link and emails, which take a few seconds
     notifyTherapists([isBookingDetail.therapist.user._id], {

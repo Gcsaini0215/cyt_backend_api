@@ -97,6 +97,11 @@ const bookingSchema = new Schema({
   auto_completed: { type: Boolean, default: false }, // closed by the system because End wasn't tapped
   pending_mail_sent_at: { type: Date, default: null }, // "complete your payment" reminder (sent once, if still unpaid)
   slot_released_at: { type: Date, default: null }, // client closed Razorpay without paying → the slot is free again
+  // referrals (helper/referral.js): a friend's code used on this booking, and the client's own credit spent on it
+  referral_code: { type: String, default: "" },
+  referral_discount: { type: Number, default: 0 },
+  credit_used: { type: Number, default: 0 },
+  credit_settled: { type: Boolean, default: false },
 });
 
 // the therapist / client portals list bookings newest-first by these fields
