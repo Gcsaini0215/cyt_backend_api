@@ -6,13 +6,13 @@ const { model, Schema } = mongoose;
 const AssessmentResultSchema = new Schema(
   {
     user: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    test: { type: String, required: true, enum: ["phq9", "gad7", "sleep", "pcl5", "bigfive"] },
+    test: { type: String, required: true, enum: ["phq9", "gad7", "sleep", "pcl5", "bigfive", "dass21", "k10", "phq15", "audit", "asrs", "epds", "cbi", "rses"] },
     title: { type: String, default: "" },
     score: { type: Number, default: null },
     max: { type: Number, default: null },
     level: { type: String, default: "" },
-    dims: { type: Map, of: Number, default: undefined }, // Big Five: O/C/E/A/N as 0–100
-    flag: { type: Boolean, default: false }, // PHQ-9 item 9 above zero
+    dims: { type: Map, of: Number, default: undefined }, // several scores: Big Five O/C/E/A/N, DASS-21 D/A/S, CBI personal/work
+    flag: { type: Boolean, default: false }, // self-harm item above zero (PHQ-9 item 9, EPDS item 10)
   },
   { timestamps: { createdAt: true, updatedAt: false } }
 );

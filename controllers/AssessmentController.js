@@ -1,7 +1,9 @@
 import expressAsyncHandler from "express-async-handler";
 import AssessmentResult from "../models/AssessmentResult.js";
 
-const TESTS = { phq9: 27, gad7: 21, sleep: 28, pcl5: 80, bigfive: null };
+// max score per check; null = several scores sent as `dims` ("sleep" was retired — old results only)
+const TESTS = { phq9: 27, gad7: 21, pcl5: 80, k10: 50, phq15: 30, audit: 40, asrs: 6, epds: 30, rses: 30, bigfive: null, dass21: null, cbi: null };
+const DIM_MAX = { bigfive: 100, dass21: 42, cbi: 100 };
 
 // POST /assessments { test, title, score, level, dims?, flag? } — save a finished self-check
 export const saveAssessment = expressAsyncHandler(async (req, res) => {
@@ -11,10 +13,11 @@ export const saveAssessment = expressAsyncHandler(async (req, res) => {
   const score = max === null ? null : Number(req.body.score);
   if (max !== null && (!Number.isFinite(score) || score < 0 || score > max)) return res.status(400).json({ status: false, message: "Invalid score." });
   let cleanDims;
-  if (test === "bigfive" && dims && typeof dims === "object") {
+  if (max === null) {
+    if (!dims || typeof dims !== "object") return res.status(400).json({ status: false, message: "Missing scores." });
     cleanDims = {};
-    for (const [k, v] of Object.entries(dims)) {
-      if (/^[a-z_]{1,24}$/i.test(k) && Number.isFinite(Number(v))) cleanDims[k] = Math.max(0, Math.min(100, Math.round(Number(v))));
+    for (const [k, v] of Object.entries(dims).slice(0, 8)) {
+      if (/^[a-z_]{1,24}$/i.test(k) && Number.isFinite(Number(v))) cleanDims[k] = Math.max(0, Math.min(DIM_MAX[test], Math.round(Number(v))));
     }
   }
   // the same result submitted twice within a minute (double tap) is stored once
