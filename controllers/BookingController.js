@@ -14,6 +14,7 @@ import PaymentStatus from "../models/PaymentStatus.js";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import { resolveReferral, settleBookingRewards, REFERRAL_AMOUNT } from "../helper/referral.js";
+import { notifyClient, changed as clientBookingsChanged } from "../services/clientNotify.js";
 
 const getRazorpayInstance = () => {
   return new Razorpay({
@@ -654,6 +655,10 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
     settleBookingRewards(isBookingDetail).catch((e) => console.error("[referral] settle failed:", e.message));
+    notifyClient(isBookingDetail.client?._id, {
+      type: "booking", title: `Session confirmed with ${isBookingDetail.therapist?.user?.name || "your therapist"}`,
+      body: `${formatSlotIST(isBookingDetail.booking_date)} · ${isBookingDetail.service || "Session"}`, link: "/client/my-bookings", ref: `booking:${isBookingDetail._id}`,
+    });
 
     // tell the therapist this instant — before the Meet link and emails, which take a few seconds
     notifyTherapists([isBookingDetail.therapist.user._id], {
@@ -946,6 +951,7 @@ export const startSessionNow = expressAsyncHandler(async (req, res) => {
   b.status = SESSION_STATUS.STARTED;
   b.session_started_at = new Date();
   await b.save();
+  clientBookingsChanged(b.client);
   res.json({ status: true, message: "Session started.", data: b });
 });
 
@@ -985,6 +991,7 @@ export const joinSession = expressAsyncHandler(async (req, res) => {
   }
   const now = new Date();
   const clientJustJoined = !isTherapistUser && !b.client_joined_at;
+  const therapistJustJoined = isTherapistUser && !b.therapist_joined_at;
   if (isTherapistUser && !b.therapist_joined_at) b.therapist_joined_at = now;
   if (!isTherapistUser && !b.client_joined_at) b.client_joined_at = now;
   if (b.therapist_joined_at && b.client_joined_at && b.status === SESSION_STATUS.NEW) {
@@ -1000,6 +1007,12 @@ export const joinSession = expressAsyncHandler(async (req, res) => {
       link: "/appointments", ref: `joined:${b._id}`,
     });
   }
+  if (therapistJustJoined) {
+    notifyClient(b.client, {
+      type: "joined", title: `${req.user.name || "Your therapist"} has joined your session`,
+      body: b.client_joined_at ? "You're both in — enjoy your session." : "Tap Join to start your session.", link: "/my-dashboard", ref: `tjoined:${b._id}`,
+    });
+  } else clientBookingsChanged(b.client);
   res.json({ status: true, data: { meet_link: b.meet_link, status: b.status, therapist_joined_at: b.therapist_joined_at, client_joined_at: b.client_joined_at } });
 });
 
@@ -1032,6 +1045,10 @@ export const rescheduleSession = expressAsyncHandler(async (req, res) => {
 
   const newTime = formatSlotIST(when);
   const reason = String(req.body?.reason || "").trim().slice(0, 300);
+  notifyClient(b.client?._id, {
+    type: "rescheduled", title: "Your session was moved", body: `${b.therapist?.user?.name || "Your therapist"} · now ${newTime}${reason ? ` — ${reason}` : ""}`,
+    link: "/client/my-bookings", ref: `resched:${b._id}:${when.getTime()}`,
+  });
   if (b.client?.email) {
     sendMail(b.client.email, `Session rescheduled: ${newTime}`,
       `Your session with ${b.therapist?.user?.name || "your therapist"} has moved to ${newTime} (was ${oldTime}).${b.meet_link ? " Meeting link: " + b.meet_link : ""}`,
@@ -1079,6 +1096,7 @@ export const startSession = expressAsyncHandler(async (req, res, next) => {
     result.session_started_at = new Date();
     result.status = SESSION_STATUS.STARTED
     await result.save();
+    clientBookingsChanged(result.client);
 
     res.status(200).json({
       status: true,
@@ -1126,6 +1144,10 @@ export const EndSession = expressAsyncHandler(async (req, res, next) => {
     result.session_completed_at = new Date();
     result.status = SESSION_STATUS.COMPLETED;
     await result.save();
+    notifyClient(result.client, {
+      type: "completed", title: "Session completed",
+      body: "How did it go? Leave a quick review and book your next session.", link: "/my-dashboard", ref: `completed:${result._id}`,
+    });
     deleteMeetEvent(result); // lock the Meet link (in the background)
 
     res.status(200).json({
@@ -1212,6 +1234,10 @@ const notifyBookingRemoved = async (booking, action) => {
   const therapistName = populated.therapist?.user?.name || "your therapist";
   const clientName = populated.client?.name || "the client";
   if (populated.payment_status === "Paid") {
+    notifyClient(populated.client?._id, {
+      type: "cancelled", title: `Session ${action}`, body: `${therapistName} · ${formatSlotIST(populated.booking_date)}`,
+      link: "/client/my-bookings", ref: `${action}:${populated._id}`,
+    });
     notifyTherapists([populated.therapist?.user?._id], {
       type: "cancelled", title: `Session ${action}`,
       body: `${clientName} · ${populated.service || "Session"} · ${formatSlotIST(populated.booking_date)}`,

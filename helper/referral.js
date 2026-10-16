@@ -3,6 +3,7 @@ import Users from "../models/Users.js";
 import Booking from "../models/Booking.js";
 import Coupon from "../models/Coupan.js";
 import Referral from "../models/Referral.js";
+import { notifyClient } from "../services/clientNotify.js";
 
 // "Give ₹200, get ₹200": a friend's first session is REFERRAL_AMOUNT cheaper, and once they pay
 // the client who referred them gets the same amount as credit for their next session.
@@ -79,6 +80,10 @@ export async function settleBookingRewards(booking) {
     try {
       await Referral.create({ referrer: referrer._id, friend: clientId, booking: booking._id, code: booking.referral_code, amount: REFERRAL_AMOUNT });
       await Users.updateOne({ _id: referrer._id }, { $inc: { referral_credit: REFERRAL_AMOUNT } });
+      notifyClient(referrer._id, {
+        type: "referral", title: `Your friend booked — ₹${REFERRAL_AMOUNT} credit added`,
+        body: "It comes off your next session automatically.", link: "/my-dashboard", ref: `referral:${booking._id}`,
+      });
     } catch (e) {
       if (e?.code !== 11000) throw e; // already rewarded for this friend / booking
     }
