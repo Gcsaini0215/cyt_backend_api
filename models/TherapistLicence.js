@@ -11,6 +11,8 @@ const TherapistLicenceSchema = new Schema(
     tool: { type: String, required: true, enum: LICENSED_TOOLS },
     details: { type: String, required: true, maxlength: 400 }, // licence / permission no., issued by
     validTill: { type: Date, default: null }, // null = no end date
+    formUrl: { type: String, default: "" }, // the licensed online form clients fill before the session
+    instructions: { type: String, default: "", maxlength: 300 },
   },
   { timestamps: true }
 );

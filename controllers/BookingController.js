@@ -43,6 +43,7 @@ import { createMeetWithTimeout, isOnlineFormat, sessionWindow, deleteMeetEvent, 
 import { adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, sessionRescheduledMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
 import { pushToUsers } from "./PushController.js";
 import { notifyTherapists, therapistUserId } from "../services/therapistNotify.js";
+import { attachAssessmentIntents } from "./AssessmentRequestController.js";
 
 export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
   const validateSchema = Joi.object({
@@ -413,6 +414,7 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
     isBookingDetail.transaction = savedTransaction._id;
     isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
+    attachAssessmentIntents(isBookingDetail); // licensed questionnaire the client asked for → sent before the session
 
     // tell the therapist this instant — before the Meet link and emails, which take a few seconds
     notifyTherapists([isBookingDetail.therapist.user._id], {
@@ -654,6 +656,7 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     isBookingDetail.transaction = savedTransaction._id;
     isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
+    attachAssessmentIntents(isBookingDetail); // licensed questionnaire the client asked for → sent before the session
     settleBookingRewards(isBookingDetail).catch((e) => console.error("[referral] settle failed:", e.message));
     notifyClient(isBookingDetail.client?._id, {
       type: "booking", title: `Session confirmed with ${isBookingDetail.therapist?.user?.name || "your therapist"}`,
