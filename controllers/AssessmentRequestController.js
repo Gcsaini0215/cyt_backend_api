@@ -91,7 +91,7 @@ export const therapistRequests = expressAsyncHandler(async (req, res) => {
   res.json({
     status: true,
     data: rows.map((r) => ({
-      _id: r._id, tool: r.tool, name: nameOf(r.tool), client: r.client?.name || "Client", booking_date: r.booking?.booking_date || null,
+      _id: r._id, booking: r.booking?._id || null, tool: r.tool, name: nameOf(r.tool), client: r.client?.name || "Client", booking_date: r.booking?.booking_date || null,
       status: r.status, level: r.result?.level || "", score: r.result?.score ?? null, max: r.result?.max ?? null, flag: !!r.result?.flag, note: r.note,
       doneAt: r.doneAt, releasedAt: r.releasedAt,
     })),
