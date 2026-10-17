@@ -30,33 +30,48 @@ async function extendYear(user, { source, amount = 0, paymentId = "" }) {
   }, { upsert: true });
 }
 
-// bookable for assessments: running, reg. no. given, checked by an admin
-const LISTED = () => ({ assessmentsTill: { $gt: new Date() }, verified: true, regNo: { $nin: ["", null] } });
+// bookable for assessments: running, reg. no. + signature given, checked by an admin
+const LISTED = () => ({ assessmentsTill: { $gt: new Date() }, verified: true, $or: [{ regNo: { $nin: ["", null] } }, { noRegNo: true, credential: { $nin: ["", null] } }] });
 export async function assessmentsActive(userId) {
   return !!(await TherapistAddon.exists({ user: userId, ...LISTED() }));
 }
 
-// save the reg. no.; a new one has to be checked again
-export async function setRegNo(user, regNo) {
-  const v = String(regNo || "").trim().slice(0, 60);
-  const a = await TherapistAddon.findOne({ user }).select("regNo").lean();
-  if (a && (a.regNo || "") === v) return;
-  await TherapistAddon.updateOne({ user }, { $set: { regNo: v, verified: false, verifiedAt: null, verifiedBy: "" } }, { upsert: true });
+// a signature image: PNG/JPEG data URL up to ~300 KB
+const SIG_RE = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/;
+export const validSignature = (v) => typeof v === "string" && v.length <= 400000 && SIG_RE.test(v);
+
+// save the reg. no. and/or signature; anything new has to be checked again by an admin
+export async function setDetails(user, { regNo, signature, noRegNo, credential } = {}) {
+  const a = await TherapistAddon.findOne({ user }).select("regNo signature noRegNo credential").lean();
+  const set = {};
+  if (regNo != null) { const v = String(regNo).trim().slice(0, 60); if ((a?.regNo || "") !== v) set.regNo = v; }
+  if (noRegNo != null && !!a?.noRegNo !== !!noRegNo) set.noRegNo = !!noRegNo;
+  if (credential != null) { const v = String(credential).trim().slice(0, 160); if ((a?.credential || "") !== v) set.credential = v; }
+  if (signature != null && (a?.signature || "") !== signature) set.signature = signature;
+  if (!Object.keys(set).length) return false;
+  await TherapistAddon.updateOne({ user }, { $set: { ...set, verified: false, verifiedAt: null, verifiedBy: "" } }, { upsert: true });
+  return true;
 }
+export const setRegNo = (user, regNo) => setDetails(user, { regNo });
 
 // GET /therapist-addon — this therapist's add-ons
 export const myAddons = expressAsyncHandler(async (req, res) => {
   const [a, p] = await Promise.all([TherapistAddon.findOne({ user: req.user._id }).lean(), getPricing()]);
   const till = a?.assessmentsTill || null;
-  res.json({ status: true, data: { assessments: { active: !!(till && till > new Date()), till, verified: !!a?.verified, regNo: a?.regNo || "", ...p.addon }, therapistShare: p.therapistShare, tests: p.tests } });
+  res.json({ status: true, data: { assessments: { active: !!(till && till > new Date()), till, verified: !!a?.verified, regNo: a?.regNo || "", noRegNo: !!a?.noRegNo, credential: a?.credential || "", signature: a?.signature || "", ...p.addon }, therapistShare: p.therapistShare, tests: p.tests } });
 });
 
-// POST /therapist-addon/details { regNo } — registration / licence no. (needs an admin check)
+// POST /therapist-addon/details { regNo | noRegNo + credential, signature } — sent to CYT for verification
 export const saveAddonDetails = expressAsyncHandler(async (req, res) => {
-  const regNo = String(req.body?.regNo || "").trim();
-  if (regNo.length < 3) return res.status(400).json({ status: false, message: "Enter your registration / licence number." });
-  await setRegNo(req.user._id, regNo);
-  res.json({ status: true, message: "Saved. CYT will verify it — clients see you for assessments once it is verified." });
+  const noRegNo = !!req.body?.noRegNo;
+  const regNo = noRegNo ? "" : String(req.body?.regNo || "").trim();
+  const credential = String(req.body?.credential || "").trim();
+  const signature = req.body?.signature;
+  if (!noRegNo && regNo.length < 3) return res.status(400).json({ status: false, message: "Enter your registration / licence number, or tick that you don't have one." });
+  if (noRegNo && credential.length < 5) return res.status(400).json({ status: false, message: "Enter your highest qualification (degree, institute) so CYT can verify it." });
+  if (signature != null && signature !== "" && !validSignature(signature)) return res.status(400).json({ status: false, message: "That signature image isn't valid." });
+  const changed = await setDetails(req.user._id, { regNo, noRegNo, credential, ...(signature ? { signature } : {}) });
+  res.json({ status: true, message: changed ? "Sent to CYT for verification — clients see you for assessments once it is verified." : "No changes — already sent." });
 });
 
 // POST /therapist-addon/order — start the ₹499 payment (priced here, never by the browser)
@@ -118,7 +133,7 @@ export const assessmentProviders = expressAsyncHandler(async (req, res) => {
 // ── admin ──────────────────────────────────────────────────────────────────────────────────────
 // GET /admin/assessment-addons — every therapist with the add-on (or a reg. no. waiting for a check)
 export const adminAddons = expressAsyncHandler(async (req, res) => {
-  const rows = await TherapistAddon.find({ $or: [{ assessmentsTill: { $ne: null } }, { regNo: { $nin: ["", null] } }] }).populate("user", "name email phone").sort({ updatedAt: -1 }).lean();
+  const rows = await TherapistAddon.find({ $or: [{ assessmentsTill: { $ne: null } }, { regNo: { $nin: ["", null] } }, { credential: { $nin: ["", null] } }, { signature: { $nin: ["", null] } }] }).populate("user", "name email phone").sort({ updatedAt: -1 }).lean();
   const ids = rows.map((r) => r.user?._id).filter(Boolean);
   const [ther, orders] = await Promise.all([
     Therapists.find({ user: { $in: ids } }).select("user profile_type").lean(),
@@ -131,8 +146,8 @@ export const adminAddons = expressAsyncHandler(async (req, res) => {
       const paid = orders.filter((o) => String(o.user) === String(r.user._id));
       return {
         userId: r.user._id, name: r.user.name, email: r.user.email, phone: r.user.phone || "", profileType: typeOf[String(r.user._id)] || "",
-        regNo: r.regNo || "", till: r.assessmentsTill, active: !!(r.assessmentsTill && r.assessmentsTill > new Date()),
-        verified: !!r.verified, verifiedAt: r.verifiedAt, verifiedBy: r.verifiedBy, listed: !!(r.verified && r.regNo && r.assessmentsTill && r.assessmentsTill > new Date()),
+        regNo: r.regNo || "", noRegNo: !!r.noRegNo, credential: r.credential || "", signature: r.signature || "", till: r.assessmentsTill, active: !!(r.assessmentsTill && r.assessmentsTill > new Date()),
+        verified: !!r.verified, verifiedAt: r.verifiedAt, verifiedBy: r.verifiedBy, listed: !!(r.verified && (r.regNo || (r.noRegNo && r.credential)) && r.assessmentsTill && r.assessmentsTill > new Date()),
         lastSource: r.lastSource || "", lastAmount: r.lastAmount, lastPaymentId: r.lastPaymentId || "", lastPaidAt: r.lastPaidAt,
         payments: paid.map((o) => ({ amount: o.amount, paymentId: o.paymentId, at: o.createdAt })),
       };
@@ -147,7 +162,7 @@ export const adminAddonAction = expressAsyncHandler(async (req, res) => {
   const who = req.user?.email || req.user?.name || "admin";
   const action = req.body?.action;
   if (action === "verify") {
-    if (!a.regNo) return res.status(400).json({ status: false, message: "The therapist has not added a registration / licence number yet." });
+    if (!(a.regNo || (a.noRegNo && a.credential))) return res.status(400).json({ status: false, message: "The therapist has not added a registration no. (or qualification) yet." });
     a.verified = true; a.verifiedAt = new Date(); a.verifiedBy = who;
   } else if (action === "unverify") {
     a.verified = false; a.verifiedAt = null; a.verifiedBy = "";

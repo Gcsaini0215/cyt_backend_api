@@ -116,8 +116,8 @@ export const reportRequest = expressAsyncHandler(async (req, res) => {
   // earlier results of the same test for this client (progress)
   const earlier = await AssessmentRequest.find({ client: r.client?._id, tool: r.tool, _id: { $ne: r._id }, status: { $in: isTherapist ? ["done", "released"] : ["released"] }, doneAt: { $lt: r.doneAt } })
     .sort({ doneAt: -1 }).limit(5).select("doneAt result.score result.level").lean();
-  const addon = isTherapist ? await TherapistAddon.findOne({ user: r.therapistUser._id }).select("regNo").lean() : null;
-  const signer = r.signedBy || { name: r.therapistUser?.name || "", profileType: r.therapist?.profile_type || "Psychologist", regNo: addon?.regNo || "" };
+  const addon = isTherapist ? await TherapistAddon.findOne({ user: r.therapistUser._id }).select("regNo signature verified noRegNo credential").lean() : null;
+  const signer = r.signedBy || { name: r.therapistUser?.name || "", profileType: r.therapist?.profile_type || "Psychologist", regNo: addon?.regNo || "", credential: addon?.noRegNo ? addon.credential || "" : "", signature: addon?.verified ? addon.signature || "" : "" };
   res.json({
     status: true,
     data: {
@@ -144,8 +144,8 @@ export const releaseRequest = expressAsyncHandler(async (req, res) => {
   const release = b.release !== false;
   const first = release && r.status !== "released";
   if (release) {
-    const addon = await TherapistAddon.findOne({ user: req.user._id }).select("regNo").lean();
-    r.signedBy = { name: req.user.name || "", profileType: r.therapist?.profile_type || "Psychologist", regNo: addon?.regNo || "" };
+    const addon = await TherapistAddon.findOne({ user: req.user._id }).select("regNo signature verified noRegNo credential").lean();
+    r.signedBy = { name: req.user.name || "", profileType: r.therapist?.profile_type || "Psychologist", regNo: addon?.regNo || "", credential: addon?.noRegNo ? addon.credential || "" : "", signature: addon?.verified ? addon.signature || "" : "" };
     r.markModified("signedBy");
     r.status = "released"; if (first) r.releasedAt = new Date();
   }

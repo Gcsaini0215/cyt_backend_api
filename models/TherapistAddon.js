@@ -8,6 +8,9 @@ const TherapistAddonSchema = new Schema(
     user: { type: Schema.Types.ObjectId, ref: "User", required: true, unique: true }, // therapist's user id
     assessmentsTill: { type: Date, default: null },
     regNo: { type: String, default: "" }, // registration / licence no. printed on assessment reports (e.g. RCI CRR no.)
+    signature: { type: String, default: "" }, // PNG/JPEG data URL, printed on released reports once verified
+    noRegNo: { type: Boolean, default: false }, // no registration no. — qualification below is checked instead
+    credential: { type: String, default: "" }, // e.g. "M.A. Clinical Psychology, University of Delhi"
     // clients see the therapist for assessments only after an admin has checked the reg. no. and the payment;
     // a free activation or a changed reg. no. needs a fresh check
     verified: { type: Boolean, default: false },
