@@ -56,21 +56,23 @@ export const setRegNo = (user, regNo) => setDetails(user, { regNo });
 
 // GET /therapist-addon — this therapist's add-ons
 export const myAddons = expressAsyncHandler(async (req, res) => {
-  const [a, p] = await Promise.all([TherapistAddon.findOne({ user: req.user._id }).lean(), getPricing()]);
+  const [a, p, t] = await Promise.all([TherapistAddon.findOne({ user: req.user._id }).lean(), getPricing(), Therapists.findOne({ user: req.user._id }).select("qualification license_number profile_type").lean()]);
   const till = a?.assessmentsTill || null;
-  res.json({ status: true, data: { assessments: { active: !!(till && till > new Date()), till, verified: !!a?.verified, regNo: a?.regNo || "", noRegNo: !!a?.noRegNo, credential: a?.credential || "", signature: a?.signature || "", ...p.addon }, therapistShare: p.therapistShare, tests: p.tests } });
+  res.json({ status: true, data: { assessments: { active: !!(till && till > new Date()), till, verified: !!a?.verified, regNo: a?.regNo || "", noRegNo: !!a?.noRegNo, credential: a?.credential || "", signature: a?.signature || "", ...p.addon }, therapistShare: p.therapistShare, tests: p.tests, profile: { qualification: t?.qualification || "", licenseNumber: t?.license_number || "", profileType: t?.profile_type || "" } } });
 });
 
 // POST /therapist-addon/details { regNo | noRegNo + credential, signature } — sent to CYT for verification
 export const saveAddonDetails = expressAsyncHandler(async (req, res) => {
+  const t = await Therapists.findOne({ user: req.user._id }).select("qualification license_number").lean();
   const noRegNo = !!req.body?.noRegNo;
   const regNo = noRegNo ? "" : String(req.body?.regNo || "").trim();
-  const credential = String(req.body?.credential || "").trim();
+  const credential = String(t?.qualification || req.body?.credential || "").trim();
   const signature = req.body?.signature;
-  if (!noRegNo && regNo.length < 3) return res.status(400).json({ status: false, message: "Enter your registration / licence number, or tick that you don't have one." });
-  if (noRegNo && credential.length < 5) return res.status(400).json({ status: false, message: "Enter your highest qualification (degree, institute) so CYT can verify it." });
-  if (signature != null && signature !== "" && !validSignature(signature)) return res.status(400).json({ status: false, message: "That signature image isn't valid." });
-  const changed = await setDetails(req.user._id, { regNo, noRegNo, credential, ...(signature ? { signature } : {}) });
+  if (!noRegNo && regNo.length < 3) return res.status(400).json({ status: false, message: "Enter your RCI licence / registration number, or tick that you don't have one." });
+  if (credential.length < 2) return res.status(400).json({ status: false, message: "Add your qualification in Settings → Profile first." });
+  if (!validSignature(signature)) return res.status(400).json({ status: false, message: "Add your signature (draw it or upload an image)." });
+  const changed = await setDetails(req.user._id, { regNo, noRegNo, credential, signature });
+  if (regNo && !String(t?.license_number || "").trim()) await Therapists.updateOne({ user: req.user._id }, { $set: { license_number: regNo } });
   res.json({ status: true, message: changed ? "Sent to CYT for verification — clients see you for assessments once it is verified." : "No changes — already sent." });
 });
 
