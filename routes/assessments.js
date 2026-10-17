@@ -1,7 +1,7 @@
 import express from "express";
 import { isAuth, isAuthCommon, isTherapist, hasPermission, isSuperAdmin } from "../middlewares/authMiddleware.js";
 import { saveAssessment, listAssessments } from "../controllers/AssessmentController.js";
-import { myRequests, takeRequest, submitRequest, therapistRequests, reportRequest, releaseRequest, verifyReport } from "../controllers/AssessmentRequestController.js";
+import { myRequests, takeRequest, submitRequest, therapistRequests, reportRequest, releaseRequest, verifyReport, createSelfOrder, verifySelfPayment } from "../controllers/AssessmentRequestController.js";
 import { myAddons, createAddonOrder, verifyAddonPayment, assessmentProviders, saveAddonDetails, saveAddonConsent, adminAddons, adminAddonAction } from "../controllers/TherapistAddonController.js";
 import { publicPricing, adminPricing, saveAdminPricing } from "../controllers/AssessmentPricingController.js";
 
@@ -20,6 +20,9 @@ router.post("/assessment-requests/:id/submit", isAuth, submitRequest);
 router.get("/assessment-requests/:id/report", isAuthCommon, reportRequest);
 router.post("/assessment-requests/:id/release", isTherapist, releaseRequest);
 router.get("/assessment-verify/:id", verifyReport);
+// an assessment on its own (no psychologist): pay → take → automatic report
+router.post("/assessment-self/order", isAuth, createSelfOrder);
+router.post("/assessment-self/verify", isAuth, verifySelfPayment);
 
 // therapist add-on (Clinical Assessments, yearly)
 router.get("/therapist-addon", isTherapist, myAddons);

@@ -1,6 +1,9 @@
 import expressAsyncHandler from "express-async-handler";
 import mongoose from "mongoose";
-import AssessmentRequest from "../models/AssessmentRequest.js";
+import crypto from "crypto";
+import AssessmentRequest, { AssessmentOrder } from "../models/AssessmentRequest.js";
+import { getPricing } from "../helper/assessmentPricing.js";
+import { razorpayClient } from "../helper/therapistSubscription.js";
 import { TEST_BY_KEY, validAnswers } from "../helper/assessmentTests.js";
 import { notifyClient } from "../services/clientNotify.js";
 import { notifyTherapists } from "../services/therapistNotify.js";
@@ -51,7 +54,7 @@ export const myRequests = expressAsyncHandler(async (req, res) => {
   res.json({
     status: true,
     data: rows.map((r) => ({
-      _id: r._id, tool: r.tool, name: nameOf(r.tool), therapist: r.therapistUser?.name || "Your psychologist",
+      _id: r._id, tool: r.tool, name: nameOf(r.tool), selfOnly: !!r.selfOnly, therapist: r.selfOnly ? "" : r.therapistUser?.name || "Your psychologist",
       booking_date: r.booking?.booking_date || null, status: ["sent", "done", "released"].includes(r.status) ? r.status : "sent",
       ...(r.status === "released" ? { result: { score: r.result?.score ?? null, level: r.result?.level || "" }, note: r.note } : {}),
     })),
@@ -63,7 +66,7 @@ export const takeRequest = expressAsyncHandler(async (req, res) => {
   if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid link." });
   const r = await AssessmentRequest.findOne({ _id: req.params.id, client: req.user._id }).populate("therapistUser", "name").populate("booking", "booking_date").lean();
   if (!r) return res.status(404).json({ status: false, message: "Not found." });
-  res.json({ status: true, data: { _id: r._id, tool: r.tool, status: r.status, therapist: r.therapistUser?.name || "Your psychologist", booking_date: r.booking?.booking_date || null } });
+  res.json({ status: true, data: { _id: r._id, tool: r.tool, status: r.status, selfOnly: !!r.selfOnly, therapist: r.selfOnly ? "" : r.therapistUser?.name || "Your psychologist", booking_date: r.booking?.booking_date || null } });
 });
 
 // POST /assessment-requests/:id/submit { answers: [n…] } — client; scored here
@@ -79,8 +82,13 @@ export const submitRequest = expressAsyncHandler(async (req, res) => {
   r.answers = answers;
   r.result = { score: out.score ?? null, max: test.max ?? null, level: out.level, color: out.color, text: out.text, dims: out.dims || null, bars: out.bars || null, flag: !!out.flag };
   r.status = "done"; r.doneAt = new Date();
+  if (r.selfOnly) { r.status = "released"; r.releasedAt = r.doneAt; }
   r.markModified("result");
   await r.save();
+  if (r.selfOnly) {
+    notifyClient(r.client, { type: "completed", title: `Your ${nameOf(r.tool)} report is ready`, body: "Your automatic report is ready to view and download.", link: `/assessment-report/${r._id}`, ref: `areq-rel:${r._id}` });
+    return res.json({ status: true, message: "Submitted.", data: { released: true } });
+  }
   notifyTherapists([r.therapistUser], {
     type: "booking", title: `${req.user.name || "Your client"} completed the ${test.short}${out.flag ? " ⚠ self-harm item" : ""}`,
     body: `${out.level}${out.score != null ? ` · ${out.score}/${test.max}` : ""} — open the report before the session.`,
@@ -122,11 +130,11 @@ export const reportRequest = expressAsyncHandler(async (req, res) => {
   const earlier = await AssessmentRequest.find({ client: r.client?._id, tool: r.tool, _id: { $ne: r._id }, status: { $in: isTherapist ? ["done", "released"] : ["released"] }, doneAt: { $lt: r.doneAt } })
     .sort({ doneAt: -1 }).limit(5).select("doneAt result.score result.level").lean();
   const addon = isTherapist ? await TherapistAddon.findOne({ user: r.therapistUser._id }).select("regNo signature verified verifiedAt noRegNo credential").lean() : null;
-  const signer = r.signedBy || signerOf(r.therapistUser?.name, r.therapist?.profile_type, addon);
+  const signer = r.selfOnly ? null : r.signedBy || signerOf(r.therapistUser?.name, r.therapist?.profile_type, addon);
   res.json({
     status: true,
     data: {
-      _id: r._id, reportNo: codeOf(r._id, "CYT-AR"), tool: r.tool, status: r.status, viewer: isTherapist ? "therapist" : "client",
+      _id: r._id, reportNo: codeOf(r._id, "CYT-AR"), tool: r.tool, status: r.status, viewer: isTherapist ? "therapist" : "client", selfOnly: !!r.selfOnly,
       client: { name: r.client?.name || "Client", age: r.client?.age || null, gender: r.client?.gender || "", code: codeOf(r.client?._id, "CL") },
       therapist: r.therapistUser?.name || "", signer, regNo: isTherapist ? addon?.regNo || "" : undefined,
       booking_date: r.booking?.booking_date || null,
@@ -189,7 +197,67 @@ export const verifyReport = expressAsyncHandler(async (req, res) => {
       reportNo: `CYT-AR-${String(r._id).slice(-6).toUpperCase()}`, test: nameOf(r.tool), tool: r.tool,
       client: initialsOf(r.client?.name), completedAt: r.doneAt, releasedAt: r.releasedAt,
       level: r.result?.level || "", score: r.result?.score ?? null, max: r.result?.max ?? null,
-      psychologist: { name: sb.name || r.therapistUser?.name || "", profileType: sb.profileType || "", regNo: sb.regNo || "", noRegNo: !!sb.noRegNo, credential: sb.credential || "", verified: !!sb.verified, verifiedAt: sb.verifiedAt || null },
+      selfOnly: !!r.selfOnly,
+      psychologist: r.selfOnly ? null : { name: sb.name || r.therapistUser?.name || "", profileType: sb.profileType || "", regNo: sb.regNo || "", noRegNo: !!sb.noRegNo, credential: sb.credential || "", verified: !!sb.verified, verifiedAt: sb.verifiedAt || null },
     },
   });
+});
+
+// ── an assessment on its own (no session) ─────────────────────────────────────────────────────
+export const selfPaymentSource = {
+  createOrder: (o) => razorpayClient().orders.create(o),
+  fetchPayment: (id) => razorpayClient().payments.fetch(id),
+};
+async function createSelfRequest(user, tool, { amount = 0, paymentId = "" } = {}) {
+  return AssessmentRequest.create({ client: user, tool, selfOnly: true, status: "sent", sentAt: new Date(), amount, paymentId });
+}
+
+// POST /assessment-self/order { tool } — client: pay for one assessment (priced here, in the admin panel)
+export const createSelfOrder = expressAsyncHandler(async (req, res) => {
+  const tool = String(req.body?.tool || "");
+  if (!TEST_BY_KEY[tool]) return res.status(400).json({ status: false, message: "Unknown assessment." });
+  const p = (await getPricing()).tests?.[tool];
+  if (!p || p.active === false) return res.status(400).json({ status: false, message: "This assessment can't be booked right now." });
+  if (Number(p.price) === 0) {
+    const r = await createSelfRequest(req.user._id, tool);
+    return res.json({ status: true, data: { free: true, requestId: r._id } });
+  }
+  try {
+    const order = await selfPaymentSource.createOrder({
+      amount: Math.round(p.price * 100), currency: "INR",
+      receipt: `asmt_${String(req.user._id).slice(-10)}_${Date.now().toString(36)}`,
+      notes: { purpose: "assessment_only", tool },
+    });
+    await AssessmentOrder.create({ orderId: order.id, user: req.user._id, tool, amount: p.price });
+    res.json({ status: true, data: { orderId: order.id, amount: p.price, keyId: process.env.RAZORPAY_KEY_ID, name: nameOf(tool) } });
+  } catch (e) {
+    console.error("[assessment-self] order failed:", e?.error?.description || e.message);
+    res.status(502).json({ status: false, message: "Couldn't start the payment right now. Please try again in a minute." });
+  }
+});
+
+// POST /assessment-self/verify { razorpay_order_id, razorpay_payment_id, razorpay_signature } → { requestId }
+export const verifySelfPayment = expressAsyncHandler(async (req, res) => {
+  const { razorpay_order_id: orderId, razorpay_payment_id: paymentId, razorpay_signature: sig } = req.body || {};
+  if (!orderId || !paymentId || !sig) return res.status(400).json({ status: false, message: "Missing payment details." });
+  const expected = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(`${orderId}|${paymentId}`).digest("hex");
+  if (expected !== sig) return res.status(400).json({ status: false, message: "Invalid payment signature." });
+  const order = await AssessmentOrder.findOne({ orderId, user: req.user._id });
+  if (!order) return res.status(404).json({ status: false, message: "Order not found." });
+  if (order.status === "paid" && order.request) return res.json({ status: true, data: { requestId: order.request } });
+  let p;
+  try { p = await selfPaymentSource.fetchPayment(paymentId); } catch (e) {
+    return res.status(502).json({ status: false, message: "We couldn't confirm your payment just now. Please try again in a minute — your money is safe." });
+  }
+  const ok = p && p.order_id === orderId && ["captured", "authorized"].includes(p.status) && (p.currency || "INR") === "INR" && Number(p.amount) === Math.round(order.amount * 100);
+  if (!ok) return res.status(400).json({ status: false, message: "This payment doesn't match the assessment fee. Please contact hello@chooseyourtherapist.in with your payment ID." });
+  // only the request that flips pending → paid creates the assessment
+  const claimed = await AssessmentOrder.findOneAndUpdate({ _id: order._id, status: "pending" }, { $set: { status: "paid", paymentId } }, { new: true });
+  if (!claimed) {
+    const again = await AssessmentOrder.findById(order._id).lean();
+    return res.json({ status: true, data: { requestId: again?.request || null } });
+  }
+  const r = await createSelfRequest(req.user._id, order.tool, { amount: order.amount, paymentId });
+  await AssessmentOrder.updateOne({ _id: order._id }, { $set: { request: r._id } });
+  res.json({ status: true, data: { requestId: r._id } });
 });
