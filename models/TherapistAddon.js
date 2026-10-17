@@ -8,6 +8,15 @@ const TherapistAddonSchema = new Schema(
     user: { type: Schema.Types.ObjectId, ref: "User", required: true, unique: true }, // therapist's user id
     assessmentsTill: { type: Date, default: null },
     regNo: { type: String, default: "" }, // registration / licence no. printed on assessment reports (e.g. RCI CRR no.)
+    // clients see the therapist for assessments only after an admin has checked the reg. no. and the payment;
+    // a free activation or a changed reg. no. needs a fresh check
+    verified: { type: Boolean, default: false },
+    verifiedAt: { type: Date, default: null },
+    verifiedBy: { type: String, default: "" },
+    lastSource: { type: String, default: "" }, // "paid" | "free" | "revoked"
+    lastAmount: { type: Number, default: null },
+    lastPaymentId: { type: String, default: "" },
+    lastPaidAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

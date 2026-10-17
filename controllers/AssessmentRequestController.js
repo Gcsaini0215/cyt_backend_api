@@ -5,6 +5,7 @@ import { TEST_BY_KEY, validAnswers } from "../helper/assessmentTests.js";
 import { notifyClient } from "../services/clientNotify.js";
 import { notifyTherapists } from "../services/therapistNotify.js";
 import TherapistAddon from "../models/TherapistAddon.js";
+import { setRegNo } from "./TherapistAddonController.js";
 
 /* Clinical assessments booked with a session (see models/AssessmentRequest.js). The client answers on
    CYT; the score is worked out here, on the server, from the published scoring. The psychologist sees
@@ -139,7 +140,7 @@ export const releaseRequest = expressAsyncHandler(async (req, res) => {
   const b = req.body || {};
   if (b.note != null) r.note = String(b.note).trim().slice(0, 1000);
   if (b.notes) { r.notes = cleanNotes(b.notes); r.markModified("notes"); }
-  if (b.regNo != null) await TherapistAddon.updateOne({ user: req.user._id }, { $set: { regNo: String(b.regNo).trim().slice(0, 60) } }, { upsert: true });
+  if (b.regNo != null && String(b.regNo).trim()) await setRegNo(req.user._id, b.regNo);
   const release = b.release !== false;
   const first = release && r.status !== "released";
   if (release) {
