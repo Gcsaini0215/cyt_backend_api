@@ -6,25 +6,25 @@ import TherapistAddon, { TherapistAddonOrder } from "../models/TherapistAddon.js
 import { razorpayClient } from "../helper/therapistSubscription.js";
 import { getPricing } from "../helper/assessmentPricing.js";
 
-/* "Clinical Assessments" add-on: a yearly upgrade (price + offers set in the admin panel, default ₹499)
+/* "Clinical Assessments" add-on: a 6-month upgrade (price + offers set in the admin panel, default ₹499)
    bought by the therapist on Razorpay. While it is active, clients can book clinical assessments with
    them (see AssessmentRequestController). A price of ₹0 activates it without payment. */
 
-const YEAR = 365 * 864e5;
+const TERM_MONTHS = 6;
 // Razorpay calls, overridable in tests
 export const addonPaymentSource = {
   createOrder: (o) => razorpayClient().orders.create(o),
   fetchPayment: (id) => razorpayClient().payments.fetch(id),
 };
 
-// one more year, from today or from the current end date if still running. A free activation always
+// six more months, from today or from the current end date if still running. A free activation always
 // needs an admin check; a paid renewal keeps an earlier verification.
-async function extendYear(user, { source, amount = 0, paymentId = "" }) {
+async function extendTerm(user, { source, amount = 0, paymentId = "" }) {
   const a = await TherapistAddon.findOne({ user }).lean();
   const from = a?.assessmentsTill && a.assessmentsTill > new Date() ? a.assessmentsTill : new Date();
   await TherapistAddon.updateOne({ user }, {
     $set: {
-      assessmentsTill: new Date(new Date(from).getTime() + YEAR), lastSource: source, lastAmount: amount, lastPaymentId: paymentId, lastPaidAt: new Date(),
+      assessmentsTill: (() => { const d = new Date(from); d.setMonth(d.getMonth() + TERM_MONTHS); return d; })(), lastSource: source, lastAmount: amount, lastPaymentId: paymentId, lastPaidAt: new Date(),
       ...(source === "free" ? { verified: false, verifiedAt: null, verifiedBy: "" } : {}),
     },
   }, { upsert: true });
@@ -66,13 +66,17 @@ export const saveAddonDetails = expressAsyncHandler(async (req, res) => {
   const t = await Therapists.findOne({ user: req.user._id }).select("qualification license_number").lean();
   const noRegNo = !!req.body?.noRegNo;
   const regNo = noRegNo ? "" : String(req.body?.regNo || "").trim();
-  const credential = String(t?.qualification || req.body?.credential || "").trim();
+  const credential = String(req.body?.credential || t?.qualification || "").trim().slice(0, 160);
   const signature = req.body?.signature;
   if (!noRegNo && regNo.length < 3) return res.status(400).json({ status: false, message: "Enter your RCI licence / registration number, or tick that you don't have one." });
-  if (credential.length < 2) return res.status(400).json({ status: false, message: "Add your qualification in Settings → Profile first." });
+  if (credential.length < 2) return res.status(400).json({ status: false, message: "Enter your qualification (e.g. M.Phil Clinical Psychology)." });
   if (!validSignature(signature)) return res.status(400).json({ status: false, message: "Add your signature (draw it or upload an image)." });
   const changed = await setDetails(req.user._id, { regNo, noRegNo, credential, signature });
-  if (regNo && !String(t?.license_number || "").trim()) await Therapists.updateOne({ user: req.user._id }, { $set: { license_number: regNo } });
+  // fill empty profile fields with what was typed here
+  const fill = {};
+  if (regNo && !String(t?.license_number || "").trim()) fill.license_number = regNo;
+  if (!String(t?.qualification || "").trim()) fill.qualification = credential;
+  if (Object.keys(fill).length) await Therapists.updateOne({ user: req.user._id }, { $set: fill });
   res.json({ status: true, message: changed ? "Sent to CYT for verification — clients see you for assessments once it is verified." : "No changes — already sent." });
 });
 
@@ -82,7 +86,7 @@ export const createAddonOrder = expressAsyncHandler(async (req, res) => {
   if (u?.is_verified !== 1) return res.status(403).json({ status: false, message: "Add-ons can be bought once your profile is approved." });
   const price = (await getPricing()).addon.price;
   if (price === 0) {
-    await extendYear(req.user._id, { source: "free" });
+    await extendTerm(req.user._id, { source: "free" });
     return res.json({ status: true, data: { free: true }, message: "Clinical Assessments activated." });
   }
   try {
@@ -119,9 +123,9 @@ export const verifyAddonPayment = expressAsyncHandler(async (req, res) => {
     console.error("[addon] verify mismatch", JSON.stringify({ orderId, paymentId, paid: p?.amount, status: p?.status }));
     return res.status(400).json({ status: false, message: "This payment doesn't match the add-on price. Please contact hello@chooseyourtherapist.in with your payment ID." });
   }
-  // activate once: only the request that flips pending → paid extends the year
+  // activate once: only the request that flips pending → paid extends the term
   const claimed = await TherapistAddonOrder.findOneAndUpdate({ _id: order._id, status: "pending" }, { $set: { status: "paid", paymentId } });
-  if (claimed) await extendYear(req.user._id, { source: "paid", amount: order.amount, paymentId });
+  if (claimed) await extendTerm(req.user._id, { source: "paid", amount: order.amount, paymentId });
   const a = await TherapistAddon.findOne({ user: req.user._id }).lean();
   res.json({ status: true, message: "Clinical Assessments activated.", data: { till: a?.assessmentsTill } });
 });
