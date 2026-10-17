@@ -8,6 +8,7 @@ const TherapistAddonSchema = new Schema(
   {
     user: { type: Schema.Types.ObjectId, ref: "User", required: true, unique: true }, // therapist's user id
     assessmentsTill: { type: Date, default: null },
+    termFrom: { type: Date, default: null }, // start of the current paid period (countdown on the add-on page)
     regNo: { type: String, default: "" }, // registration / licence no. printed on assessment reports (e.g. RCI CRR no.)
     signature: { type: String, default: "" }, // PNG/JPEG data URL, printed on released reports once verified
     noRegNo: { type: Boolean, default: false }, // no registration no. — qualification below is checked instead
@@ -41,6 +42,9 @@ const TherapistAddonOrderSchema = new Schema(
     amount: { type: Number, required: true }, // rupees
     status: { type: String, enum: ["pending", "paid"], default: "pending" },
     paymentId: { type: String, default: "" },
+    paidAt: { type: Date, default: null },
+    periodFrom: { type: Date, default: null }, // the 6 months this payment bought (for the receipt)
+    periodTill: { type: Date, default: null },
   },
   { timestamps: true }
 );

@@ -35,13 +35,20 @@ export const addonPaymentSource = {
 // come before payment, so activating keeps the approval.
 async function extendTerm(user, { source, amount = 0, paymentId = "" }) {
   const a = await TherapistAddon.findOne({ user }).lean();
-  const from = a?.assessmentsTill && a.assessmentsTill > new Date() ? a.assessmentsTill : new Date();
+  const running = !!(a?.assessmentsTill && a.assessmentsTill > new Date());
+  const from = running ? new Date(a.assessmentsTill) : new Date(); // an extension starts when the current one ends
+  const till = new Date(from); till.setMonth(till.getMonth() + TERM_MONTHS);
   await TherapistAddon.updateOne({ user }, {
-    $set: {
-      assessmentsTill: (() => { const d = new Date(from); d.setMonth(d.getMonth() + TERM_MONTHS); return d; })(), lastSource: source, lastAmount: amount, lastPaymentId: paymentId, lastPaidAt: new Date(),
-    },
+    $set: { assessmentsTill: till, termFrom: running ? a.termFrom || from : from, lastSource: source, lastAmount: amount, lastPaymentId: paymentId, lastPaidAt: new Date() },
   }, { upsert: true });
+  return { from, till };
 }
+
+// receipt no. for an add-on payment, e.g. CYT-AO-2610-1A2B3C
+const addonReceiptNo = (o) => {
+  const d = new Date(o.paidAt || o.updatedAt || o.createdAt);
+  return `CYT-AO-${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, "0")}-${String(o.orderId || o._id).slice(-6).toUpperCase()}`;
+};
 
 // bookable for assessments: running, reg. no. + signature given, checked by an admin
 const LISTED = () => ({ assessmentsTill: { $gt: new Date() }, verified: true, $or: [{ regNo: { $nin: ["", null] } }, { noRegNo: true, credential: { $nin: ["", null] } }] });
@@ -69,9 +76,14 @@ export const setRegNo = (user, regNo) => setDetails(user, { regNo });
 
 // GET /therapist-addon — this therapist's add-ons
 export const myAddons = expressAsyncHandler(async (req, res) => {
-  const [a, p, t] = await Promise.all([TherapistAddon.findOne({ user: req.user._id }).lean(), getPricing(), Therapists.findOne({ user: req.user._id }).select("qualification license_number profile_type").lean()]);
+  const [a, p, t, orders] = await Promise.all([
+    TherapistAddon.findOne({ user: req.user._id }).lean(), getPricing(),
+    Therapists.findOne({ user: req.user._id }).select("qualification license_number profile_type").lean(),
+    TherapistAddonOrder.find({ user: req.user._id, status: "paid" }).sort({ createdAt: -1 }).limit(24).lean(),
+  ]);
+  const payments = orders.map((o) => ({ receiptNo: addonReceiptNo(o), amount: o.amount, paymentId: o.paymentId, orderId: o.orderId, paidAt: o.paidAt || o.updatedAt, from: o.periodFrom, till: o.periodTill }));
   const till = a?.assessmentsTill || null;
-  res.json({ status: true, data: { assessments: { active: !!(till && till > new Date()), till, verified: !!a?.verified, regNo: a?.regNo || "", noRegNo: !!a?.noRegNo, credential: t?.qualification || a?.credential || "", signature: a?.signature || "", rejectNote: a?.rejectNote || "", consentAt: a?.consentVersion === CONSENT_VERSION ? a?.consentAt || null : null, consentName: a?.consentName || "", step: addonStep(a), termMonths: TERM_MONTHS, ...p.addon }, therapistShare: p.therapistShare, tests: p.tests, profile: { qualification: t?.qualification || "", licenseNumber: t?.license_number || "", profileType: t?.profile_type || "" } } });
+  res.json({ status: true, data: { assessments: { active: !!(till && till > new Date()), till, verified: !!a?.verified, regNo: a?.regNo || "", noRegNo: !!a?.noRegNo, credential: t?.qualification || a?.credential || "", signature: a?.signature || "", rejectNote: a?.rejectNote || "", consentAt: a?.consentVersion === CONSENT_VERSION ? a?.consentAt || null : null, consentName: a?.consentName || "", step: addonStep(a), termMonths: TERM_MONTHS, termFrom: a?.termFrom || null, ...p.addon }, payments, therapistShare: p.therapistShare, tests: p.tests, profile: { name: req.user?.name || "", qualification: t?.qualification || "", licenseNumber: t?.license_number || "", profileType: t?.profile_type || "" } } });
 });
 
 // POST /therapist-addon/details { regNo | noRegNo, signature, credential? } — qualification comes from the profile;
@@ -156,7 +168,10 @@ export const verifyAddonPayment = expressAsyncHandler(async (req, res) => {
   }
   // activate once: only the request that flips pending → paid extends the term
   const claimed = await TherapistAddonOrder.findOneAndUpdate({ _id: order._id, status: "pending" }, { $set: { status: "paid", paymentId } });
-  if (claimed) await extendTerm(req.user._id, { source: "paid", amount: order.amount, paymentId });
+  if (claimed) {
+    const term = await extendTerm(req.user._id, { source: "paid", amount: order.amount, paymentId });
+    await TherapistAddonOrder.updateOne({ _id: order._id }, { $set: { paidAt: new Date(), periodFrom: term.from, periodTill: term.till } });
+  }
   const a = await TherapistAddon.findOne({ user: req.user._id }).lean();
   res.json({ status: true, message: "Clinical Assessments activated.", data: { till: a?.assessmentsTill } });
 });
