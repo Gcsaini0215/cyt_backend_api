@@ -7,6 +7,7 @@ import { razorpayClient } from "../helper/therapistSubscription.js";
 import { getPricing } from "../helper/assessmentPricing.js";
 import { sendMail } from "../helper/mailer.js";
 import { addonReviewMail } from "../services/mailTemplates.js";
+import { notifyTherapists } from "../services/therapistNotify.js";
 
 /* "Clinical Assessments" add-on: a 6-month upgrade (price + offers set in the admin panel, default ₹499)
    bought by the therapist on Razorpay. While it is active, clients can book clinical assessments with
@@ -218,5 +219,13 @@ export const adminAddonAction = expressAsyncHandler(async (req, res) => {
       addonReviewMail({ name: u.name, approved: action === "verify", reason: a.rejectNote })).catch(() => {});
   }
   const active = a.assessmentsTill && a.assessmentsTill > new Date();
+  // live to the therapist's open portal (bell + the Assessments page / dashboard refresh themselves)
+  const N = {
+    verify: ["Clinical Assessments: details approved", active ? "Clients can now book assessments with you." : "Sign the informed consent and pay to activate the add-on."],
+    reject: ["Clinical Assessments: details sent back", a.rejectNote],
+    unverify: ["Clinical Assessments paused", "CYT has paused your assessments listing. Contact us if you have questions."],
+    revoke: ["Clinical Assessments add-on removed", "Contact CYT if you have questions."],
+  }[action];
+  if (N) notifyTherapists([a.user], { type: "addon", title: N[0], body: N[1], link: "/therapist-questionnaires?buy=1", ref: `addon-${action}-${Date.now()}` });
   res.json({ status: true, message: action === "verify" ? (active ? "Approved — clients can now book assessments with this therapist." : "Approved — the therapist has been emailed to sign the consent and pay.") : action === "reject" ? "Sent back to the therapist with your reason." : action === "revoke" ? "Add-on removed." : "Approval removed — hidden from clients." });
 });
