@@ -4,6 +4,7 @@ import AssessmentRequest from "../models/AssessmentRequest.js";
 import { TEST_BY_KEY, validAnswers } from "../helper/assessmentTests.js";
 import { notifyClient } from "../services/clientNotify.js";
 import { notifyTherapists } from "../services/therapistNotify.js";
+import TherapistAddon from "../models/TherapistAddon.js";
 
 /* Clinical assessments booked with a session (see models/AssessmentRequest.js). The client answers on
    CYT; the score is worked out here, on the server, from the published scoring. The psychologist sees
@@ -96,41 +97,63 @@ export const therapistRequests = expressAsyncHandler(async (req, res) => {
   });
 });
 
+const cleanNotes = (n) => {
+  const t = (v, max) => String(v || "").trim().slice(0, max);
+  return { observations: t(n?.observations, 1500), recommendations: t(n?.recommendations, 1500), followUp: t(n?.followUp, 200), referral: t(n?.referral, 300) };
+};
+const codeOf = (id, prefix) => `${prefix}-${String(id).slice(-6).toUpperCase()}`;
+
 // GET /assessment-requests/:id/report — the therapist who owns it, or the client once released
 export const reportRequest = expressAsyncHandler(async (req, res) => {
   if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid link." });
-  const r = await AssessmentRequest.findById(req.params.id).populate("client", "name age gender").populate("therapistUser", "name").populate("booking", "booking_date").lean();
+  const r = await AssessmentRequest.findById(req.params.id).populate("client", "name age gender").populate("therapistUser", "name").populate("therapist", "profile_type").populate("booking", "booking_date").lean();
   const me = String(req.user._id);
   const isTherapist = r && String(r.therapistUser?._id) === me;
   const isClient = r && String(r.client?._id) === me && r.status === "released";
   if (!isTherapist && !isClient) return res.status(404).json({ status: false, message: "Report not available." });
   if (r.status === "sent") return res.status(400).json({ status: false, message: "The client hasn't completed it yet." });
+  // earlier results of the same test for this client (progress)
+  const earlier = await AssessmentRequest.find({ client: r.client?._id, tool: r.tool, _id: { $ne: r._id }, status: { $in: isTherapist ? ["done", "released"] : ["released"] }, doneAt: { $lt: r.doneAt } })
+    .sort({ doneAt: -1 }).limit(5).select("doneAt result.score result.level").lean();
+  const addon = isTherapist ? await TherapistAddon.findOne({ user: r.therapistUser._id }).select("regNo").lean() : null;
+  const signer = r.signedBy || { name: r.therapistUser?.name || "", profileType: r.therapist?.profile_type || "Psychologist", regNo: addon?.regNo || "" };
   res.json({
     status: true,
     data: {
-      _id: r._id, tool: r.tool, status: r.status, viewer: isTherapist ? "therapist" : "client",
-      client: { name: r.client?.name || "Client", age: r.client?.age || null, gender: r.client?.gender || "" },
-      therapist: r.therapistUser?.name || "", booking_date: r.booking?.booking_date || null,
-      answers: r.answers || [], result: r.result, note: r.note, doneAt: r.doneAt, releasedAt: r.releasedAt,
+      _id: r._id, reportNo: codeOf(r._id, "CYT-AR"), tool: r.tool, status: r.status, viewer: isTherapist ? "therapist" : "client",
+      client: { name: r.client?.name || "Client", age: r.client?.age || null, gender: r.client?.gender || "", code: codeOf(r.client?._id, "CL") },
+      therapist: r.therapistUser?.name || "", signer, regNo: isTherapist ? addon?.regNo || "" : undefined,
+      booking_date: r.booking?.booking_date || null,
+      answers: r.answers || [], result: r.result, note: r.note, notes: r.notes || null, doneAt: r.doneAt, releasedAt: r.releasedAt,
+      earlier: earlier.map((e) => ({ doneAt: e.doneAt, score: e.result?.score ?? null, level: e.result?.level || "" })),
     },
   });
 });
 
-// POST /assessment-requests/:id/release { note? } — therapist, after going through it with the client
+// POST /assessment-requests/:id/notes { note, notes, regNo, release? } — therapist: save notes (and release)
 export const releaseRequest = expressAsyncHandler(async (req, res) => {
   if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid request." });
-  const r = await AssessmentRequest.findOne({ _id: req.params.id, therapistUser: req.user._id });
+  const r = await AssessmentRequest.findOne({ _id: req.params.id, therapistUser: req.user._id }).populate("therapist", "profile_type");
   if (!r) return res.status(404).json({ status: false, message: "Not found." });
   if (r.status === "sent") return res.status(400).json({ status: false, message: "The client hasn't completed it yet." });
-  if (req.body?.note != null) r.note = String(req.body.note).trim().slice(0, 1000);
-  const first = r.status !== "released";
-  r.status = "released"; if (first) r.releasedAt = new Date();
+  const b = req.body || {};
+  if (b.note != null) r.note = String(b.note).trim().slice(0, 1000);
+  if (b.notes) { r.notes = cleanNotes(b.notes); r.markModified("notes"); }
+  if (b.regNo != null) await TherapistAddon.updateOne({ user: req.user._id }, { $set: { regNo: String(b.regNo).trim().slice(0, 60) } }, { upsert: true });
+  const release = b.release !== false;
+  const first = release && r.status !== "released";
+  if (release) {
+    const addon = await TherapistAddon.findOne({ user: req.user._id }).select("regNo").lean();
+    r.signedBy = { name: req.user.name || "", profileType: r.therapist?.profile_type || "Psychologist", regNo: addon?.regNo || "" };
+    r.markModified("signedBy");
+    r.status = "released"; if (first) r.releasedAt = new Date();
+  }
   await r.save();
   if (first) {
     notifyClient(r.client, {
       type: "completed", title: `Your ${nameOf(r.tool)} report is ready`,
-      body: `${req.user.name || "Your psychologist"} has shared your result and a note.`, link: `/assessment-report/${r._id}`, ref: `areq-rel:${r._id}`,
+      body: `${req.user.name || "Your psychologist"} has shared your result and notes.`, link: `/assessment-report/${r._id}`, ref: `areq-rel:${r._id}`,
     });
   }
-  res.json({ status: true, message: first ? "Released — your client can now see the report." : "Note updated." });
+  res.json({ status: true, message: !release ? "Draft saved — not visible to the client yet." : first ? "Released — your client can now see the report." : "Report updated." });
 });

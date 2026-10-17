@@ -16,7 +16,9 @@ const AssessmentRequestSchema = new Schema(
     status: { type: String, default: "sent" },
     answers: { type: [Number], default: undefined },
     result: { type: Schema.Types.Mixed, default: null }, // { score, max, level, color, text, dims, bars, flag }
-    note: { type: String, default: "" }, // the psychologist's note to the client, shown on release
+    note: { type: String, default: "" }, // the psychologist's summary for the client, shown on release
+    notes: { type: Schema.Types.Mixed, default: null }, // { observations, recommendations, followUp, referral }
+    signedBy: { type: Schema.Types.Mixed, default: null }, // { name, profileType, regNo } frozen at release
     sentAt: Date, doneAt: Date, releasedAt: Date,
   },
   { timestamps: true }

@@ -7,6 +7,7 @@ const TherapistAddonSchema = new Schema(
   {
     user: { type: Schema.Types.ObjectId, ref: "User", required: true, unique: true }, // therapist's user id
     assessmentsTill: { type: Date, default: null },
+    regNo: { type: String, default: "" }, // registration / licence no. printed on assessment reports (e.g. RCI CRR no.)
   },
   { timestamps: true }
 );
