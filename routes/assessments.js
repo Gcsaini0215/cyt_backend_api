@@ -1,7 +1,7 @@
 import express from "express";
 import { isAuth, isAuthCommon, isTherapist, hasPermission, isSuperAdmin } from "../middlewares/authMiddleware.js";
 import { saveAssessment, listAssessments } from "../controllers/AssessmentController.js";
-import { myRequests, takeRequest, submitRequest, therapistRequests, reportRequest, releaseRequest } from "../controllers/AssessmentRequestController.js";
+import { myRequests, takeRequest, submitRequest, therapistRequests, reportRequest, releaseRequest, verifyReport } from "../controllers/AssessmentRequestController.js";
 import { myAddons, createAddonOrder, verifyAddonPayment, assessmentProviders, saveAddonDetails, adminAddons, adminAddonAction } from "../controllers/TherapistAddonController.js";
 import { publicPricing, adminPricing, saveAdminPricing } from "../controllers/AssessmentPricingController.js";
 
@@ -19,6 +19,7 @@ router.get("/assessment-requests/:id/take", isAuth, takeRequest);
 router.post("/assessment-requests/:id/submit", isAuth, submitRequest);
 router.get("/assessment-requests/:id/report", isAuthCommon, reportRequest);
 router.post("/assessment-requests/:id/release", isTherapist, releaseRequest);
+router.get("/assessment-verify/:id", verifyReport);
 
 // therapist add-on (Clinical Assessments, yearly)
 router.get("/therapist-addon", isTherapist, myAddons);

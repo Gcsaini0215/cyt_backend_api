@@ -5,6 +5,11 @@ import { TEST_BY_KEY, validAnswers } from "../helper/assessmentTests.js";
 import { notifyClient } from "../services/clientNotify.js";
 import { notifyTherapists } from "../services/therapistNotify.js";
 import TherapistAddon from "../models/TherapistAddon.js";
+import QRCode from "qrcode";
+
+const SITE = "https://www.chooseyourtherapist.in";
+const verifyUrl = (id) => `${SITE}/verify-report/${id}`;
+const initialsOf = (name = "") => String(name).trim().split(/\s+/).filter(Boolean).map((w) => `${w[0].toUpperCase()}.`).join(" ") || "—";
 import { setRegNo } from "./TherapistAddonController.js";
 
 /* Clinical assessments booked with a session (see models/AssessmentRequest.js). The client answers on
@@ -125,7 +130,9 @@ export const reportRequest = expressAsyncHandler(async (req, res) => {
       client: { name: r.client?.name || "Client", age: r.client?.age || null, gender: r.client?.gender || "", code: codeOf(r.client?._id, "CL") },
       therapist: r.therapistUser?.name || "", signer, regNo: isTherapist ? addon?.regNo || "" : undefined,
       booking_date: r.booking?.booking_date || null,
-      answers: r.answers || [], result: r.result, note: r.note, notes: r.notes || null, doneAt: r.doneAt, releasedAt: r.releasedAt,
+      answers: r.answers || [], result: r.result, note: r.note, notes: r.notes || null, sentAt: r.sentAt, doneAt: r.doneAt, releasedAt: r.releasedAt,
+      verifyUrl: r.status === "released" ? verifyUrl(r._id) : "",
+      verifyQr: r.status === "released" ? await QRCode.toDataURL(verifyUrl(r._id), { margin: 1, width: 180, errorCorrectionLevel: "M" }).catch(() => "") : "",
       earlier: earlier.map((e) => ({ doneAt: e.doneAt, score: e.result?.score ?? null, level: e.result?.level || "" })),
     },
   });
@@ -157,4 +164,22 @@ export const releaseRequest = expressAsyncHandler(async (req, res) => {
     });
   }
   res.json({ status: true, message: !release ? "Draft saved — not visible to the client yet." : first ? "Released — your client can now see the report." : "Report updated." });
+});
+
+// GET /assessment-verify/:id — public: confirms a released report is genuine (from the QR on it).
+// Shows only what is needed to check it — never the answers, and the client by initials.
+export const verifyReport = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(404).json({ status: false, message: "No report found for this code." });
+  const r = await AssessmentRequest.findById(req.params.id).populate("client", "name").populate("therapistUser", "name").lean();
+  if (!r || r.status !== "released") return res.status(404).json({ status: false, message: "No released report found for this code." });
+  const sb = r.signedBy || {};
+  res.json({
+    status: true,
+    data: {
+      reportNo: `CYT-AR-${String(r._id).slice(-6).toUpperCase()}`, test: nameOf(r.tool), tool: r.tool,
+      client: initialsOf(r.client?.name), completedAt: r.doneAt, releasedAt: r.releasedAt,
+      level: r.result?.level || "", score: r.result?.score ?? null, max: r.result?.max ?? null,
+      psychologist: { name: sb.name || r.therapistUser?.name || "", profileType: sb.profileType || "", regNo: sb.regNo || "", credential: sb.credential || "" },
+    },
+  });
 });
