@@ -2,7 +2,8 @@ import mongoose from "mongoose";
 const { model, Schema } = mongoose;
 
 // Paid profile upgrades a therapist buys on top of their listing package.
-// assessmentsTill — "Clinical Assessments" add-on (₹499/year): they can be booked for clinical assessments.
+// assessmentsTill — "Clinical Assessments" add-on (6 months): they can be booked for clinical assessments.
+// Buying goes in steps: details sent → approved by an admin → informed consent signed → paid.
 const TherapistAddonSchema = new Schema(
   {
     user: { type: Schema.Types.ObjectId, ref: "User", required: true, unique: true }, // therapist's user id
@@ -16,6 +17,13 @@ const TherapistAddonSchema = new Schema(
     verified: { type: Boolean, default: false },
     verifiedAt: { type: Date, default: null },
     verifiedBy: { type: String, default: "" },
+    rejectNote: { type: String, default: "" }, // why an admin sent the details back
+    reviewedAt: { type: Date, default: null },
+    // informed consent the therapist accepts after approval and before paying
+    consentAt: { type: Date, default: null },
+    consentName: { type: String, default: "" }, // full name typed as the e-signature
+    consentVersion: { type: String, default: "" },
+    consentIp: { type: String, default: "" },
     lastSource: { type: String, default: "" }, // "paid" | "free" | "revoked"
     lastAmount: { type: Number, default: null },
     lastPaymentId: { type: String, default: "" },

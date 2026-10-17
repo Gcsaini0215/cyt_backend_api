@@ -1,6 +1,7 @@
 import expressAsyncHandler from "express-async-handler";
 import { mailProfileLiveOnce } from "../helper/profileLive.js";
 import Therapists, { defaultFees } from "../models/Therapists.js";
+import TherapistAddon from "../models/TherapistAddon.js";
 import Users from "../models/Users.js";
 import Bank from "../models/Bank.js";
 import Fees from "../models/Fees.js";
@@ -60,6 +61,8 @@ export const updateprofile = expressAsyncHandler(async (req, res, next) => {
     therapist.language_spoken = language_spoken;
     therapist.session_formats = session_formats;
     await therapist.save();
+    // the Clinical Assessments add-on prints the profile qualification on reports — keep it in sync
+    if (qualification) await TherapistAddon.updateOne({ user: req.user._id }, { $set: { credential: String(qualification).trim().slice(0, 160) } });
     await Users.findByIdAndUpdate(
       req.user._id,
       {

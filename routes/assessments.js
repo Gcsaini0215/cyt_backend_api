@@ -2,7 +2,7 @@ import express from "express";
 import { isAuth, isAuthCommon, isTherapist, hasPermission, isSuperAdmin } from "../middlewares/authMiddleware.js";
 import { saveAssessment, listAssessments } from "../controllers/AssessmentController.js";
 import { myRequests, takeRequest, submitRequest, therapistRequests, reportRequest, releaseRequest, verifyReport } from "../controllers/AssessmentRequestController.js";
-import { myAddons, createAddonOrder, verifyAddonPayment, assessmentProviders, saveAddonDetails, adminAddons, adminAddonAction } from "../controllers/TherapistAddonController.js";
+import { myAddons, createAddonOrder, verifyAddonPayment, assessmentProviders, saveAddonDetails, saveAddonConsent, adminAddons, adminAddonAction } from "../controllers/TherapistAddonController.js";
 import { publicPricing, adminPricing, saveAdminPricing } from "../controllers/AssessmentPricingController.js";
 
 const router = express.Router();
@@ -26,6 +26,7 @@ router.get("/therapist-addon", isTherapist, myAddons);
 router.post("/therapist-addon/order", isTherapist, createAddonOrder);
 router.post("/therapist-addon/verify", isTherapist, verifyAddonPayment);
 router.post("/therapist-addon/details", isTherapist, saveAddonDetails);
+router.post("/therapist-addon/consent", isTherapist, saveAddonConsent);
 
 // admin: prices and offers
 router.get("/admin/assessment-pricing", hasPermission("therapists"), adminPricing);

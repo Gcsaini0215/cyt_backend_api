@@ -510,6 +510,20 @@ const goLiveSteps = () => `
     </tr>`).join("")}
   </table>`;
 
+// Clinical Assessments add-on: the admin approved the therapist's details (next: consent + payment) or sent them back
+export const addonReviewMail = ({ name, approved, reason }) =>
+  shell({
+    preheader: approved ? "Your Clinical Assessments details are approved — sign the consent and activate" : "Please update your Clinical Assessments details",
+    body:
+      eyebrow(approved ? "Details approved" : "Action needed", approved ? OK : WARN) +
+      heading(approved ? `You're approved${name ? ", " + esc(name) : ""}` : "Please update your details") +
+      (approved
+        ? para("CYT has checked your qualification, registration number and signature for the Clinical Assessments add-on. Two short steps are left: read and accept the informed consent, then pay to activate it.")
+        : para("CYT could not approve your Clinical Assessments details yet.") + (reason ? para(`<b>Reason:</b> ${esc(reason)}`) : "") + para("Please correct them and send them again.")) +
+      button(approved ? "Continue" : "Update my details", "https://www.chooseyourtherapist.in/therapist-questionnaires?buy=1") +
+      note(`Questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
+  });
+
 export const therapistApprovedMail = ({ name, email }) =>
   shell({
     preheader: "Your CYT therapist profile is approved — choose a package to go live",

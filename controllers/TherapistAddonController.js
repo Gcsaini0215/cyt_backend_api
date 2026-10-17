@@ -5,10 +5,23 @@ import Therapists from "../models/Therapists.js";
 import TherapistAddon, { TherapistAddonOrder } from "../models/TherapistAddon.js";
 import { razorpayClient } from "../helper/therapistSubscription.js";
 import { getPricing } from "../helper/assessmentPricing.js";
+import { sendMail } from "../helper/mailer.js";
+import { addonReviewMail } from "../services/mailTemplates.js";
 
 /* "Clinical Assessments" add-on: a 6-month upgrade (price + offers set in the admin panel, default ₹499)
    bought by the therapist on Razorpay. While it is active, clients can book clinical assessments with
-   them (see AssessmentRequestController). A price of ₹0 activates it without payment. */
+   them (see AssessmentRequestController). A price of ₹0 activates it without payment.
+   Steps: 1 details (qualification, reg. no., signature) → 2 admin approval → 3 informed consent → 4 payment. */
+
+export const CONSENT_VERSION = "2026-10-v1";
+const hasIdOf = (a) => !!(a && (a.regNo || (a.noRegNo && a.credential)));
+// where this therapist is in the buying steps
+export const addonStep = (a) => {
+  if (!a || !hasIdOf(a) || !a.signature) return "details";
+  if (!a.verified) return a.rejectNote ? "rejected" : "review";
+  if (!a.consentAt || a.consentVersion !== CONSENT_VERSION) return "consent";
+  return a.assessmentsTill && a.assessmentsTill > new Date() ? "active" : "payment";
+};
 
 const TERM_MONTHS = 6;
 // Razorpay calls, overridable in tests
@@ -17,15 +30,14 @@ export const addonPaymentSource = {
   fetchPayment: (id) => razorpayClient().payments.fetch(id),
 };
 
-// six more months, from today or from the current end date if still running. A free activation always
-// needs an admin check; a paid renewal keeps an earlier verification.
+// six more months, from today or from the current end date if still running. Approval and consent
+// come before payment, so activating keeps the approval.
 async function extendTerm(user, { source, amount = 0, paymentId = "" }) {
   const a = await TherapistAddon.findOne({ user }).lean();
   const from = a?.assessmentsTill && a.assessmentsTill > new Date() ? a.assessmentsTill : new Date();
   await TherapistAddon.updateOne({ user }, {
     $set: {
       assessmentsTill: (() => { const d = new Date(from); d.setMonth(d.getMonth() + TERM_MONTHS); return d; })(), lastSource: source, lastAmount: amount, lastPaymentId: paymentId, lastPaidAt: new Date(),
-      ...(source === "free" ? { verified: false, verifiedAt: null, verifiedBy: "" } : {}),
     },
   }, { upsert: true });
 }
@@ -49,7 +61,7 @@ export async function setDetails(user, { regNo, signature, noRegNo, credential }
   if (credential != null) { const v = String(credential).trim().slice(0, 160); if ((a?.credential || "") !== v) set.credential = v; }
   if (signature != null && (a?.signature || "") !== signature) set.signature = signature;
   if (!Object.keys(set).length) return false;
-  await TherapistAddon.updateOne({ user }, { $set: { ...set, verified: false, verifiedAt: null, verifiedBy: "" } }, { upsert: true });
+  await TherapistAddon.updateOne({ user }, { $set: { ...set, verified: false, verifiedAt: null, verifiedBy: "", rejectNote: "" } }, { upsert: true });
   return true;
 }
 export const setRegNo = (user, regNo) => setDetails(user, { regNo });
@@ -58,32 +70,50 @@ export const setRegNo = (user, regNo) => setDetails(user, { regNo });
 export const myAddons = expressAsyncHandler(async (req, res) => {
   const [a, p, t] = await Promise.all([TherapistAddon.findOne({ user: req.user._id }).lean(), getPricing(), Therapists.findOne({ user: req.user._id }).select("qualification license_number profile_type").lean()]);
   const till = a?.assessmentsTill || null;
-  res.json({ status: true, data: { assessments: { active: !!(till && till > new Date()), till, verified: !!a?.verified, regNo: a?.regNo || "", noRegNo: !!a?.noRegNo, credential: a?.credential || "", signature: a?.signature || "", ...p.addon }, therapistShare: p.therapistShare, tests: p.tests, profile: { qualification: t?.qualification || "", licenseNumber: t?.license_number || "", profileType: t?.profile_type || "" } } });
+  res.json({ status: true, data: { assessments: { active: !!(till && till > new Date()), till, verified: !!a?.verified, regNo: a?.regNo || "", noRegNo: !!a?.noRegNo, credential: t?.qualification || a?.credential || "", signature: a?.signature || "", rejectNote: a?.rejectNote || "", consentAt: a?.consentVersion === CONSENT_VERSION ? a?.consentAt || null : null, consentName: a?.consentName || "", step: addonStep(a), termMonths: TERM_MONTHS, ...p.addon }, therapistShare: p.therapistShare, tests: p.tests, profile: { qualification: t?.qualification || "", licenseNumber: t?.license_number || "", profileType: t?.profile_type || "" } } });
 });
 
-// POST /therapist-addon/details { regNo | noRegNo + credential, signature } — sent to CYT for verification
+// POST /therapist-addon/details { regNo | noRegNo, signature, credential? } — qualification comes from the profile;
+// `credential` is used (and saved to the profile) only when the profile has none — sent to CYT for verification
 export const saveAddonDetails = expressAsyncHandler(async (req, res) => {
   const t = await Therapists.findOne({ user: req.user._id }).select("qualification license_number").lean();
   const noRegNo = !!req.body?.noRegNo;
   const regNo = noRegNo ? "" : String(req.body?.regNo || "").trim();
-  const credential = String(req.body?.credential || t?.qualification || "").trim().slice(0, 160);
+  const credential = String(t?.qualification || req.body?.credential || "").trim().slice(0, 160);
   const signature = req.body?.signature;
   if (!noRegNo && regNo.length < 3) return res.status(400).json({ status: false, message: "Enter your RCI licence / registration number, or tick that you don't have one." });
-  if (credential.length < 2) return res.status(400).json({ status: false, message: "Enter your qualification (e.g. M.Phil Clinical Psychology)." });
+  if (credential.length < 2) return res.status(400).json({ status: false, message: "Choose your qualification." });
   if (!validSignature(signature)) return res.status(400).json({ status: false, message: "Add your signature (draw it or upload an image)." });
   const changed = await setDetails(req.user._id, { regNo, noRegNo, credential, signature });
   // fill empty profile fields with what was typed here
   const fill = {};
   if (regNo && !String(t?.license_number || "").trim()) fill.license_number = regNo;
-  if (!String(t?.qualification || "").trim()) fill.qualification = credential;
+  if (!String(t?.qualification || "").trim()) fill.qualification = credential; // picked here → saved to Settings → Profile
   if (Object.keys(fill).length) await Therapists.updateOne({ user: req.user._id }, { $set: fill });
-  res.json({ status: true, message: changed ? "Sent to CYT for verification — clients see you for assessments once it is verified." : "No changes — already sent." });
+  res.json({ status: true, message: changed ? "Sent to CYT for approval — you'll get an email once it's checked (usually within a working day)." : "No changes — already sent." });
+});
+
+// POST /therapist-addon/consent { agree: true, name } — informed consent, after approval and before payment
+export const saveAddonConsent = expressAsyncHandler(async (req, res) => {
+  const a = await TherapistAddon.findOne({ user: req.user._id }).lean();
+  if (!a?.verified) return res.status(400).json({ status: false, message: "Your details have to be approved by CYT first." });
+  const name = String(req.body?.name || "").trim().slice(0, 120);
+  if (req.body?.agree !== true) return res.status(400).json({ status: false, message: "Please tick that you agree to the consent." });
+  if (name.length < 3) return res.status(400).json({ status: false, message: "Type your full name to sign the consent." });
+  const ip = String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim().slice(0, 60);
+  await TherapistAddon.updateOne({ user: req.user._id }, { $set: { consentAt: new Date(), consentName: name, consentVersion: CONSENT_VERSION, consentIp: ip } });
+  res.json({ status: true, message: "Consent saved." });
 });
 
 // POST /therapist-addon/order — start the ₹499 payment (priced here, never by the browser)
 export const createAddonOrder = expressAsyncHandler(async (req, res) => {
   const u = await Users.findById(req.user._id).select("is_verified").lean();
   if (u?.is_verified !== 1) return res.status(403).json({ status: false, message: "Add-ons can be bought once your profile is approved." });
+  const a = await TherapistAddon.findOne({ user: req.user._id }).lean();
+  const step = addonStep(a);
+  if (step === "details" || step === "rejected") return res.status(400).json({ status: false, message: "Send your details for approval first." });
+  if (step === "review") return res.status(400).json({ status: false, message: "Your details are waiting for CYT approval — you can pay once they're approved." });
+  if (step === "consent") return res.status(400).json({ status: false, message: "Please accept the informed consent first." });
   const price = (await getPricing()).addon.price;
   if (price === 0) {
     await extendTerm(req.user._id, { source: "free" });
@@ -154,6 +184,7 @@ export const adminAddons = expressAsyncHandler(async (req, res) => {
         userId: r.user._id, name: r.user.name, email: r.user.email, phone: r.user.phone || "", profileType: typeOf[String(r.user._id)] || "",
         regNo: r.regNo || "", noRegNo: !!r.noRegNo, credential: r.credential || "", signature: r.signature || "", till: r.assessmentsTill, active: !!(r.assessmentsTill && r.assessmentsTill > new Date()),
         verified: !!r.verified, verifiedAt: r.verifiedAt, verifiedBy: r.verifiedBy, listed: !!(r.verified && (r.regNo || (r.noRegNo && r.credential)) && r.assessmentsTill && r.assessmentsTill > new Date()),
+        rejectNote: r.rejectNote || "", consentAt: r.consentVersion === CONSENT_VERSION ? r.consentAt : null, consentName: r.consentName || "", step: addonStep(r),
         lastSource: r.lastSource || "", lastAmount: r.lastAmount, lastPaymentId: r.lastPaymentId || "", lastPaidAt: r.lastPaidAt,
         payments: paid.map((o) => ({ amount: o.amount, paymentId: o.paymentId, at: o.createdAt })),
       };
@@ -161,20 +192,31 @@ export const adminAddons = expressAsyncHandler(async (req, res) => {
   });
 });
 
-// POST /admin/assessment-addons/:userId { action: "verify" | "unverify" | "revoke" }
+// POST /admin/assessment-addons/:userId { action: "verify" | "reject" (+ reason) | "unverify" | "revoke" }
 export const adminAddonAction = expressAsyncHandler(async (req, res) => {
   const a = await TherapistAddon.findOne({ user: req.params.userId });
   if (!a) return res.status(404).json({ status: false, message: "Not found." });
+  const u = await Users.findById(a.user).select("name email").lean();
   const who = req.user?.email || req.user?.name || "admin";
   const action = req.body?.action;
   if (action === "verify") {
     if (!(a.regNo || (a.noRegNo && a.credential))) return res.status(400).json({ status: false, message: "The therapist has not added a registration no. (or qualification) yet." });
-    a.verified = true; a.verifiedAt = new Date(); a.verifiedBy = who;
+    if (!a.signature) return res.status(400).json({ status: false, message: "The therapist has not added a signature yet." });
+    a.verified = true; a.verifiedAt = new Date(); a.verifiedBy = who; a.rejectNote = ""; a.reviewedAt = new Date();
+  } else if (action === "reject") {
+    const reason = String(req.body?.reason || "").trim().slice(0, 300);
+    if (reason.length < 3) return res.status(400).json({ status: false, message: "Write a short reason for the therapist." });
+    a.verified = false; a.verifiedAt = null; a.verifiedBy = ""; a.rejectNote = reason; a.reviewedAt = new Date();
   } else if (action === "unverify") {
     a.verified = false; a.verifiedAt = null; a.verifiedBy = "";
   } else if (action === "revoke") {
     a.assessmentsTill = null; a.verified = false; a.verifiedAt = null; a.verifiedBy = ""; a.lastSource = "revoked";
   } else return res.status(400).json({ status: false, message: "Unknown action." });
   await a.save();
-  res.json({ status: true, message: action === "verify" ? "Verified — clients can now book assessments with this therapist." : action === "revoke" ? "Add-on removed." : "Verification removed — hidden from clients." });
+  if ((action === "verify" || action === "reject") && u?.email) {
+    sendMail(u.email, action === "verify" ? "Clinical Assessments: details approved" : "Clinical Assessments: please update your details", "",
+      addonReviewMail({ name: u.name, approved: action === "verify", reason: a.rejectNote })).catch(() => {});
+  }
+  const active = a.assessmentsTill && a.assessmentsTill > new Date();
+  res.json({ status: true, message: action === "verify" ? (active ? "Approved — clients can now book assessments with this therapist." : "Approved — the therapist has been emailed to sign the consent and pay.") : action === "reject" ? "Sent back to the therapist with your reason." : action === "revoke" ? "Add-on removed." : "Approval removed — hidden from clients." });
 });
