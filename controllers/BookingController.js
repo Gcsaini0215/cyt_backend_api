@@ -40,7 +40,7 @@ const formatSessionMode = (t) =>
     String(t || "").toLowerCase()
   ] || (t ? String(t) : "—"));
 import { createMeetWithTimeout, isOnlineFormat, sessionWindow, deleteMeetEvent, moveMeetEvent, JOIN_EARLY_MIN } from "../helper/googleMeet.js";
-import { adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, sessionRescheduledMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
+import { sessionStartOtpMail, adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, sessionRescheduledMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
 import { pushToUsers } from "./PushController.js";
 import { notifyTherapists, therapistUserId } from "../services/therapistNotify.js";
 import { attachBookingAssessments } from "./AssessmentRequestController.js";
@@ -968,6 +968,7 @@ export const startSessionNow = expressAsyncHandler(async (req, res) => {
   if (b.payment_status !== "Paid" && !b.transaction) return res.status(400).json({ status: false, message: "This booking isn't paid yet." });
   if (b.status === SESSION_STATUS.STARTED) return res.json({ status: true, message: "Session already started.", data: b });
   if (b.status !== SESSION_STATUS.NEW) return res.status(400).json({ status: false, message: `Session is ${String(b.status).toLowerCase()}.` });
+  if (isInPerson(b)) return res.status(400).json({ status: false, message: "In-person sessions start with the code emailed to the client." });
   const w = sessionWindow(b.booking_date);
   const now = Date.now();
   if (now < w.opens) {
@@ -1083,6 +1084,29 @@ export const rescheduleSession = expressAsyncHandler(async (req, res) => {
       .catch(() => {});
   }
   res.json({ status: true, message: `Moved to ${newTime}. ${b.client?.email ? "The client has been emailed." : ""}${moved ? " Calendar updated." : ""}`.trim(), data: { _id: b._id, booking_date: b.booking_date } });
+});
+
+// In-person sessions: POST /start-session/send-code { bookingId } — emails the client a fresh 6-digit
+// code; the therapist asks the client for it and enters it in /start-session to start the session.
+const isInPerson = (b) => /in[-\s]?person|offline|clinic|centre|center/i.test(`${b?.format || ""} ${b?.session_type || ""}`);
+export const sendSessionStartCode = expressAsyncHandler(async (req, res) => {
+  const b = await Booking.findById(req.body?.bookingId).populate("client", "name email").populate({ path: "therapist", populate: { path: "user", select: "name" } });
+  if (!b) return res.status(404).json({ status: false, message: "Booking not found." });
+  if (!(await ownsBooking(req.user._id, { therapist: b.therapist?._id || b.therapist }))) return res.status(403).json({ status: false, message: "This booking isn't yours." });
+  if (b.status !== SESSION_STATUS.NEW) return res.status(400).json({ status: false, message: b.status === SESSION_STATUS.STARTED ? "Session already started." : "This session can't be started." });
+  if (!isInPerson(b)) return res.status(400).json({ status: false, message: "Start codes are only for in-person sessions." });
+  const at = new Date(b.booking_date).getTime();
+  if (Date.now() < at - 60 * 60 * 1000) return res.status(400).json({ status: false, message: "You can start this session from 1 hour before its time." });
+  if (Date.now() > at + 12 * 60 * 60 * 1000) return res.status(400).json({ status: false, message: "This session's time has passed." });
+  if (b.otp_sent_at && Date.now() - new Date(b.otp_sent_at).getTime() < 45 * 1000) return res.status(429).json({ status: false, message: "A code was just sent — please wait a few seconds before sending another." });
+  if (!b.client?.email) return res.status(400).json({ status: false, message: "The client has no email on file." });
+  b.otp = generate6DigitOTP();
+  b.otp_sent_at = new Date();
+  await b.save();
+  const ok = await sendMail(b.client.email, "Your session code — Choose Your Therapist", `Your session code is ${b.otp}. Share it with your psychologist to start your in-person session.`, sessionStartOtpMail({ name: b.client.name, therapistName: b.therapist?.user?.name, otp: b.otp }));
+  notifyClient(b.client._id, { type: "joined", title: "Your session code has been emailed", body: `${b.therapist?.user?.name || "Your psychologist"} is starting your in-person session — share the code from your email with them.`, link: "/client/my-bookings", ref: `startcode:${b._id}:${b.otp_sent_at.getTime()}` });
+  const masked = String(b.client.email).replace(/^(.{2}).*(@.*)$/, "$1•••$2");
+  res.json({ status: true, message: ok === false ? "Code generated, but the email may not have gone through — ask the client to check spam, or resend." : `Code sent to ${masked}.`, data: { sentTo: masked } });
 });
 
 export const startSession = expressAsyncHandler(async (req, res, next) => {

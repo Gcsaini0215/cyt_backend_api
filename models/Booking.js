@@ -93,6 +93,7 @@ const bookingSchema = new Schema({
   assessments: { type: [{ tool: String, fee: Number, _id: false }], default: [] },
   assessment_fee: { type: Number, default: 0 },
   assessment_therapist_share: { type: Number, default: 0 },
+  otp_sent_at: { type: Date, default: null }, // in-person: when the start code was last emailed to the client
   meet_link: { type: String, default: "" },
   calendar_event_id: { type: String, default: "" },
   // who clicked Join (through CYT) and when — both joined = session started

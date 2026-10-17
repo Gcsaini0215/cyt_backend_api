@@ -17,6 +17,7 @@ import {
   getBookingsForAdmin,
   saveTransactionId,
   startSession,
+  sendSessionStartCode,
   verifyRazorpayPayment,
 } from "../controllers/BookingController.js";
 import { isAuthCommon, isTherapist, hasPermission } from "../middlewares/authMiddleware.js";
@@ -48,6 +49,7 @@ router.post("/create-razorpay-order", createRazorpayOrder);
 router.post("/verify-razorpay-payment", verifyRazorpayPayment);
 
 router.post("/start-session",isTherapist, startSession);
+router.post("/start-session/send-code", isTherapist, sendSessionStartCode);
 router.post("/start-session-now", isTherapist, startSessionNow);
 router.post("/bookings/:id/join", isAuthCommon, joinSession);
 router.post("/bookings/:id/reschedule", isTherapist, rescheduleSession);

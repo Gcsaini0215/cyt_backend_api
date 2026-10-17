@@ -168,6 +168,13 @@ export const newsletterSubscriptionOtpEmail = (_email, otp) =>
 export const therapistVerificationEmail = (_email, otp) =>
   otpMail({ title: "Verify your email", intro: "Your application is under review. Verify your email to continue onboarding.", otp, eyebrowText: "Therapist onboarding", eyebrowColor: INFO });
 
+// in-person session: the client reads this code to their psychologist to start the session
+export const sessionStartOtpMail = ({ name, therapistName, otp }) =>
+  otpMail({
+    title: "Your session code", greetingName: name, otp, eyebrowText: "In-person session",
+    intro: `Your in-person session with ${esc(therapistName || "your psychologist")} is about to start. Share this code with them only when you are with them — it confirms the session has started.`,
+  });
+
 export const otpVerificationEmail = (otp) =>
   otpMail({ title: "Verify to continue", intro: "Use this one-time code to verify your email and continue.", otp, eyebrowText: "Verification code" });
 
