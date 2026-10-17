@@ -10,7 +10,7 @@ import QRCode from "qrcode";
 const SITE = "https://www.chooseyourtherapist.in";
 const verifyUrl = (id) => `${SITE}/verify-report/${id}`;
 const initialsOf = (name = "") => String(name).trim().split(/\s+/).filter(Boolean).map((w) => `${w[0].toUpperCase()}.`).join(" ") || "—";
-import { setRegNo } from "./TherapistAddonController.js";
+
 
 /* Clinical assessments booked with a session (see models/AssessmentRequest.js). The client answers on
    CYT; the score is worked out here, on the server, from the published scoring. The psychologist sees
@@ -121,8 +121,8 @@ export const reportRequest = expressAsyncHandler(async (req, res) => {
   // earlier results of the same test for this client (progress)
   const earlier = await AssessmentRequest.find({ client: r.client?._id, tool: r.tool, _id: { $ne: r._id }, status: { $in: isTherapist ? ["done", "released"] : ["released"] }, doneAt: { $lt: r.doneAt } })
     .sort({ doneAt: -1 }).limit(5).select("doneAt result.score result.level").lean();
-  const addon = isTherapist ? await TherapistAddon.findOne({ user: r.therapistUser._id }).select("regNo signature verified noRegNo credential").lean() : null;
-  const signer = r.signedBy || { name: r.therapistUser?.name || "", profileType: r.therapist?.profile_type || "Psychologist", regNo: addon?.regNo || "", credential: addon?.credential || "", signature: addon?.verified ? addon.signature || "" : "" };
+  const addon = isTherapist ? await TherapistAddon.findOne({ user: r.therapistUser._id }).select("regNo signature verified verifiedAt noRegNo credential").lean() : null;
+  const signer = r.signedBy || signerOf(r.therapistUser?.name, r.therapist?.profile_type, addon);
   res.json({
     status: true,
     data: {
@@ -138,7 +138,18 @@ export const reportRequest = expressAsyncHandler(async (req, res) => {
   });
 });
 
-// POST /assessment-requests/:id/notes { note, notes, regNo, release? } — therapist: save notes (and release)
+// the psychologist block printed on a report: only details CYT approved (Assessments add-on) are
+// printed as verified; the signature prints only once approved. Frozen into signedBy on release.
+function signerOf(name, profileType, addon) {
+  const ok = !!addon?.verified;
+  return {
+    name: name || "", profileType: profileType || "Psychologist",
+    credential: addon?.credential || "", regNo: addon?.noRegNo ? "" : addon?.regNo || "", noRegNo: !!addon?.noRegNo,
+    signature: ok ? addon?.signature || "" : "", verified: ok, verifiedAt: ok ? addon?.verifiedAt || null : null,
+  };
+}
+
+// POST /assessment-requests/:id/notes { note, notes, release? } — therapist: save notes (and release)
 export const releaseRequest = expressAsyncHandler(async (req, res) => {
   if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid request." });
   const r = await AssessmentRequest.findOne({ _id: req.params.id, therapistUser: req.user._id }).populate("therapist", "profile_type");
@@ -147,12 +158,11 @@ export const releaseRequest = expressAsyncHandler(async (req, res) => {
   const b = req.body || {};
   if (b.note != null) r.note = String(b.note).trim().slice(0, 1000);
   if (b.notes) { r.notes = cleanNotes(b.notes); r.markModified("notes"); }
-  if (b.regNo != null && String(b.regNo).trim()) await setRegNo(req.user._id, b.regNo);
   const release = b.release !== false;
   const first = release && r.status !== "released";
   if (release) {
-    const addon = await TherapistAddon.findOne({ user: req.user._id }).select("regNo signature verified noRegNo credential").lean();
-    r.signedBy = { name: req.user.name || "", profileType: r.therapist?.profile_type || "Psychologist", regNo: addon?.regNo || "", credential: addon?.credential || "", signature: addon?.verified ? addon.signature || "" : "" };
+    const addon = await TherapistAddon.findOne({ user: req.user._id }).select("regNo signature verified verifiedAt noRegNo credential").lean();
+    r.signedBy = signerOf(req.user.name, r.therapist?.profile_type, addon);
     r.markModified("signedBy");
     r.status = "released"; if (first) r.releasedAt = new Date();
   }
@@ -179,7 +189,7 @@ export const verifyReport = expressAsyncHandler(async (req, res) => {
       reportNo: `CYT-AR-${String(r._id).slice(-6).toUpperCase()}`, test: nameOf(r.tool), tool: r.tool,
       client: initialsOf(r.client?.name), completedAt: r.doneAt, releasedAt: r.releasedAt,
       level: r.result?.level || "", score: r.result?.score ?? null, max: r.result?.max ?? null,
-      psychologist: { name: sb.name || r.therapistUser?.name || "", profileType: sb.profileType || "", regNo: sb.regNo || "", credential: sb.credential || "" },
+      psychologist: { name: sb.name || r.therapistUser?.name || "", profileType: sb.profileType || "", regNo: sb.regNo || "", noRegNo: !!sb.noRegNo, credential: sb.credential || "", verified: !!sb.verified, verifiedAt: sb.verifiedAt || null },
     },
   });
 });
