@@ -107,10 +107,14 @@ const bookingSchema = new Schema({
   referral_discount: { type: Number, default: 0 },
   credit_used: { type: Number, default: 0 },
   credit_settled: { type: Boolean, default: false },
+  // the therapist's own coupon used on this booking (helper/coupon.js counts paid bookings as its uses)
+  coupon_id: { type: Schema.Types.ObjectId, ref: "Coupon", default: null },
+  coupon_code: { type: String, default: "" },
 });
 
 // the therapist / client portals list bookings newest-first by these fields
 bookingSchema.index({ therapist: 1, _id: -1 });
 bookingSchema.index({ client: 1, _id: -1 });
+bookingSchema.index({ coupon_id: 1 });
 
 export default mongoose.model("Booking", bookingSchema);

@@ -46,6 +46,7 @@ import { notifyTherapists, therapistUserId } from "../services/therapistNotify.j
 import { attachBookingAssessments } from "./AssessmentRequestController.js";
 import { assessmentsActive } from "./TherapistAddonController.js";
 import { getPricing } from "../helper/assessmentPricing.js";
+import { findUsableCoupon } from "../helper/coupon.js";
 
 export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
   const validateSchema = Joi.object({
@@ -264,6 +265,12 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       const ref = await resolveReferral({ code: req.body.referral_code, email: user.email });
       if (ref && !ref.error) { referral_code = ref.referrer.referral_code; referral_discount = REFERRAL_AMOUNT; }
     }
+    // the therapist's own coupon — recorded on the booking; it counts as used once the booking is paid
+    let coupon_id = null, coupon_code = "";
+    if (req.body.coupon && !referral_code) {
+      const found = await findUsableCoupon(therapist, req.body.coupon);
+      if (found.coupon) { coupon_id = found.coupon._id; coupon_code = found.coupon.code; }
+    }
     const wantCredit = Math.max(0, Number(req.body.credit_used) || 0);
     if (wantCredit && is_logged_in) credit_used = Math.min(wantCredit, Number(user.referral_credit) || 0);
 
@@ -308,6 +315,8 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         referral_code,
         referral_discount,
         credit_used,
+        coupon_id,
+        coupon_code,
         assessments: assessmentLines,
         assessment_fee: assessmentFee,
         assessment_therapist_share: assessmentShare,

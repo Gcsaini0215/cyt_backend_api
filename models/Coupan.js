@@ -49,6 +49,17 @@ const couponSchema = new Schema(
       type: Boolean,
       default: true,
     },
+    // short line clients see with the offer, e.g. "First session offer"
+    title: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    // shown in the offer pop-up on the therapist's public profile and in the booking page's offer list
+    show_on_profile: {
+      type: Boolean,
+      default: true,
+    },
   },
   { timestamps: true }
 );
