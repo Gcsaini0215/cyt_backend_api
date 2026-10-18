@@ -2,13 +2,19 @@ import mongoose from "mongoose";
 import Coupon from "../models/Coupan.js";
 import Booking from "../models/Booking.js";
 import Therapists from "../models/Therapists.js";
+import { couponsUnlocked } from "./couponAddon.js";
 
 // Therapist coupons are saved with the therapist's USER id (req.user._id when they create one), while
 // the booking pages know the therapist PROFILE id (Therapists._id). Match either, so both work.
-export const couponOwnerIds = async (therapistId) => {
-  if (!mongoose.Types.ObjectId.isValid(therapistId)) return [];
+export const couponOwnerIds = async (therapistId) => (await couponOwner(therapistId)).ids;
+
+// { ids: [profile id, user id], userId } — userId is whose Coupons upgrade decides if the coupons work
+export const couponOwner = async (therapistId) => {
+  if (!mongoose.Types.ObjectId.isValid(therapistId)) return { ids: [], userId: null };
   const th = await Therapists.findById(therapistId).select("user").lean();
-  return th ? [th._id, th.user].filter(Boolean) : [new mongoose.Types.ObjectId(therapistId)];
+  if (th) return { ids: [th._id, th.user].filter(Boolean), userId: th.user || null };
+  const id = new mongoose.Types.ObjectId(therapistId);
+  return { ids: [id], userId: id };
 };
 
 // A coupon is "used" once per PAID booking that carries it — applying it on the booking page doesn't count.
@@ -47,10 +53,12 @@ const STATE_MESSAGE = {
 export const findUsableCoupon = async (therapistId, rawCode, applyFor = "Therapist") => {
   const code = String(rawCode || "").trim().toUpperCase();
   if (!code) return { error: "Please enter a coupon code" };
-  const owners = await couponOwnerIds(therapistId);
+  const { ids: owners, userId } = await couponOwner(therapistId);
   if (!owners.length) return { error: "Invalid coupon code" };
   const coupon = await Coupon.findOne({ therapist: { $in: owners }, code }).lean();
   if (!coupon) return { error: "Invalid coupon code" };
+  // the therapist's coupons only work while their Coupons upgrade is unlocked
+  if (!(await couponsUnlocked(userId))) return { error: "This coupon is not active right now" };
   if ((coupon.coupon_for || "Therapist") !== applyFor) return { error: "This coupon cannot be used here" };
   const used = (await usedCounts([coupon._id]))[String(coupon._id)] || 0;
   const state = couponState(coupon, used);

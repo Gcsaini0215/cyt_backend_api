@@ -29,6 +29,14 @@ const TherapistAddonSchema = new Schema(
     lastAmount: { type: Number, default: null },
     lastPaymentId: { type: String, default: "" },
     lastPaidAt: { type: Date, default: null },
+    // "Coupons" upgrade: one-time, lifetime (helper/couponAddon.js). Without it a therapist can't make or
+    // change coupons and their coupons don't work for clients.
+    couponsUnlocked: { type: Boolean, default: false },
+    couponsSource: { type: String, default: "" }, // "paid" | "free" | "revoked"
+    couponsAt: { type: Date, default: null },
+    couponsBy: { type: String, default: "" }, // admin who granted / revoked it
+    couponsAmount: { type: Number, default: null },
+    couponsPaymentId: { type: String, default: "" },
   },
   { timestamps: true }
 );
@@ -38,9 +46,12 @@ const TherapistAddonOrderSchema = new Schema(
   {
     orderId: { type: String, required: true, unique: true },
     user: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    addon: { type: String, enum: ["assessments"], default: "assessments" },
+    addon: { type: String, enum: ["assessments", "coupons"], default: "assessments" },
     amount: { type: Number, required: true }, // rupees
     status: { type: String, enum: ["pending", "paid"], default: "pending" },
+    // "free" = not a Razorpay payment: CYT gave it free (admin grant or a ₹0 price) — kept for the history
+    kind: { type: String, enum: ["paid", "free"], default: "paid" },
+    grantedBy: { type: String, default: "" },
     paymentId: { type: String, default: "" },
     paidAt: { type: Date, default: null },
     periodFrom: { type: Date, default: null }, // the 6 months this payment bought (for the receipt)

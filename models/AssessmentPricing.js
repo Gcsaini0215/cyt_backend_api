@@ -25,6 +25,7 @@ const AssessmentPricingSchema = new Schema(
     addonOfferLabel: { type: String, default: "" },
     addonOfferTill: { type: Date, default: null },
     therapistShare: { type: Number, default: null, min: 0, max: 1 },
+    couponsPrice: { type: Number, default: null, min: 0 }, // therapist "Coupons" upgrade, one-time (null = ₹399)
     updatedBy: { type: String, default: "" },
   },
   { timestamps: true }

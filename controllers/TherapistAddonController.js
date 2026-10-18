@@ -1,5 +1,6 @@
 import expressAsyncHandler from "express-async-handler";
 import crypto from "crypto";
+import mongoose from "mongoose";
 import Users from "../models/Users.js";
 import Therapists from "../models/Therapists.js";
 import TherapistAddon, { TherapistAddonOrder } from "../models/TherapistAddon.js";
@@ -8,6 +9,7 @@ import { getPricing } from "../helper/assessmentPricing.js";
 import { sendMail } from "../helper/mailer.js";
 import { addonReviewMail } from "../services/mailTemplates.js";
 import { notifyTherapists } from "../services/therapistNotify.js";
+import { recordFreeAddon } from "../helper/planHistory.js";
 
 /* "Clinical Assessments" add-on: a 6-month upgrade (price + offers set in the admin panel, default ₹499)
    bought by the therapist on Razorpay. While it is active, clients can book clinical assessments with
@@ -79,7 +81,7 @@ export const myAddons = expressAsyncHandler(async (req, res) => {
   const [a, p, t, orders] = await Promise.all([
     TherapistAddon.findOne({ user: req.user._id }).lean(), getPricing(),
     Therapists.findOne({ user: req.user._id }).select("qualification license_number profile_type").lean(),
-    TherapistAddonOrder.find({ user: req.user._id, status: "paid" }).sort({ createdAt: -1 }).limit(24).lean(),
+    TherapistAddonOrder.find({ user: req.user._id, status: "paid", addon: { $ne: "coupons" }, kind: { $ne: "free" } }).sort({ createdAt: -1 }).limit(24).lean(),
   ]);
   const payments = orders.map((o) => ({ receiptNo: addonReceiptNo(o), amount: o.amount, paymentId: o.paymentId, orderId: o.orderId, paidAt: o.paidAt || o.updatedAt, from: o.periodFrom, till: o.periodTill }));
   const till = a?.assessmentsTill || null;
@@ -129,7 +131,8 @@ export const createAddonOrder = expressAsyncHandler(async (req, res) => {
   if (step === "consent") return res.status(400).json({ status: false, message: "Please accept the informed consent first." });
   const price = (await getPricing()).addon.price;
   if (price === 0) {
-    await extendTerm(req.user._id, { source: "free" });
+    const term = await extendTerm(req.user._id, { source: "free" });
+    await recordFreeAddon(req.user._id, "assessments", { from: term.from, till: term.till, by: "free price" });
     return res.json({ status: true, data: { free: true }, message: "Clinical Assessments activated." });
   }
   try {
@@ -183,13 +186,19 @@ export const assessmentProviders = expressAsyncHandler(async (req, res) => {
 });
 
 // ── admin ──────────────────────────────────────────────────────────────────────────────────────
-// GET /admin/assessment-addons — every therapist with the add-on (or a reg. no. waiting for a check)
+// GET /admin/assessment-addons — every approved therapist (so an admin can give the add-on free to anyone),
+// plus anyone with add-on details; therapists who never started show as step "details" with nothing filled
 export const adminAddons = expressAsyncHandler(async (req, res) => {
-  const rows = await TherapistAddon.find({ $or: [{ assessmentsTill: { $ne: null } }, { regNo: { $nin: ["", null] } }, { credential: { $nin: ["", null] } }, { signature: { $nin: ["", null] } }] }).populate("user", "name email phone").sort({ updatedAt: -1 }).lean();
+  const [withAddon, approved] = await Promise.all([
+    TherapistAddon.find({ $or: [{ assessmentsTill: { $ne: null } }, { regNo: { $nin: ["", null] } }, { credential: { $nin: ["", null] } }, { signature: { $nin: ["", null] } }] }).populate("user", "name email phone").sort({ updatedAt: -1 }).lean(),
+    Users.find({ role: 1, is_verified: 1 }).select("name email phone").sort({ name: 1 }).lean(),
+  ]);
+  const seen = new Set(withAddon.map((r) => String(r.user?._id)));
+  const rows = [...withAddon, ...approved.filter((u) => !seen.has(String(u._id))).map((u) => ({ user: u }))];
   const ids = rows.map((r) => r.user?._id).filter(Boolean);
   const [ther, orders] = await Promise.all([
     Therapists.find({ user: { $in: ids } }).select("user profile_type").lean(),
-    TherapistAddonOrder.find({ user: { $in: ids }, status: "paid" }).select("user amount paymentId createdAt").sort({ createdAt: -1 }).lean(),
+    TherapistAddonOrder.find({ user: { $in: ids }, status: "paid", addon: { $ne: "coupons" }, kind: { $ne: "free" } }).select("user amount paymentId createdAt").sort({ createdAt: -1 }).lean(),
   ]);
   const typeOf = Object.fromEntries(ther.map((t) => [String(t.user), t.profile_type]));
   res.json({
@@ -208,8 +217,19 @@ export const adminAddons = expressAsyncHandler(async (req, res) => {
   });
 });
 
-// POST /admin/assessment-addons/:userId { action: "verify" | "reject" (+ reason) | "unverify" | "revoke" }
+// POST /admin/assessment-addons/:userId { action: "grant" | "verify" | "reject" (+ reason) | "unverify" | "revoke" }
 export const adminAddonAction = expressAsyncHandler(async (req, res) => {
+  // grant: 6 months free for any approved therapist (they still send details, get approved and sign the
+  // consent before clients see them — but they never pay for this term)
+  if (req.body?.action === "grant") {
+    if (!mongoose.Types.ObjectId.isValid(req.params.userId)) return res.status(400).json({ status: false, message: "Invalid therapist." });
+    const t = await Users.findOne({ _id: req.params.userId, role: 1 }).select("name").lean();
+    if (!t) return res.status(404).json({ status: false, message: "Therapist not found." });
+    const term = await extendTerm(t._id, { source: "free" });
+    await recordFreeAddon(t._id, "assessments", { from: term.from, till: term.till, by: req.user?.email || req.user?.name || "admin" });
+    notifyTherapists([t._id], { type: "addon", title: "Clinical Assessments: free for 6 months", body: "CYT has given you the add-on free. Add your details and sign the consent to start taking assessments.", link: "/therapist-questionnaires?buy=1", ref: `addon-grant-${Date.now()}` });
+    return res.json({ status: true, message: `Free until ${term.till.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })} for ${t.name}.` });
+  }
   const a = await TherapistAddon.findOne({ user: req.params.userId });
   if (!a) return res.status(404).json({ status: false, message: "Not found." });
   const u = await Users.findById(a.user).select("name email").lean();

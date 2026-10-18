@@ -4,7 +4,16 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 import Coupon from "../models/Coupan.js";
 import { resolveReferral, applicantEmail, REFERRAL_AMOUNT } from "../helper/referral.js";
-import { couponOwnerIds, usedCounts, couponState, discountOf, findUsableCoupon } from "../helper/coupon.js";
+import { couponOwner, usedCounts, couponState, discountOf, findUsableCoupon } from "../helper/coupon.js";
+import { couponsUnlocked } from "../helper/couponAddon.js";
+
+// making or changing coupons needs the Coupons upgrade (CouponAddonController); 402 so the page can show the offer
+const LOCKED = "Unlock Coupons (one-time upgrade) to create and manage coupons.";
+const requireUnlocked = async (req, res) => {
+  if (await couponsUnlocked(req.user._id)) return true;
+  res.status(402).json({ status: false, locked: true, message: LOCKED });
+  return false;
+};
 
 // Therapists create, edit, pause and delete their own coupons (saved under their user id). Clients see the
 // ones marked "show on profile" in an offer pop-up on the profile and apply them on the booking page.
@@ -69,6 +78,7 @@ const withUsage = async (list) => {
 const codeTaken = (code, exceptId) => Coupon.exists({ code, ...(exceptId ? { _id: { $ne: exceptId } } : {}) });
 
 export const CreateCoupan = expressAsyncHandler(async (req, res, next) => {
+  if (!(await requireUnlocked(req, res))) return;
   const { error, value } = couponSchema(false).validate(req.body, { stripUnknown: true });
   if (error) return fail(res, next, 400, error.details[0].message);
   if (await codeTaken(value.code)) return fail(res, next, 400, "This code is already taken — try another or tap Generate.");
@@ -90,6 +100,7 @@ export const GetCoupan = expressAsyncHandler(async (req, res, next) => {
 });
 
 export const UpdateCoupan = expressAsyncHandler(async (req, res, next) => {
+  if (!(await requireUnlocked(req, res))) return;
   const coupon = await ownCoupon(req);
   if (!coupon) return fail(res, next, 404, "Coupon not found.");
   const { error, value } = couponSchema(true).validate(req.body, { stripUnknown: true });
@@ -104,6 +115,7 @@ export const UpdateCoupan = expressAsyncHandler(async (req, res, next) => {
 });
 
 export const ToggleSatus = expressAsyncHandler(async (req, res, next) => {
+  if (!(await requireUnlocked(req, res))) return;
   const coupon = await ownCoupon(req);
   if (!coupon) return fail(res, next, 404, "Coupon not found.");
   coupon.is_active = !coupon.is_active;
@@ -134,8 +146,8 @@ export const SuggestCoupon = expressAsyncHandler(async (req, res) => {
 
 // GET /coupon/public/:therapistId — the offers a client can use right now (profile pop-up, booking page)
 export const PublicCoupons = expressAsyncHandler(async (req, res) => {
-  const owners = await couponOwnerIds(req.params.therapistId);
-  if (!owners.length) return res.status(200).json({ status: true, data: [] });
+  const { ids: owners, userId } = await couponOwner(req.params.therapistId);
+  if (!owners.length || !(await couponsUnlocked(userId))) return res.status(200).json({ status: true, data: [] });
   const now = new Date();
   const list = await Coupon.find({
     therapist: { $in: owners }, coupon_for: "Therapist", is_active: true, show_on_profile: { $ne: false },
