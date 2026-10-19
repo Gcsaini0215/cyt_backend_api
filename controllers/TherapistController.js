@@ -10,6 +10,7 @@ import mongoose from "mongoose";
 import Workshop from "../models/Workshop.js";
 import Review from "../models/Review.js";
 import Booking from "../models/Booking.js";
+import { bookingSplit } from "../helper/payoutSplit.js";
 import WorkshopBooking from "../models/WorkshopBooking.js";
 import Transaction from "../models/Transaction.js";
 import FavriouteTherapist from "../models/FavriouteTherapist.js";
@@ -564,12 +565,12 @@ export const getDashboardData = expressAsyncHandler(async (req, res, next) => {
       ...(since && { booking_date: { $gte: since } }),
     })
       .populate("client", "name email phone profile")
+      .populate("transaction", "amount")
       .sort({ _id: -1 })
       .lean();
 
-    const appointmentRevenue = bookings.reduce((sum, booking) => {
-      return sum + (booking.amount ? parseFloat(booking.amount.toString()) : 0);
-    }, 0);
+    // the therapist's 70% of each paid session (what the client paid, less CYT's share — helper/payoutSplit.js)
+    const appointmentRevenue = bookings.reduce((sum, booking) => sum + (booking.status === "Cancelled" ? 0 : bookingSplit(booking).therapist), 0);
 
     const workshops = await Workshop.find({ post_by: therapistProfile._id });
     const workshopIds = workshops.map(w => w._id);

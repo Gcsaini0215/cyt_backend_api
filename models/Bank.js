@@ -8,8 +8,9 @@ const BankSchema = new Schema(
       default: null,
     },
     ac_number: {
-      type: Number,
+      type: String, // was Number, which dropped leading zeros — payouts need the number exactly as typed
       default: null,
+      trim: true,
     },
     ifsc: {
       type: String,

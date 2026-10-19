@@ -110,11 +110,26 @@ const bookingSchema = new Schema({
   // the therapist's own coupon used on this booking (helper/coupon.js counts paid bookings as its uses)
   coupon_id: { type: Schema.Types.ObjectId, ref: "Coupon", default: null },
   coupon_code: { type: String, default: "" },
+  // a CYT Noida centre appointment shown here too (helper/noidaBookingSync.js) — ₹0, the client paid CYT
+  source: { type: String, default: "" }, // "noida"
+  noida_appointment: { type: Schema.Types.ObjectId, ref: "NoidaAppointment", default: undefined },
+  noida_client_code: { type: String, default: "" },
+  // what the client actually paid CYT for it — shown on the dashboards + invoice, never counted as therapist earning
+  noida_amount: { type: Number, default: undefined },
+  noida_fee: { type: Number, default: 0 },       // platform fee inside noida_amount
+  noida_discount: { type: Number, default: 0 },
+  noida_paid_via: { type: String, default: "" },
+  // what this one session is worth for the therapist's 70% (no platform fee): the session fee, or one session's
+  // share of a package — a package session is ₹0 at booking, and a package's first booking carries the whole package
+  noida_session_value: { type: Number, default: undefined },
+  // the therapist payout that covered this session (Admin → Payouts); null = not paid out yet
+  payout_id: { type: Schema.Types.ObjectId, ref: "TherapistPayout", default: null }, // "Online (Razorpay)" / "UPI QR" / "Cash" / "Package session"
 });
 
 // the therapist / client portals list bookings newest-first by these fields
 bookingSchema.index({ therapist: 1, _id: -1 });
 bookingSchema.index({ client: 1, _id: -1 });
 bookingSchema.index({ coupon_id: 1 });
+bookingSchema.index({ noida_appointment: 1 }, { unique: true, sparse: true });
 
 export default mongoose.model("Booking", bookingSchema);

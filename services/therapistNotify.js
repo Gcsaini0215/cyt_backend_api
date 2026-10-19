@@ -63,6 +63,10 @@ export async function therapistUserId(therapistId) {
   return t?.user || null;
 }
 
+// a booking was added / changed / removed → that therapist's open portal tabs re-read their list at once
+// (no saved notification — just "refresh now")
+export const therapistBookingsChanged = (userId) => { if (userId) send(userId, "bookings", { at: Date.now() }); };
+
 // read state changed on one device → the other open tabs update their badge
 export const emitRead = (userId, ids) => send(userId, "read", { ids: ids || "all" });
 

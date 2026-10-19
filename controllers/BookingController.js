@@ -1,6 +1,8 @@
 import expressAsyncHandler from "express-async-handler";
 import Joi from "joi";
 import Booking from "../models/Booking.js";
+import NoidaAppointment from "../models/NoidaAppointment.js";
+import { bookingSplit } from "../helper/payoutSplit.js";
 import mongoose from "mongoose";
 import Therapists from "../models/Therapists.js";
 import { generate6DigitOTP, generateQrCode } from "../helper/generate.js";
@@ -861,6 +863,15 @@ export const getBookings = expressAsyncHandler(async (req, res, next) => {
       .sort({ _id: -1 })
       .exec();
 
+    // the therapist sees what they earn from each session: 70% of the session amount (helper/payoutSplit.js)
+    if (req.user.role === 1) {
+      result = result.map((b) => {
+        const o = b.toObject();
+        const sp = bookingSplit(o);
+        return { ...o, therapist_share: sp.therapist, platform_share: sp.platform, client_paid: sp.paid, share_pct: sp.pct };
+      });
+    }
+
     res.status(201).json({
       status: true,
       message: "Fetched successfully.",
@@ -1065,6 +1076,7 @@ export const rescheduleSession = expressAsyncHandler(async (req, res) => {
   if (!b) return res.status(404).json({ status: false, message: "Booking not found." });
   if (!(await ownsBooking(req.user._id, { therapist: b.therapist._id }))) return res.status(403).json({ status: false, message: "This booking isn't yours." });
   if (b.status !== SESSION_STATUS.NEW) return res.status(400).json({ status: false, message: `Only upcoming sessions can be rescheduled (this one is ${String(b.status).toLowerCase()}).` });
+  if (b.source === "noida") return res.status(400).json({ status: false, message: "This is a CYT Noida centre session — to change its time, please ask the Noida desk (+91 80777 57951)." });
   const clash = await Booking.findOne({
     _id: { $ne: b._id }, therapist: b.therapist._id, status: { $nin: ["Cancelled", "Completed"] },
     booking_date: { $gt: new Date(when.getTime() - 60 * 60000), $lt: new Date(when.getTime() + 60 * 60000) },
@@ -1204,6 +1216,9 @@ export const EndSession = expressAsyncHandler(async (req, res, next) => {
     result.session_completed_at = new Date();
     result.status = SESSION_STATUS.COMPLETED;
     await result.save();
+    if (result.noida_appointment) {
+      await NoidaAppointment.updateOne({ _id: result.noida_appointment, attendance: { $in: ["", "arrived"] } }, { $set: { attendance: "completed", attendanceAt: new Date() } }).catch(() => {});
+    }
     notifyClient(result.client, {
       type: "completed", title: "Session completed",
       body: "How did it go? Leave a quick review and book your next session.", link: "/my-dashboard", ref: `completed:${result._id}`,
@@ -1224,7 +1239,7 @@ export const EndSession = expressAsyncHandler(async (req, res, next) => {
 
 export const getBookingsForAdmin = expressAsyncHandler(async (req, res, next) => {
   try {
-    let result = await Booking.find({})
+    let result = await Booking.find({ source: { $ne: "noida" } })
       .populate({
         path: "client",
         select: "name email phone profile age gender",

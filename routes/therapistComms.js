@@ -4,7 +4,7 @@ import {
   getInbox, readAnnouncement, completeAction, myPayouts, getPrefs, savePrefs, sendFeedback, myFeedback,
   adminTherapistOptions, adminListAnnouncements, adminCreateAnnouncement, adminDeleteAnnouncement, adminAnnouncementReads,
   adminListActions, adminCreateActions, adminUpdateAction,
-  adminListPayouts, adminCreatePayout, adminUpdatePayout, adminDeletePayout,
+  adminListPayouts, adminPayoutBookings, adminInitiateBookingPayout, adminPayoutPayInfo, adminSendPayout, adminSyncPayout, adminDeleteSessionBooking, adminCreatePayout, adminUpdatePayout, adminDeletePayout,
   adminListFeedback, adminReplyFeedback, adminCommsSummary,
 } from "../controllers/TherapistCommsController.js";
 
@@ -32,6 +32,12 @@ router.get("/admin/therapist-comms/actions", admin, adminListActions);
 router.post("/admin/therapist-comms/actions", admin, adminCreateActions);
 router.patch("/admin/therapist-comms/actions/:id", admin, adminUpdateAction);
 router.get("/admin/therapist-comms/payouts", admin, adminListPayouts);
+router.get("/admin/therapist-comms/payout-bookings", admin, adminPayoutBookings);
+router.post("/admin/therapist-comms/payout-bookings/:id/initiate", admin, adminInitiateBookingPayout);
+router.delete("/admin/therapist-comms/payout-bookings/:id", admin, adminDeleteSessionBooking);
+router.get("/admin/therapist-comms/payouts/:id/pay-info", admin, adminPayoutPayInfo);
+router.post("/admin/therapist-comms/payouts/:id/send", admin, adminSendPayout);
+router.post("/admin/therapist-comms/payouts/:id/sync", admin, adminSyncPayout);
 router.post("/admin/therapist-comms/payouts", admin, adminCreatePayout);
 router.patch("/admin/therapist-comms/payouts/:id", admin, adminUpdatePayout);
 router.delete("/admin/therapist-comms/payouts/:id", admin, adminDeletePayout);

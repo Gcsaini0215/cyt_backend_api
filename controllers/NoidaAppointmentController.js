@@ -10,6 +10,7 @@ import NoidaPackage from "../models/NoidaPackage.js";
 import { resolveCoupon, normalizeCouponCode } from "../helper/noidaCoupon.js";
 import { ensureClientCode, ensureBackfilled, phoneTailRegex, samePhone } from "../helper/noidaClient.js";
 import { resolveOfferedTherapist } from "../helper/noidaTherapist.js";
+import { syncNoidaBooking, removeNoidaBookings, reconcileNoidaBookings } from "../helper/noidaBookingSync.js";
 import { requestReviewByEmail } from "./NoidaReviewController.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import Lead from "../models/Lead.js";
@@ -413,6 +414,7 @@ const rescheduleHandler = ({ byAdmin }) => expressAsyncHandler(async (req, res, 
       return next(new Error("This session has already been rescheduled. To change it again, please WhatsApp us on +91 80777 57951."));
     }
     appointment.set(moved.toObject());
+    syncNoidaBooking(moved);
 
     // Notify whoever owns this booking (assignee if set, else the fixed inbox) —
     // same pattern as a brand-new booking, just framed as a reschedule.
@@ -739,6 +741,7 @@ export const deleteNoidaClient = expressAsyncHandler(async (req, res, next) => {
     return res.status(400).json({ status: false, message: "A valid 10-digit phone number is required." });
   }
   try {
+    await removeNoidaBookings((await NoidaAppointment.find({ phone }).select("_id").lean()).map((a) => a._id));
     const [appts, credits, receptionClients] = await Promise.all([
       NoidaAppointment.deleteMany({ phone }),
       NoidaClientCredit.deleteMany({ phone }),
@@ -797,6 +800,10 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
   // Newer clients send the full booking with the order. Refuse up front if
   // that slot can't be booked, so nobody is charged for a slot that's gone —
   // and remember what they were booking so the webhook can finish (or refund) it.
+  if (type === "new" && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(req.body.email || "").trim())) {
+    res.status(400);
+    return next(new Error("Please enter your email — it's your login to see this booking."));
+  }
   const { name, age, email, concern, date, slot } = req.body;
   const bookingSent = !!(name?.trim() && /^\d{10}$/.test(phone || "") && isValidDateStr(date) && slot?.trim());
   if (bookingSent) {
@@ -1050,6 +1057,7 @@ async function finalizeNoidaBooking({
     }
   }
 
+  syncNoidaBooking(appointment, { notify: true }); // not awaited — never holds up the confirmation
   return appointment;
 }
 
@@ -1215,6 +1223,12 @@ export async function reconcilePendingNoidaOrders() {
   }
 }
 setInterval(() => { reconcilePendingNoidaOrders().catch((e) => console.error("noida reconcile:", e?.message)); }, RECONCILE_EVERY_MS).unref();
+// therapist/client dashboard bookings kept in step with the Noida appointments: shortly after start-up, then every 10 min
+const reconcileNoida = () => reconcileNoidaBookings()
+  .then((r) => (r.removed || r.created || r.updated) && console.log(`[noida→booking] reconciled`, r))
+  .catch((e) => console.error("[noida→booking] reconcile:", e?.message));
+setTimeout(reconcileNoida, 20000).unref();
+setInterval(reconcileNoida, 10 * 60000).unref();
 
 export const createNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
   const {
@@ -1364,6 +1378,10 @@ export const createLastMinuteRequest = expressAsyncHandler(async (req, res, next
     sessionMode, format, address, packageId, customSessions,
   } = req.body;
   const type = normalizeType(req.body.type);
+  if (type === "new" && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(req.body.email || "").trim())) {
+    res.status(400);
+    return next(new Error("Please enter your email — it's your login to see this booking."));
+  }
 
   if (!name?.trim() || !phone?.trim()) {
     res.status(400);
@@ -1908,6 +1926,7 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
     }
 
     if (attendance === "completed") requestReviewByEmail(appointment); // not awaited — the desk shouldn't wait on email
+    if (status || attendance !== undefined) syncNoidaBooking(appointment);
 
     // Cancelling a package booking gives its session back to the package (once).
     if (status === "cancelled" && before && before.status !== "cancelled" && !before.creditRefunded
@@ -2033,6 +2052,7 @@ export const deleteNoidaAppointment = expressAsyncHandler(async (req, res, next)
       res.status(404);
       return next(new Error("Appointment not found."));
     }
+    await removeNoidaBookings([appointment._id]);
     // Deleting a live package booking that never happened gives the session back
     // (a cancelled one was already refunded; an attended one really was used).
     if (appointment.status !== "cancelled" && !appointment.creditRefunded
@@ -2111,6 +2131,7 @@ export const adminBookCreditSession = expressAsyncHandler(async (req, res, next)
       paymentStatus: "package-credit",
       creditUsed: credit._id,
     });
+    syncNoidaBooking(appointment, { notify: true }); // → the psychologist's + client's dashboards, like every booking
 
     return res.status(201).json({ status: true, message: "Session booked.", data: appointment });
   } catch (err) {

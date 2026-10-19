@@ -30,6 +30,8 @@ const noidaPricingSchema = new Schema({
   // Master switch for the therapist choice on the booking screens. Off = clients see nothing
   // about therapists at all (not even "No preference").
   therapistChoice: { type: Boolean, default: true },
+  // "No preference" bookings go to this psychologist's dashboard (empty = Deepak Kumar)
+  defaultTherapist: { type: Schema.Types.ObjectId, ref: "Therapists", default: null },
 
   // How many clients one opened slot can take at once (rooms / psychologists on duty).
   // A slot can override it (NoidaFollowupSlot.capacity).

@@ -4,6 +4,7 @@ import NoidaPendingBooking from "../models/NoidaPendingBooking.js";
 import { processPaidOrder } from "./NoidaAppointmentController.js";
 import TherapistSubscriptionOrder from "../models/TherapistSubscriptionOrder.js";
 import { activateFromRazorpayPayment } from "../helper/therapistSubscription.js";
+import { applyRazorpayxPayout } from "./TherapistCommsController.js";
 
 // Razorpay -> us: "this payment was captured". For Noida bookings that's the
 // safety net behind the browser callback — if the client paid but closed the
@@ -36,6 +37,12 @@ export const razorpayWebhook = expressAsyncHandler(async (req, res) => {
     event = JSON.parse(raw.toString("utf8"));
   } catch {
     return res.status(400).json({ status: false, message: "Invalid payload." });
+  }
+
+  // RazorpayX therapist payouts (Admin → Payouts → Pay): processed → paid with the UTR; reversed / failed → retry
+  if (typeof event.event === "string" && event.event.startsWith("payout.")) {
+    await applyRazorpayxPayout(event?.payload?.payout?.entity);
+    return res.status(200).json({ status: true });
   }
 
   if (event.event !== "payment.captured") {
