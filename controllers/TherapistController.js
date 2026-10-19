@@ -561,7 +561,7 @@ export const getDashboardData = expressAsyncHandler(async (req, res, next) => {
     const since = therapistProfile.dashboard_since || null;
     const bookings = await Booking.find({
       therapist: therapistProfile._id,
-      transaction: { $exists: true, $ne: null },
+      $or: [{ transaction: { $exists: true, $ne: null } }, { source: "noida" }],
       ...(since && { booking_date: { $gte: since } }),
     })
       .populate("client", "name email phone profile")

@@ -195,7 +195,7 @@ export async function syncNoidaBooking(appointmentOrId, { notify = false } = {})
       existing.set({
         therapist: therapistId || existing.therapist, booking_date: when, status,
         service: serviceLabel(a), format: FORMAT[a.format] || "In-Person", session_type: SESSION_TYPE[a.format] || "in-person",
-        notes: a.concern || "", cname: a.name, ...charges(a), noida_session_value: await noidaSessionValue(a),
+        notes: a.concern || "", cname: a.name, noida_phone: a.phone || "", ...charges(a), noida_session_value: await noidaSessionValue(a),
       });
       if (moved) { existing.therapist_joined_at = null; existing.client_joined_at = null; }
       await existing.save();
@@ -212,12 +212,12 @@ export async function syncNoidaBooking(appointmentOrId, { notify = false } = {})
 
     if (a.status === "cancelled" || !therapistId) return null;
     const { user, created } = await clientAccountFor(a);
-    if (!user) return null; // no email anywhere — the booking stays with the Noida desk only
+    // no email anywhere → still on the psychologist's dashboard (name + phone from the appointment), just no client login
 
     let booking;
     try {
       booking = await Booking.create({
-        therapist: therapistId, client: user._id, service: serviceLabel(a),
+        therapist: therapistId, ...(user ? { client: user._id } : {}), noida_phone: a.phone || "", service: serviceLabel(a),
         format: FORMAT[a.format] || "In-Person", session_type: SESSION_TYPE[a.format] || "in-person",
         whom: "Self", cname: a.name, notes: a.concern || "", amount: 0, otp: generate6DigitOTP(),
         booking_date: when, status: statusFor(a), payment_status: "Paid",
@@ -227,13 +227,15 @@ export async function syncNoidaBooking(appointmentOrId, { notify = false } = {})
       if (e?.code === 11000) return Booking.findOne({ noida_appointment: a._id }); // made by a parallel call
       throw e;
     }
-    const tx = await Transaction.create({
-      booking: booking._id, bookingModel: "Booking", user: user._id, amount: 0,
-      payment_method: "CYT Noida", is_payment_success: true, status: PAYMENT_STATUS.SUCCESS,
-      transaction_id: a.razorpayPaymentId || `NOIDA-${a.clientCode || ""}-${String(a._id).slice(-6)}`,
-    });
-    booking.transaction = tx._id;
-    await booking.save();
+    if (user) {
+      const tx = await Transaction.create({
+        booking: booking._id, bookingModel: "Booking", user: user._id, amount: 0,
+        payment_method: "CYT Noida", is_payment_success: true, status: PAYMENT_STATUS.SUCCESS,
+        transaction_id: a.razorpayPaymentId || `NOIDA-${a.clientCode || ""}-${String(a._id).slice(-6)}`,
+      });
+      booking.transaction = tx._id;
+      await booking.save();
+    }
 
     const full = await populated(booking._id);
     const meet = await createMeetWithTimeout(full);
@@ -241,13 +243,13 @@ export async function syncNoidaBooking(appointmentOrId, { notify = false } = {})
 
     if (notify) {
       tellTherapist(full, a, user);
-      notifyClient(user._id, {
+      if (user) notifyClient(user._id, {
         type: "booking", title: `CYT Noida session confirmed${full.therapist?.user?.name ? ` with ${full.therapist.user.name}` : ""}`,
         body: `${a.date} · ${a.slot}`, link: "/client/my-bookings", ref: `booking:${booking._id}`,
       }).catch(() => {});
       if (created) welcomeClient(user, a, full.therapist?.user?.name);
     }
-    clientBookingsChanged(user._id);
+    if (user) clientBookingsChanged(user._id);
     therapistBookingsChanged(full.therapist?.user?._id);
     return booking;
   } catch (e) {
@@ -263,7 +265,7 @@ export async function removeNoidaBookings(appointmentIds) {
       .select("_id transaction client therapist calendar_event_id");
     for (const b of rows) {
       if (b.calendar_event_id) await deleteMeetEvent(b);
-      await Transaction.deleteOne({ _id: b.transaction });
+      if (b.transaction) await Transaction.deleteOne({ _id: b.transaction });
       await Booking.deleteOne({ _id: b._id });
       clientBookingsChanged(b.client);
       therapistBookingsChanged(await therapistUserId(b.therapist)); // gone from their open dashboard at once

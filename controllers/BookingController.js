@@ -837,7 +837,7 @@ export const getBookings = expressAsyncHandler(async (req, res, next) => {
       select   = "";
     }
 
-    let result = await Booking.find({ [findKey]: queryId, transaction: { $exists: true, $ne: null } }).select(select)
+    let result = await Booking.find({ [findKey]: queryId, $or: [{ transaction: { $exists: true, $ne: null } }, { source: "noida" }] }).select(select)
       .populate({
         path: "client",
         select: "name email phone profile age gender",
@@ -868,7 +868,9 @@ export const getBookings = expressAsyncHandler(async (req, res, next) => {
       result = result.map((b) => {
         const o = b.toObject();
         const sp = bookingSplit(o);
-        return { ...o, therapist_share: sp.therapist, platform_share: sp.platform, client_paid: sp.paid, share_pct: sp.pct };
+        // a Noida booking made without an email has no client account: name + phone from the booking
+        const client = o.client || (o.source === "noida" ? { name: o.cname || "Client", phone: o.noida_phone || "", email: "" } : o.client);
+        return { ...o, client, therapist_share: sp.therapist, platform_share: sp.platform, client_paid: sp.paid, share_pct: sp.pct };
       });
     }
 
@@ -1120,7 +1122,7 @@ export const sendSessionStartCode = expressAsyncHandler(async (req, res) => {
   if (Date.now() < at - 60 * 60 * 1000) return res.status(400).json({ status: false, message: "You can start this session from 1 hour before its time." });
   if (Date.now() > at + 12 * 60 * 60 * 1000) return res.status(400).json({ status: false, message: "This session's time has passed." });
   if (b.otp_sent_at && Date.now() - new Date(b.otp_sent_at).getTime() < 45 * 1000) return res.status(429).json({ status: false, message: "A code was just sent — please wait a few seconds before sending another." });
-  if (!b.client?.email) return res.status(400).json({ status: false, message: "The client has no email on file." });
+  if (!b.client?.email) return res.status(400).json({ status: false, message: b.source === "noida" ? "This CYT Noida client has no email, so there's no start code — the Noida desk marks the visit attended, which completes it here too." : "The client has no email on file." });
   b.otp = generate6DigitOTP();
   b.otp_sent_at = new Date();
   await b.save();

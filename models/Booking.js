@@ -5,7 +5,8 @@ const bookingSchema = new Schema({
   client: {
     type: Schema.Types.ObjectId,
     ref: "User",
-    required: true,
+    // a CYT Noida booking made without any email has no client account (the therapist still sees it)
+    required: function () { return this.source !== "noida"; },
   },
   therapist: {
     type: Schema.Types.ObjectId,
@@ -114,6 +115,7 @@ const bookingSchema = new Schema({
   source: { type: String, default: "" }, // "noida"
   noida_appointment: { type: Schema.Types.ObjectId, ref: "NoidaAppointment", default: undefined },
   noida_client_code: { type: String, default: "" },
+  noida_phone: { type: String, default: "" }, // the client's phone, for a Noida booking without a client account
   // what the client actually paid CYT for it — shown on the dashboards + invoice, never counted as therapist earning
   noida_amount: { type: Number, default: undefined },
   noida_fee: { type: Number, default: 0 },       // platform fee inside noida_amount

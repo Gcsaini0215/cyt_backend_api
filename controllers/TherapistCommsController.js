@@ -459,7 +459,7 @@ export const adminPayoutBookings = expressAsyncHandler(async (req, res) => {
       bookedAt: b._id.getTimestamp ? b._id.getTimestamp() : null,
       sessionAt: b.booking_date,
       therapist: { _id: b.therapist?._id, user: b.therapist?.user?._id, name: b.therapist?.user?.name || "—", email: b.therapist?.user?.email || "", code: b.therapist?.profile_code || "" },
-      client: { name: b.client?.name || b.cname || "—", email: b.client?.email || "", phone: b.client?.phone || "" },
+      client: { name: b.client?.name || b.cname || "—", email: b.client?.email || "", phone: b.client?.phone || b.noida_phone || "" },
       bookedFor: forOther ? { name: b.cname, relation: b.relation_with_client || "" } : null,
       service: b.service || "", format: b.format || "", sessionType: b.session_type || "",
       source: noida ? "noida" : "online", noidaCode: b.noida_client_code || "",
