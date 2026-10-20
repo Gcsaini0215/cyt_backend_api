@@ -1075,3 +1075,36 @@ export const therapistFeedbackReplyMail = ({ name, message, reply }) =>
       button("Open Help & support", `${PORTAL}/therapists/help`) +
       prefsFoot,
   });
+
+// ============================================================================
+// SESSION REMINDER (1 hour before) + THERAPIST FOLLOW-UP
+// ============================================================================
+
+export const sessionReminderMail = ({ clientName, therapistName, sessionDateTime, inPerson, meetLink }) =>
+  shell({
+    preheader: `Your session with ${therapistName || "your therapist"} starts in about an hour`,
+    body:
+      eyebrow("Starts in 1 hour", OK) +
+      heading(`See you soon${clientName ? ", " + esc(clientName) : ""}`) +
+      para(`Your session with <b>${esc(therapistName || "your therapist")}</b> starts at <b>${esc(sessionDateTime)}</b>.`) +
+      (inPerson
+        ? note("This is an in-person session at <b>CYT Noida, Sector 51</b>. Please reach a few minutes early.")
+        : meetLink
+          ? meetBlock(meetLink, "Join from My Bookings — Join opens 15 minutes before the session.")
+          : note("Open My Bookings and tap Join — it opens 15 minutes before the session.")) +
+      note("Find a quiet, private spot, keep water nearby, and jot down anything you'd like to talk about.") +
+      button(inPerson ? "View booking" : "Open My Bookings", `${BRAND.site.replace("://", "://www.")}/client/my-bookings`),
+    foot: `${BRAND.name} LLP &middot; Need to reschedule? Reply to this email or call ${BRAND.phone}.`,
+  });
+
+export const therapistFollowupMail = ({ clientName, therapistName, bookHref, message }) =>
+  shell({
+    preheader: `A note from ${therapistName || "your therapist"}`,
+    body:
+      eyebrow("From your therapist", INFO) +
+      heading(`Hi${clientName ? " " + esc(clientName) : ""},`) +
+      para(esc(message).replace(/\n/g, "<br>")) +
+      para(`— ${esc(therapistName || "Your therapist")}`) +
+      button("Book your next session", bookHref),
+    foot: `${BRAND.name} LLP &middot; Sent on behalf of ${esc(therapistName || "your therapist")} through Choose Your Therapist.`,
+  });

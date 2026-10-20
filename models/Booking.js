@@ -101,6 +101,7 @@ const bookingSchema = new Schema({
   therapist_joined_at: { type: Date, default: null },
   client_joined_at: { type: Date, default: null },
   auto_completed: { type: Boolean, default: false }, // closed by the system because End wasn't tapped
+  reminder_1h_sent_at: { type: Date, default: null }, // "your session starts in an hour" email to the client (sent once)
   pending_mail_sent_at: { type: Date, default: null }, // "complete your payment" reminder (sent once, if still unpaid)
   slot_released_at: { type: Date, default: null }, // client closed Razorpay without paying → the slot is free again
   // referrals (helper/referral.js): a friend's code used on this booking, and the client's own credit spent on it

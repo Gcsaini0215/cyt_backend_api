@@ -7,6 +7,8 @@ import { startAvailabilityReminders } from "./services/availabilityReminder.js";
 import { startSubscriptionReconcile } from "./helper/therapistSubscription.js";
 import { startSessionAutoComplete } from "./services/sessionAutoComplete.js";
 import { startPendingPaymentMails } from "./services/pendingPaymentMail.js";
+import { startSessionReminders } from "./services/sessionReminderMail.js";
+import { startTopBadgeJob } from "./helper/therapistGrowth.js";
 
 mongoose.set("strictQuery", true);
 mongoose.connect(process.env.MONGODB_URI).then(() => {
@@ -17,5 +19,7 @@ mongoose.connect(process.env.MONGODB_URI).then(() => {
     startSubscriptionReconcile();
     startSessionAutoComplete();
     startPendingPaymentMails();
+    startSessionReminders();
+    startTopBadgeJob();
   });
 }).catch((err) => console.log(err));

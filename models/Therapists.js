@@ -122,6 +122,9 @@ const TherapistSchema = new Schema(
     verified_by: { type: Schema.Types.ObjectId, ref: "Admin", default: null },
     verified_at: { type: Date, default: null },
 
+    monthly_goal: { type: Number, default: 0 }, // dashboard earnings goal (₹, their 70% share)
+    top_therapist: { type: Boolean, default: false }, // "Top therapist" badge — set daily by helper/therapistGrowth.js
+    top_therapist_since: { type: Date, default: null },
     subscription_plan: { type: String, default: null },
     subscription_amount: { type: Number, default: null },
     subscription_started_at: { type: Date, default: null },
