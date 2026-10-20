@@ -8,7 +8,8 @@ import FollowupNudge from "../models/FollowupNudge.js";
 const DAY = 86400000;
 const oid = (v) => new mongoose.Types.ObjectId(String(v));
 
-/* ── 1. follow-ups: past clients with no session for 2+ weeks and nothing booked ── */
+/* ── 1. follow-ups: every client who has booked this therapist. "due" = had a session 2+ weeks ago
+   (within 6 months) and nothing booked now — those come first. ── */
 export const FOLLOWUP_MIN_DAYS = 14;
 export const FOLLOWUP_MAX_DAYS = 180;
 export const NUDGE_GAP_DAYS = 7; // one email per client per week, at most
@@ -16,16 +17,17 @@ export const NUDGE_GAP_DAYS = 7; // one email per client per week, at most
 export async function followupList(therapistId, now = Date.now()) {
   const tid = oid(therapistId);
   const rows = await Booking.aggregate([
-    { $match: { therapist: tid, client: { $ne: null } } },
+    { $match: { therapist: tid, client: { $ne: null }, status: { $ne: "Cancelled" } } },
     { $group: {
       _id: "$client",
       lastDone: { $max: { $cond: [{ $eq: ["$status", "Completed"] }, "$booking_date", null] } },
+      lastAny: { $max: "$booking_date" },
       done: { $sum: { $cond: [{ $eq: ["$status", "Completed"] }, 1, 0] } },
-      upcoming: { $sum: { $cond: [{ $and: [{ $gt: ["$booking_date", new Date(now - 2 * 3600000)] }, { $not: [{ $in: ["$status", ["Cancelled", "Completed"]] }] }] }, 1, 0] } },
+      upcoming: { $sum: { $cond: [{ $and: [{ $gt: ["$booking_date", new Date(now - 2 * 3600000)] }, { $ne: ["$status", "Completed"] }] }, 1, 0] } },
+      nextAt: { $min: { $cond: [{ $and: [{ $gt: ["$booking_date", new Date(now - 2 * 3600000)] }, { $ne: ["$status", "Completed"] }] }, "$booking_date", null] } },
     } },
-    { $match: { done: { $gt: 0 }, upcoming: 0, lastDone: { $lte: new Date(now - FOLLOWUP_MIN_DAYS * DAY), $gte: new Date(now - FOLLOWUP_MAX_DAYS * DAY) } } },
-    { $sort: { lastDone: -1 } },
-    { $limit: 40 },
+    { $sort: { lastAny: -1 } },
+    { $limit: 300 },
   ]);
   if (!rows.length) return [];
   const ids = rows.map((r) => r._id);
@@ -35,23 +37,31 @@ export async function followupList(therapistId, now = Date.now()) {
   ]);
   const U = new Map(users.map((u) => [String(u._id), u]));
   const N = new Map(nudges.map((n) => [String(n._id), n]));
-  return rows.map((r) => {
+  const list = rows.map((r) => {
     const u = U.get(String(r._id)) || {};
     const nudgedAt = N.get(String(r._id))?.at || null;
     const emailedAt = N.get(String(r._id))?.emailAt || null;
+    const lastAt = r.lastDone || r.lastAny;
+    const daysSince = r.lastDone ? Math.floor((now - new Date(r.lastDone).getTime()) / DAY) : null;
     return {
       clientId: String(r._id),
       name: u.name || "Client",
       hasEmail: !!u.email,
       phone: String(u.phone || "").replace(/\D/g, "").slice(-12),
       photo: u.profile || "",
-      lastSessionAt: r.lastDone,
-      daysSince: Math.floor((now - new Date(r.lastDone).getTime()) / DAY),
+      lastSessionAt: r.lastDone || null,
+      lastBookingAt: lastAt,
+      daysSince,
       sessions: r.done,
+      upcoming: r.upcoming,
+      nextAt: r.nextAt || null,
+      due: r.upcoming === 0 && daysSince != null && daysSince >= FOLLOWUP_MIN_DAYS && daysSince <= FOLLOWUP_MAX_DAYS,
       nudgedAt,
       canEmail: !!u.email && (!emailedAt || now - new Date(emailedAt).getTime() > NUDGE_GAP_DAYS * DAY),
     };
   });
+  // due first (longest gap first), then everyone else by most recent
+  return list.sort((a, b) => (b.due - a.due) || (a.due ? b.daysSince - a.daysSince : new Date(b.lastBookingAt) - new Date(a.lastBookingAt)));
 }
 
 /* ── 4. "Top therapist" badge ── */

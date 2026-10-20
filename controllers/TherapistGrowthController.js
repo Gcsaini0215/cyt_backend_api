@@ -50,10 +50,10 @@ export const setGoal = expressAsyncHandler(async (req, res) => {
   res.json({ status: true, data: { goal: amount } });
 });
 
-// the client must have had a completed session with this therapist
+// the client must have booked this therapist at least once
 async function ownClient(t, clientId) {
   if (!mongoose.isValidObjectId(clientId)) return null;
-  const had = await Booking.exists({ therapist: t._id, client: clientId, status: "Completed" });
+  const had = await Booking.exists({ therapist: t._id, client: clientId });
   if (!had) return null;
   return Users.findById(clientId, { name: 1, email: 1 }).lean();
 }
