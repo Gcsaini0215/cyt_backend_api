@@ -3,7 +3,7 @@ import Therapists from "../models/Therapists.js";
 import Availbility from "../models/Availbility.js";
 import Review from "../models/Review.js";
 import ProfileStat from "../models/ProfileStat.js";
-import { recordProfileEvent, recordImpressions, profileInsights, planState, profileStrength, istDay, dayShift } from "../helper/profileStats.js";
+import { recordProfileEvent, recordImpressions, profileInsights, planState, profileStrength, istDay, dayShift, pingPresence, liveViewers } from "../helper/profileStats.js";
 
 /* POST /api/profile-stats/event — public: { t: therapist profile id, type: view|book|contact|share, vid, src } */
 export const postProfileEvent = expressAsyncHandler(async (req, res) => {
@@ -59,6 +59,7 @@ export const myProfileInsights = expressAsyncHandler(async (req, res) => {
         daily: ins.daily,
       }),
       trackingSince: ins.since,
+      liveNow: liveViewers(t._id),
     },
   });
 });
@@ -73,4 +74,17 @@ export const adminProfileStats = expressAsyncHandler(async (req, res) => {
   const data = {};
   for (const r of rows) data[String(r._id)] = { views: r.views, visitors: r.visitors, impressions: r.impressions, book: r.book, contact: r.contact };
   res.json({ status: true, from, data });
+});
+
+/* POST /api/profile-stats/presence — public heartbeat from a profile page { t, vid, leave? } */
+export const postPresence = expressAsyncHandler(async (req, res) => {
+  const { t, vid, leave } = req.body || {};
+  try { res.json({ status: await pingPresence(req, { therapistId: t, vid, leave: !!leave }) }); }
+  catch (e) { res.json({ status: false }); }
+});
+
+/* GET /api/profile-stats/live — the signed-in therapist: people on their profile right now */
+export const myLiveViewers = expressAsyncHandler(async (req, res) => {
+  const t = await Therapists.findOne({ user: req.user._id }, { _id: 1 }).lean();
+  res.json({ status: true, data: { liveNow: t ? liveViewers(t._id) : 0 } });
 });

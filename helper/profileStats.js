@@ -130,3 +130,33 @@ export function profileStrength(t, { reviews = 0, hasHours = false } = {}) {
   const score = checks.reduce((a, c) => a + (c.ok ? c.weight : 0), 0);
   return { score, tips: checks.filter((c) => !c.ok).map(({ key, tip, href, cta }) => ({ key, tip, href, cta })) };
 }
+
+/* ── live "viewing now": profile pages ping every ~20 s while visible; anyone not heard from in 45 s drops off.
+   In memory on purpose (a live gauge, not a record — single server process, like the Noida presence counter). ── */
+const LIVE_TTL = 45 * 1000;
+const LIVE_MAX = 5000;
+const live = new Map(); // `${therapistId}:${vid}` -> { t, at }
+const pruneLive = (now) => { for (const [k, v] of live) if (now - v.at > LIVE_TTL) live.delete(k); };
+
+export async function pingPresence(req, { therapistId, vid, leave }) {
+  const v = String(vid || "");
+  if (!mongoose.isValidObjectId(therapistId) || !/^[A-Za-z0-9-]{8,40}$/.test(v) || isBot(req)) return false;
+  const key = `${therapistId}:${v}`;
+  if (leave) { live.delete(key); return true; }
+  const owner = await ownerOf(therapistId);
+  if (owner === undefined || (owner && owner === viewerId(req))) return false;
+  const now = Date.now();
+  if (!live.has(key) && live.size >= LIVE_MAX) { pruneLive(now); if (live.size >= LIVE_MAX) return false; }
+  live.set(key, { t: String(therapistId), at: now });
+  return true;
+}
+
+export function liveViewers(therapistId, now = Date.now()) {
+  const id = String(therapistId);
+  let n = 0;
+  for (const [k, v] of live) {
+    if (now - v.at > LIVE_TTL) { live.delete(k); continue; }
+    if (v.t === id) n++;
+  }
+  return n;
+}
