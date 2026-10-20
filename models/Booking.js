@@ -116,6 +116,8 @@ const bookingSchema = new Schema({
   noida_appointment: { type: Schema.Types.ObjectId, ref: "NoidaAppointment", default: undefined },
   noida_client_code: { type: String, default: "" },
   noida_phone: { type: String, default: "" }, // the client's phone, for a Noida booking without a client account
+  // an earlier Noida session (before the payouts system, 21 Oct 2026): shown as a record only — no earning, no payout
+  noida_legacy: { type: Boolean, default: false },
   // what the client actually paid CYT for it — shown on the dashboards + invoice, never counted as therapist earning
   noida_amount: { type: Number, default: undefined },
   noida_fee: { type: Number, default: 0 },       // platform fee inside noida_amount

@@ -20,6 +20,8 @@ const num = (v) => Number(v?.$numberDecimal ?? v?.toString?.() ?? v) || 0;
    A CYT Noida session counts what the client paid CYT (its Booking itself carries ₹0). Unpaid → all zero. */
 export function bookingSplit(b) {
   if (!b) return { paid: 0, ...payoutSplit({}) };
+  // an earlier CYT Noida session kept as a record: settled before payouts — nothing to earn or pay
+  if (b.noida_legacy) return { paid: Number(b.noida_amount) || 0, base: 0, therapist: 0, platform: 0, pct: THERAPIST_PCT, legacy: true };
   const noida = b.source === "noida";
   const paidOk = /paid/i.test(b.payment_status || "") || !!b.transaction;
   // online: the payment on record — or, for a booking marked paid without one (e.g. paid by QR and confirmed by hand), its fee

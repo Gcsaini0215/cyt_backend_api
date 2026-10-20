@@ -9,8 +9,9 @@ import NoidaFollowupSlot from "../models/NoidaFollowupSlot.js";
 import NoidaPackage from "../models/NoidaPackage.js";
 import { resolveCoupon, normalizeCouponCode } from "../helper/noidaCoupon.js";
 import { ensureClientCode, ensureBackfilled, phoneTailRegex, samePhone } from "../helper/noidaClient.js";
-import { resolveOfferedTherapist } from "../helper/noidaTherapist.js";
-import { syncNoidaBooking, removeNoidaBookings, reconcileNoidaBookings } from "../helper/noidaBookingSync.js";
+import { resolveOfferedTherapist, getOfferedTherapists } from "../helper/noidaTherapist.js";
+import { syncNoidaBooking, removeNoidaBookings, reconcileNoidaBookings, noPreferenceTherapist, noidaSlotDate, backfillPastNoidaBookings } from "../helper/noidaBookingSync.js";
+import { onlineBusyNear, onlineStartsBetween } from "../helper/therapistBusy.js";
 import { requestReviewByEmail } from "./NoidaReviewController.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import Lead from "../models/Lead.js";
@@ -190,9 +191,18 @@ async function slotIsFull(date, slot, excludeId = null) {
   return { full: count >= capacity, capacity, count };
 }
 // A psychologist sees one client at a time, whatever the slot's capacity.
+// "No preference" goes to the default psychologist (Deepak), so it's busy whenever he is; and an online session
+// of theirs within the hour makes them busy at the centre too.
 async function therapistBusy(date, slot, therapistId, excludeId = null) {
-  if (!therapistId || !mongoose.Types.ObjectId.isValid(String(therapistId))) return false;
-  return !!(await NoidaAppointment.exists({ date, slot, status: "confirmed", therapist: therapistId, ...(excludeId ? { _id: { $ne: excludeId } } : {}) }));
+  const def = await noPreferenceTherapist();
+  const tid = therapistId && mongoose.Types.ObjectId.isValid(String(therapistId)) ? String(therapistId) : (def ? String(def) : null);
+  if (!tid) return false;
+  const isDefault = !!def && String(def) === tid;
+  const atCentre = await NoidaAppointment.exists({
+    date, slot, status: "confirmed", ...(isDefault ? { $or: [{ therapist: tid }, { therapist: null }] } : { therapist: tid }), ...(excludeId ? { _id: { $ne: excludeId } } : {}),
+  });
+  if (atCentre) return true;
+  return onlineBusyNear(tid, noidaSlotDate(date, slot));
 }
 const SLOT_FULL_MESSAGE = "Sorry, that slot was just booked by someone else. Please pick another.";
 const THERAPIST_BUSY_MESSAGE = "That psychologist already has a session at this time — please pick another time, or choose no preference.";
@@ -258,6 +268,15 @@ export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) =
   // Public: only whether a slot is full (and how many places are left) — no name, phone or client number.
   const caps = capacityMap(capDocs, def);
   const counts = countBy(booked);
+  // the default psychologist (Deepak) on an online session at that time → one place fewer at the centre
+  const deepak = await noPreferenceTherapist();
+  const online = deepak ? await onlineStartsBetween(deepak, new Date(`${today}T00:00:00+05:30`), new Date(maxDate.getTime() + 86400000)) : [];
+  if (online.length) {
+    for (const s of allSlots) {
+      const t = noidaSlotDate(s.date, s.slot).getTime();
+      if (online.some((o) => Math.abs(o - t) < 59 * 60000)) { const k = `${s.date}|${s.slot}`; counts.set(k, (counts.get(k) || 0) + 1); }
+    }
+  }
   const byDate = new Map();
   for (const s of allSlots) {
     if (!byDate.has(s.date)) byDate.set(s.date, []);
@@ -1076,7 +1095,7 @@ async function slotUnavailableReason({ date, slot, type, phone, therapistId }) {
   const isOpen = await NoidaFollowupSlot.findOne({ date, slot, type });
   if (!isOpen) return { status: 400, message: "That slot isn't open for booking on the selected date." };
   if ((await slotIsFull(date, slot)).full) return { status: 409, message: SLOT_FULL_MESSAGE };
-  if (await therapistBusy(date, slot, therapistId)) return { status: 409, message: THERAPIST_BUSY_MESSAGE };
+  if (await therapistBusy(date, slot, therapistId)) return { status: 409, message: therapistId ? THERAPIST_BUSY_MESSAGE : "Our psychologist already has a session at this time — please pick another slot." };
   if (isLastMinuteSlot(date, slot)) {
     const approved = await NoidaLastMinuteRequest.findOne({ phone, date, slot, status: "accepted" });
     if (!approved) return { status: 400, message: "This slot needs staff approval first — please send a request and wait for it to be accepted." };
@@ -1228,6 +1247,10 @@ const reconcileNoida = () => reconcileNoidaBookings()
   .then((r) => (r.removed || r.created || r.updated) && console.log(`[noida→booking] reconciled`, r))
   .catch((e) => console.error("[noida→booking] reconcile:", e?.message));
 setTimeout(reconcileNoida, 20000).unref();
+// earlier Noida sessions onto the dashboards as a record (once per start-up; skips ones already there)
+setTimeout(() => {
+  backfillPastNoidaBookings().then((n) => n && console.log(`[noida→booking] past sessions recorded: ${n}`)).catch((e) => console.error("[noida→booking] past backfill:", e?.message));
+}, 45000).unref();
 setInterval(reconcileNoida, 10 * 60000).unref();
 
 export const createNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
@@ -1862,6 +1885,8 @@ export const getNoidaRecentActivity = expressAsyncHandler(async (req, res, next)
 export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next) => {
   const { id } = req.params;
   const { status, adminNote, attendance, archived, notifyClient } = req.body;
+  // therapistId: hand the booking to another psychologist of the Noida team ("" / null = back to No preference → Deepak)
+  const reassign = req.body.therapistId !== undefined;
 
   if (!mongoose.Types.ObjectId.isValid(id)) {
     res.status(400);
@@ -1878,6 +1903,19 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
 
   try {
     const update = {};
+    if (reassign) {
+      const tid = req.body.therapistId ? String(req.body.therapistId) : null;
+      if (tid) {
+        const t = (await getOfferedTherapists({ ignoreSwitch: true })).find((x) => String(x._id) === tid);
+        if (!t) { res.status(400); return next(new Error("Choose a psychologist from the Noida team.")); }
+        const cur = await NoidaAppointment.findById(id).select("date slot status").lean();
+        if (!cur) { res.status(404); return next(new Error("Appointment not found.")); }
+        if (cur.status === "confirmed" && await therapistBusy(cur.date, cur.slot, tid, id)) {
+          res.status(409); return next(new Error(`${t.name} already has a session around this time (at the centre or online).`));
+        }
+        update.therapist = t._id; update.therapistName = t.name;
+      } else { update.therapist = null; update.therapistName = ""; }
+    }
     if (status) update.status = status;
     if (adminNote !== undefined) update.adminNote = adminNote;
     if (attendance !== undefined) {
@@ -1926,7 +1964,7 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
     }
 
     if (attendance === "completed") requestReviewByEmail(appointment); // not awaited — the desk shouldn't wait on email
-    if (status || attendance !== undefined) syncNoidaBooking(appointment);
+    if (status || attendance !== undefined || reassign) syncNoidaBooking(appointment);
 
     // Cancelling a package booking gives its session back to the package (once).
     if (status === "cancelled" && before && before.status !== "cancelled" && !before.creditRefunded

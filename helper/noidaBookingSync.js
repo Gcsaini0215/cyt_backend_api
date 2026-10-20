@@ -133,7 +133,7 @@ const populated = (id) => Booking.findById(id)
   .populate({ path: "therapist", select: "_id user", populate: { path: "user", select: "name email" } });
 
 function statusFor(a, current) {
-  if (a.status === "cancelled") return SESSION_STATUS.CANCELED;
+  if (a.status === "cancelled" || a.attendance === "no_show") return SESSION_STATUS.CANCELED;
   if (a.attendance === "completed") return SESSION_STATUS.COMPLETED;
   if (current === SESSION_STATUS.STARTED || current === SESSION_STATUS.COMPLETED) return current;
   return SESSION_STATUS.NEW;
@@ -178,7 +178,7 @@ function welcomeClient(user, a, therapistName) {
 
 /* Creates or updates the Booking for one Noida appointment. notify = a brand-new booking
    (tell the therapist, and the client about their account). Never throws. */
-export async function syncNoidaBooking(appointmentOrId, { notify = false } = {}) {
+export async function syncNoidaBooking(appointmentOrId, { notify = false, meet = true } = {}) {
   try {
     const a = appointmentOrId?._id && appointmentOrId?.date
       ? (appointmentOrId.toObject ? appointmentOrId.toObject() : appointmentOrId)
@@ -207,6 +207,12 @@ export async function syncNoidaBooking(appointmentOrId, { notify = false } = {})
       clientBookingsChanged(existing.client);
       // the psychologist's open dashboard updates at once (and the old one's, if it moved to someone else)
       for (const t of new Set([String(before), String(existing.therapist)])) therapistBookingsChanged(await therapistUserId(t));
+      if (String(before) !== String(existing.therapist) && status !== SESSION_STATUS.CANCELED) {
+        notifyTherapists([await therapistUserId(existing.therapist)], {
+          type: "booking", title: "CYT Noida session assigned to you",
+          body: `${a.name} · ${a.date} · ${a.slot}`, link: "/appointments", ref: `noida-assign:${existing._id}:${existing.therapist}`,
+        }).catch(() => {});
+      }
       return existing;
     }
 
@@ -238,8 +244,8 @@ export async function syncNoidaBooking(appointmentOrId, { notify = false } = {})
     }
 
     const full = await populated(booking._id);
-    const meet = await createMeetWithTimeout(full);
-    if (meet) await Booking.updateOne({ _id: booking._id }, { $set: { meet_link: meet.link, calendar_event_id: meet.eventId } });
+    const ev = meet ? await createMeetWithTimeout(full) : null;
+    if (ev) await Booking.updateOne({ _id: booking._id }, { $set: { meet_link: ev.link, calendar_event_id: ev.eventId } });
 
     if (notify) {
       tellTherapist(full, a, user);
@@ -284,14 +290,14 @@ export async function reconcileNoidaBookings() {
   const out = { removed: 0, created: 0, updated: 0 };
   const open = await Booking.find({ source: "noida", status: { $nin: [SESSION_STATUS.STARTED, SESSION_STATUS.COMPLETED] } })
     .select("noida_appointment status booking_date").lean();
-  const appts = await NoidaAppointment.find({ _id: { $in: open.map((b) => b.noida_appointment) } }).select("_id status date slot").lean();
+  const appts = await NoidaAppointment.find({ _id: { $in: open.map((b) => b.noida_appointment) } }).select("_id status date slot attendance").lean();
   const byId = new Map(appts.map((a) => [String(a._id), a]));
   const orphans = open.filter((b) => !byId.has(String(b.noida_appointment))).map((b) => b.noida_appointment);
   if (orphans.length) { await removeNoidaBookings(orphans); out.removed = orphans.length; }
   for (const b of open) {
     const a = byId.get(String(b.noida_appointment));
     if (!a) continue;
-    const wantCancelled = a.status === "cancelled";
+    const wantCancelled = a.status === "cancelled" || a.attendance === "no_show";
     const moved = new Date(b.booking_date).getTime() !== noidaSlotDate(a.date, a.slot).getTime();
     if (wantCancelled !== (b.status === SESSION_STATUS.CANCELED) || moved) { await syncNoidaBooking(a._id); out.updated++; }
   }
@@ -308,3 +314,28 @@ export async function reconcileNoidaBookings() {
   return out;
 }
 export const backfillNoidaBookings = async () => { const r = await reconcileNoidaBookings(); return r.created; };
+
+/* Earlier CYT Noida sessions (dated before the payouts system went live) onto the psychologists' dashboards as a
+   record: the chosen psychologist, else the default one (Deepak). A session that took place shows Completed, a
+   no-show Cancelled; cancelled bookings are left out. noida_legacy = no earning and no payout for them. No email,
+   notification or Meet event. Idempotent (skips appointments that already have their booking). */
+export const LEGACY_BEFORE = "2026-10-21";
+export async function backfillPastNoidaBookings() {
+  const rows = await NoidaAppointment.find({ status: "confirmed", date: { $lt: LEGACY_BEFORE } }).select("_id date slot attendance").lean();
+  if (!rows.length) return 0;
+  const have = new Set((await Booking.find({ noida_appointment: { $in: rows.map((r) => r._id) } }).select("noida_appointment").lean()).map((b) => String(b.noida_appointment)));
+  let n = 0;
+  for (const r of rows) {
+    if (have.has(String(r._id))) continue;
+    const b = await syncNoidaBooking(r._id, { meet: false });
+    if (!b) continue;
+    const start = noidaSlotDate(r.date, r.slot);
+    const held = r.attendance !== "no_show";
+    await Booking.updateOne({ _id: b._id }, { $set: {
+      noida_legacy: true, status: held ? SESSION_STATUS.COMPLETED : SESSION_STATUS.CANCELED,
+      ...(held ? { session_started_at: start, session_completed_at: new Date(start.getTime() + 60 * 60000) } : {}),
+    } });
+    n++;
+  }
+  return n;
+}

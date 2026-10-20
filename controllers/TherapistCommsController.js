@@ -133,17 +133,17 @@ export const myPayouts = expressAsyncHandler(async (req, res) => {
   // earnings by session: every session a client has paid for (newest first) — the therapist's 70% and its payout
   const me = await Therapists.findOne({ user: req.user._id }).select("_id").lean();
   const sessions = me ? await Booking.find({ therapist: me._id, status: { $ne: "Cancelled" }, $or: [{ payment_status: "Paid" }, { transaction: { $ne: null } }] })
-    .select("booking_date status source cname service format payment_status amount referral_discount credit_used noida_amount noida_fee noida_session_value assessment_fee assessment_therapist_share transaction payout_id client")
+    .select("booking_date status source cname service format payment_status amount referral_discount credit_used noida_amount noida_fee noida_session_value noida_legacy assessment_fee assessment_therapist_share transaction payout_id client")
     .populate("transaction", "amount").populate("client", "name").populate("payout_id", "status amount paidAt createdAt")
     .sort({ booking_date: -1 }).limit(1000).lean() : [];
   const earnings = sessions.map((b) => {
     const sp = bookingSplit(b);
     return {
       _id: b._id, sessionAt: b.booking_date, client: b.client?.name || b.cname || "Client", service: b.service || "", format: b.format || "",
-      source: b.source === "noida" ? "noida" : "online", status: b.status, paid: sp.paid, share: sp.therapist, platform: sp.platform, pct: sp.pct,
+      source: b.source === "noida" ? "noida" : "online", status: b.status, paid: sp.paid, share: sp.therapist, platform: sp.platform, pct: sp.pct, legacy: !!sp.legacy,
       payout: b.payout_id ? { status: b.payout_id.status, amount: b.payout_id.amount, at: b.payout_id.paidAt || b.payout_id.createdAt } : null,
     };
-  }).filter((e) => e.paid > 0);
+  }).filter((e) => e.paid > 0 && !e.legacy);
   const done = earnings.filter((e) => e.status === "Completed");
   const paid = payouts.filter((p) => p.status === "paid");
   const yearStart = new Date(new Date().getFullYear(), 3, 1); // financial year (Apr)
@@ -476,6 +476,7 @@ export const adminPayoutBookings = expressAsyncHandler(async (req, res) => {
       paidAt: tx?.createdAt || null,
       startedAt: b.session_started_at || null, completedAt: b.session_completed_at || null,
       split: bookingSplit(b),
+      legacy: !!b.noida_legacy,
       packageSession: noida && !paid && b.noida_session_value > 0,
       payout: b.payout_id ? { _id: b.payout_id._id, status: b.payout_id.status, amount: b.payout_id.amount, sessions: b.payout_id.sessions, paidAt: b.payout_id.paidAt || b.payout_id.createdAt, method: b.payout_id.method, reference: b.payout_id.reference, rzpId: b.payout_id.rzp_payout_id || "", rzpStatus: b.payout_id.rzp_status || "", rzpError: b.payout_id.rzp_error || "", rzpMode: b.payout_id.rzp_mode || "" } : null,
     };

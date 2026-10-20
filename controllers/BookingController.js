@@ -3,6 +3,7 @@ import Joi from "joi";
 import Booking from "../models/Booking.js";
 import NoidaAppointment from "../models/NoidaAppointment.js";
 import { bookingSplit } from "../helper/payoutSplit.js";
+import { busyStarts, busyNear, SESSION_MIN } from "../helper/therapistBusy.js";
 import mongoose from "mongoose";
 import Therapists from "../models/Therapists.js";
 import { generate6DigitOTP, generateQrCode } from "../helper/generate.js";
@@ -292,7 +293,7 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         { payment_status: "Pending Payment", _id: { $gt: pendingCutoff }, slot_released_at: null, client: { $ne: user._id } },
       ],
     }).session(session);
-    if (slotConflict) {
+    if (slotConflict || await busyNear(therapist, parsedBookingDate, { excludeClient: user._id })) {
       res.status(409);
       return next(new Error("That time slot has just been taken. Please pick another slot."));
     }
@@ -896,21 +897,14 @@ export const getBookedSlots = expressAsyncHandler(async (req, res, next) => {
     const pendingCutoff = mongoose.Types.ObjectId.createFromTime(
       Math.floor((Date.now() - 20 * 60 * 1000) / 1000)
     );
-    const rows = await Booking.find({
-      therapist: therapistId,
-      booking_date: { $gte: new Date() },
-      status: { $ne: "Cancelled" },
-      $or: [
-        { payment_status: "Paid" },
-        { payment_status: "Pending Payment", _id: { $gt: pendingCutoff }, slot_released_at: null },
-      ],
-    })
-      .select("booking_date")
-      .lean();
-    return res.status(200).json({
-      status: true,
-      data: rows.map((r) => new Date(r.booking_date).toISOString()),
-    });
+    void pendingCutoff;
+    // every session this psychologist is busy at — online bookings and CYT Noida bookings alike — blocks any
+    // start less than an hour away (the page matches exact times, so each 5-minute start in that window is listed)
+    const starts = await busyStarts(therapistId);
+    const out = new Set();
+    const step = 5 * 60000, win = (SESSION_MIN - 5) * 60000;
+    for (const t of starts) for (let x = t - win; x <= t + win; x += step) if (x >= Date.now() - SESSION_MIN * 60000) out.add(new Date(x).toISOString());
+    return res.status(200).json({ status: true, data: [...out] });
   } catch (err) {
     return next(new Error(err.message));
   }
@@ -1085,6 +1079,7 @@ export const rescheduleSession = expressAsyncHandler(async (req, res) => {
     $or: [{ payment_status: "Paid" }, { transaction: { $ne: null } }],
   }).select("_id booking_date").lean();
   if (clash) return res.status(409).json({ status: false, message: `You already have a session at ${new Date(clash.booking_date).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" })} that day — pick a time at least an hour apart.` });
+  if (await busyNear(b.therapist._id, when, { excludeBookingId: b._id })) return res.status(409).json({ status: false, message: "You have a CYT Noida session around that time — pick a time at least an hour apart." });
 
   const oldTime = formatSlotIST(b.booking_date);
   b.booking_date = when;
