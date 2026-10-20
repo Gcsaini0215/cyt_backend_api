@@ -6,6 +6,7 @@ import Therapists from "../models/Therapists.js";
 
 export const SOURCES = ["google", "directory", "home", "city", "blog", "social", "direct", "other"];
 export const ACTIONS = ["book", "contact", "share"];
+export const MAX_VIEWS_PER_VISITOR = 3;
 const BOT = /bot|crawl|spider|slurp|preview|headless|lighthouse|pagespeed|facebookexternalhit|whatsapp\/|curl|wget|python|axios|node-fetch/i;
 
 // India date for "today" (YYYY-MM-DD) — the dashboard counts by Indian days
@@ -41,12 +42,17 @@ export async function recordProfileEvent(req, { therapistId, type, vid, src }) {
   const tid = new mongoose.Types.ObjectId(String(therapistId));
   const inc = {};
   if (type === "view") {
-    inc.views = 1;
-    inc[`sources.${SOURCES.includes(src) ? src : "other"}`] = 1;
+    // the same browser counts at most MAX_VIEWS_PER_VISITOR times a day per profile
     const v = String(vid || "").replace(/[^a-z0-9-]/gi, "").slice(0, 40);
     if (v) {
-      try { await ProfileVisitor.create({ therapist: tid, day, vid: v }); inc.visitors = 1; } catch (e) { if (e.code !== 11000) throw e; }
+      const bump = () => ProfileVisitor.findOneAndUpdate({ therapist: tid, day, vid: v }, { $inc: { n: 1 }, $setOnInsert: { at: new Date() } }, { upsert: true, new: true });
+      let row;
+      try { row = await bump(); } catch (e) { if (e.code !== 11000) throw e; row = await bump(); } // two first views at once
+      if (row.n > MAX_VIEWS_PER_VISITOR) return { counted: false, capped: true };
+      if (row.n === 1) inc.visitors = 1;
     }
+    inc.views = 1;
+    inc[`sources.${SOURCES.includes(src) ? src : "other"}`] = 1;
   } else if (ACTIONS.includes(type)) {
     inc[type] = 1;
   } else {
