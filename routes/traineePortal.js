@@ -1,6 +1,6 @@
 import express from "express";
 import {
-  traineeAuth, myOverview, myAttendance, traineeCheckIn, traineeCheckOut, myTasks, updateMyTask, myNotes, myCertificates,
+  traineeAuth, myNotifications, readMyNotifications, traineeStream, myOverview, myAttendance, traineeCheckIn, traineeCheckOut, myTasks, updateMyTask, myNotes, myCertificates,
   myProfile, saveMyProfile, upgradeInfo, upgradeOrder, upgradeVerify,
   adminPeople, adminAttendance, adminFixAttendance, adminTasks, adminCreateTask, adminUpdateTask, adminDeleteTask,
   adminGrantPlan, adminGrants, adminNotes, adminCreateNote, adminDeleteNote, adminCertificates, adminSendCertificate, adminDeleteCertificate,
@@ -16,6 +16,9 @@ const one = (mw, field) => (req, res, next) => mw.single(field)(req, res, (err) 
   : next()));
 
 // trainee portal (trainee token)
+router.get("/trainee-portal/stream", traineeStream); // SSE, token in ?token=
+router.get("/trainee-portal/notifications", traineeAuth, myNotifications);
+router.post("/trainee-portal/notifications/read", traineeAuth, readMyNotifications);
 router.get("/trainee-portal/overview", traineeAuth, myOverview);
 router.get("/trainee-portal/attendance", traineeAuth, myAttendance);
 router.post("/trainee-portal/attendance/check-in", traineeAuth, traineeCheckIn);

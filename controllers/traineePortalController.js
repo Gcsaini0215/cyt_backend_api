@@ -13,6 +13,8 @@ import TraineeCertificate from "../models/TraineeCertificate.js";
 import TraineeMaterial from "../models/TraineeMaterial.js";
 import { sendMail } from "../helper/mailer.js";
 import { INTERN_FEES, signTraineeToken } from "./traineeController.js";
+import TraineeNotification from "../models/TraineeNotification.js";
+import { addTraineeStream, notifyTrainees, traineeChanged, toTraineeRow, emitTraineeRead } from "../services/traineeNotify.js";
 
 /* Trainee portal: attendance (check in / out), tasks from the CYT team, notes (worksheets / slides),
    certificates, profile, and buying more internship hours. Trainees are keyed by email — the same
@@ -45,6 +47,51 @@ export const traineeAuth = expressAsyncHandler(async (req, res, next) => {
   req.trainee = { email, name: d.name || "Trainee", traineeId: d.traineeId || null, accountId: d.accountId || null };
   next();
 });
+
+/* ═════════════ Notifications (bell + live stream) ═════════════ */
+
+/* GET /api/trainee-portal/notifications */
+export const myNotifications = expressAsyncHandler(async (req, res) => {
+  const { email } = req.trainee;
+  const [rows, unread] = await Promise.all([
+    TraineeNotification.find({ email }).sort({ createdAt: -1 }).limit(40).lean(),
+    TraineeNotification.countDocuments({ email, read_at: null }),
+  ]);
+  res.json({ status: true, data: { items: rows.map(toTraineeRow), unread } });
+});
+
+/* POST /api/trainee-portal/notifications/read { ids? } — no ids = mark everything read */
+export const readMyNotifications = expressAsyncHandler(async (req, res) => {
+  const { email } = req.trainee;
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((x) => /^[a-f0-9]{24}$/i.test(String(x))) : null;
+  const q = { email, read_at: null };
+  if (ids) q._id = { $in: ids };
+  await TraineeNotification.updateMany(q, { $set: { read_at: new Date() } });
+  emitTraineeRead(email, ids);
+  res.json({ status: true, data: { unread: await TraineeNotification.countDocuments({ email, read_at: null }) } });
+});
+
+/* GET /api/trainee-portal/stream?token= — live notifications + "changed" events (SSE) */
+export const traineeStream = (req, res) => {
+  let d;
+  try { d = Jwt.verify(String(req.query.token || ""), process.env.JWT_SECRET, { algorithms: ["HS256"] }); } catch { d = null; }
+  if (!d || d.kind !== "trainee" || !d.email) return res.status(401).json({ status: false, message: "Please sign in" });
+  res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+  res.flushHeaders?.();
+  res.write("retry: 3000\n\n");
+  res.write(`event: hello\ndata: ${JSON.stringify({ at: Date.now() })}\n\n`);
+  const remove = addTraineeStream(res, String(d.email).toLowerCase());
+  req.on("close", remove);
+};
+
+// every trainee who can use the portal (for notes shared with everyone)
+async function allTraineeEmails() {
+  const [accs, apps] = await Promise.all([
+    TraineeAccount.find({ approval: "approved" }, { email: 1 }).lean(),
+    Trainee.find({ email: { $ne: "" }, status: { $ne: "rejected" } }, { email: 1 }).lean(),
+  ]);
+  return [...new Set([...accs, ...apps].map((x) => String(x.email).toLowerCase()))];
+}
 
 const applicationOf = async (t) => (t.traineeId ? Trainee.findById(t.traineeId) : null)
   || Trainee.findOne({ email: new RegExp(`^${t.email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") }).sort({ createdAt: -1 });
@@ -97,6 +144,7 @@ export const traineeCheckIn = expressAsyncHandler(async (req, res) => {
     { $setOnInsert: { email, name, date, checkIn: new Date() } },
     { upsert: true, new: true },
   );
+  traineeChanged(email, "attendance");
   res.json({ status: true, data: rowOut(made), message: "Checked in — have a good session!" });
 });
 
@@ -109,6 +157,7 @@ export const traineeCheckOut = expressAsyncHandler(async (req, res) => {
   row.checkOut = new Date();
   row.note = clip(req.body?.note, 1000);
   await row.save();
+  traineeChanged(email, "attendance");
   res.json({ status: true, data: rowOut(row), message: "Checked out — well done today!" });
 });
 
@@ -151,6 +200,7 @@ export const updateMyTask = expressAsyncHandler(async (req, res) => {
       `${task.name} (${task.email}) marked "${task.title}" as done.${task.traineeNote ? `\nNote: ${task.traineeNote}` : ""}${task.link ? `\nLink: ${task.link}` : ""}`,
       `<p><b>${esc(task.name)}</b> (${esc(task.email)}) marked <b>${esc(task.title)}</b> as done.</p>${task.traineeNote ? `<p>Note: ${esc(task.traineeNote)}</p>` : ""}${task.link ? `<p>Link: <a href="${esc(task.link)}">${esc(task.link)}</a></p>` : ""}`);
   }
+  traineeChanged(task.email, "tasks");
   res.json({ status: true, data: task, message: task.status === "done" ? "Marked as done — the team has been told" : "Saved" });
 });
 
@@ -263,6 +313,7 @@ export const saveMyProfile = expressAsyncHandler(async (req, res) => {
     Object.assign(app, { name: full || app.name, phone: acc.phone || app.phone, city: acc.city || app.city, college: acc.college || app.college });
     await app.save();
   }
+  traineeChanged(t.email, "profile");
   res.json({ status: true, data: await profileOf(t), token: signTraineeToken(acc, app), message: "Profile saved" });
 });
 
@@ -328,6 +379,7 @@ export const upgradeVerify = expressAsyncHandler(async (req, res) => {
       `Hi ${app.name}, your internship is now ${n.to} (${app.duration}). We received ₹${pay}. Payment ID: ${pid}.`,
       `<p>Hi ${esc(app.name)},</p><p>Your internship is now <b>${esc(n.to)}</b> (${esc(app.duration)}). We received <b>₹${pay}</b>.</p><p>Payment ID: ${esc(pid)}</p><p><a href="${PORTAL}">Open your trainee portal →</a></p>`);
   }
+  notifyTrainees(req.trainee.email, { type: "plan", title: `Upgraded to ${n.to}`, body: `Payment of ₹${pay} received. Your internship is now ${n.to}.`, link: "/trainee/upgrade" });
   res.json({ status: true, data: app, message: `Upgraded to ${n.to}` });
 });
 
@@ -380,6 +432,7 @@ export const adminFixAttendance = expressAsyncHandler(async (req, res) => {
   if ((row.checkIn && Number.isNaN(row.checkIn.getTime())) || (row.checkOut && Number.isNaN(row.checkOut.getTime()))) return res.status(400).json({ status: false, message: "Invalid time" });
   if (row.checkIn && row.checkOut && row.checkOut < row.checkIn) return res.status(400).json({ status: false, message: "Check-out must be after check-in" });
   await row.save();
+  notifyTrainees(row.email, { type: "attendance", title: "Your attendance was updated", body: `The team corrected your times for ${row.date}.`, link: "/trainee/attendance" });
   res.json({ status: true, data: { ...rowOut(row), email: row.email, name: row.name }, message: "Updated" });
 });
 
@@ -408,6 +461,7 @@ export const adminCreateTask = expressAsyncHandler(async (req, res) => {
       `Hi ${r.name || "there"}, the CYT team has sent you a new task: ${r.title}.${r.due ? ` Due: ${r.due.toDateString()}.` : ""} Open your trainee portal: ${PORTAL}/tasks`,
       `<p>Hi ${esc(r.name || "there")},</p><p>The CYT team has sent you a new task: <b>${esc(r.title)}</b>${r.due ? ` — due <b>${esc(r.due.toDateString())}</b>` : ""}.</p>${r.details ? `<p style="white-space:pre-line">${esc(r.details)}</p>` : ""}<p><a href="${PORTAL}/tasks">Open your tasks →</a></p>`);
   }
+  notifyTrainees(rows.map((r) => r.email), { type: "task", title: `New task: ${rows[0].title}`, body: rows[0].due ? `Due ${rows[0].due.toDateString()}` : (rows[0].details || "").slice(0, 140), link: "/trainee/tasks" });
   res.json({ status: true, data: rows, message: `Task sent to ${rows.length} trainee${rows.length === 1 ? "" : "s"}` });
 });
 
@@ -422,12 +476,14 @@ export const adminUpdateTask = expressAsyncHandler(async (req, res) => {
   if (b.priority !== undefined && ["low", "normal", "high"].includes(b.priority)) task.priority = b.priority;
   if (b.status !== undefined && ["todo", "doing", "done"].includes(b.status)) { task.status = b.status; task.doneAt = b.status === "done" ? (task.doneAt || new Date()) : null; }
   await task.save();
+  notifyTrainees(task.email, { type: "task-update", title: `Task updated: ${task.title}`, body: b.status ? `Status: ${{ todo: "To do", doing: "In progress", done: "Done" }[task.status]}` : "The team edited this task.", link: "/trainee/tasks" });
   res.json({ status: true, data: task, message: "Task updated" });
 });
 
 /* DELETE /api/admin/trainee-portal/tasks/:id */
 export const adminDeleteTask = expressAsyncHandler(async (req, res) => {
-  await TraineeTask.deleteOne({ _id: req.params.id });
+  const gone = await TraineeTask.findByIdAndDelete(req.params.id);
+  if (gone) traineeChanged(gone.email, "tasks");
   res.json({ status: true, message: "Task deleted" });
 });
 
@@ -454,6 +510,10 @@ export const adminCreateNote = expressAsyncHandler(async (req, res) => {
     file: req.file ? `resources/${req.file.filename}` : "", fileName: req.file ? clip(req.file.originalname, 160) : "",
     link, forAll, emails: forAll ? [] : emails, sentBy: adminName(req),
   });
+  notifyTrainees(forAll ? await allTraineeEmails() : emails, {
+    type: "note", title: `New ${{ worksheet: "worksheet", ppt: "slides", notes: "notes", other: "file" }[note.kind]}: ${note.title}`,
+    body: note.details.slice(0, 140), link: "/trainee/notes",
+  });
   if (!forAll) {
     for (const e of emails) {
       mail(e, `New notes from CYT: ${note.title}`, `The CYT team has shared "${note.title}" with you. Open it in your trainee portal: ${PORTAL}/notes`,
@@ -467,6 +527,7 @@ export const adminCreateNote = expressAsyncHandler(async (req, res) => {
 export const adminDeleteNote = expressAsyncHandler(async (req, res) => {
   const note = await TraineeMaterial.findByIdAndDelete(req.params.id);
   if (note?.file) removeUpload(note.file);
+  if (note) traineeChanged("*", "note");
   res.json({ status: true, message: "Removed" });
 });
 
@@ -488,6 +549,7 @@ export const adminSendCertificate = expressAsyncHandler(async (req, res) => {
   mail(email, `Your ${cert.title} is ready`,
     `Hi ${cert.name || "there"}, congratulations! Your ${cert.title} from Choose Your Therapist is ready. Download it from your trainee portal: ${PORTAL}/certificate`,
     `<p>Hi ${esc(cert.name || "there")},</p><p>Congratulations! Your <b>${esc(cert.title)}</b> from Choose Your Therapist is ready.</p>${cert.note ? `<p>${esc(cert.note)}</p>` : ""}<p><a href="${PORTAL}/certificate">Download it from your trainee portal →</a></p>`);
+  notifyTrainees(email, { type: "certificate", title: `Your ${cert.title} is ready`, body: "Download it from the Certificate page.", link: "/trainee/certificate" });
   res.json({ status: true, data: cert, message: "Certificate sent — the trainee has been emailed" });
 });
 
@@ -495,6 +557,7 @@ export const adminSendCertificate = expressAsyncHandler(async (req, res) => {
 export const adminDeleteCertificate = expressAsyncHandler(async (req, res) => {
   const cert = await TraineeCertificate.findByIdAndDelete(req.params.id);
   if (cert?.file) removeUpload(cert.file);
+  if (cert) traineeChanged(cert.email, "certificate");
   res.json({ status: true, message: "Certificate removed" });
 });
 
@@ -544,6 +607,7 @@ export const adminGrantPlan = expressAsyncHandler(async (req, res) => {
     });
     message = `Gave ${name} a free ${hours} internship`;
   }
+  notifyTrainees(email, { type: "plan", title: `You've got ${hours} free`, body: note || `The CYT team gave you ${hours} (${DURATION_OF[hours]}) of internship free of charge.`, link: "/trainee" });
   // giving a plan also lets a waiting account sign in
   await TraineeAccount.updateOne({ email, approval: "pending" }, { $set: { approval: "approved", reviewedAt: new Date(), reviewedBy: by } });
   mail(email, `Your internship plan: ${hours}`,
