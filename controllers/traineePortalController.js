@@ -163,6 +163,50 @@ export const myNotes = expressAsyncHandler(async (req, res) => {
   res.json({ status: true, data: list });
 });
 
+/* GET /api/trainee-portal/overview — everything the dashboard home needs in one call */
+export const myOverview = expressAsyncHandler(async (req, res) => {
+  const { email } = req.trainee;
+  await closeStale({ email });
+  const today = istDate();
+  const weekFrom = istDate(new Date(Date.now() - 6 * 86400000));
+  const [app, allAtt, tasks, notes, certs] = await Promise.all([
+    applicationOf(req.trainee),
+    TraineeAttendance.find({ email }, { date: 1, checkIn: 1, checkOut: 1 }).lean(),
+    TraineeTask.find({ email }).sort({ createdAt: -1 }).limit(300).lean(),
+    TraineeMaterial.find({ $or: [{ forAll: true }, { emails: email }] }, { emails: 0 }).sort({ createdAt: -1 }).limit(3).lean(),
+    TraineeCertificate.find({ email }).sort({ createdAt: -1 }).limit(1).lean(),
+  ]);
+  const month = today.slice(0, 7);
+  const totalMinutes = allAtt.reduce((s, r) => s + minutesOf(r), 0);
+  const week = [];
+  for (let i = 6; i >= 0; i -= 1) {
+    const d = istDate(new Date(Date.now() - i * 86400000));
+    const r = allAtt.find((x) => x.date === d);
+    week.push({ date: d, minutes: r ? minutesOf(r) : 0 });
+  }
+  const open = tasks.filter((t) => t.status !== "done").sort(taskOrder);
+  const overdue = open.filter((t) => t.due && istDate(new Date(t.due)) < today).length;
+  res.json({
+    status: true,
+    data: {
+      program: app ? {
+        hours: app.hours, duration: app.duration, mode: app.mode, tracks: app.internType || [], status: app.status,
+        startFrom: app.availableFrom, appliedAt: app.createdAt, paid: app.paymentStatus === "paid",
+        canUpgrade: !!INTERN_FEES[app.hours] && upgradeOptions(app.hours).length > 0,
+      } : null,
+      attendance: {
+        totalMinutes, totalDays: allAtt.length,
+        monthDays: allAtt.filter((r) => r.date.startsWith(month)).length,
+        monthMinutes: allAtt.filter((r) => r.date.startsWith(month)).reduce((s, r) => s + minutesOf(r), 0),
+        week, weekDays: allAtt.filter((r) => r.date >= weekFrom).length,
+      },
+      tasks: { open: open.length, overdue, done: tasks.length - open.length, next: open.slice(0, 3) },
+      notes,
+      certificate: certs[0] || null,
+    },
+  });
+});
+
 /* GET /api/trainee-portal/certificates */
 export const myCertificates = expressAsyncHandler(async (req, res) => {
   const list = await TraineeCertificate.find({ email: req.trainee.email }).sort({ createdAt: -1 }).lean();
