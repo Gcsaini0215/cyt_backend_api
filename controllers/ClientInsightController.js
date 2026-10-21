@@ -64,16 +64,28 @@ export const listClients = expressAsyncHandler(async (req, res) => {
     AssessmentOrder.aggregate([{ $match: { user: { $in: ids }, status: "paid" } }, { $group: { _id: "$user", spent: { $sum: "$amount" } } }]),
     WorkshopBooking.aggregate([{ $match: { user: { $in: ids }, is_payment_success: true } }, { $group: { _id: "$user", n: { $sum: 1 }, spent: { $sum: { $toDouble: { $ifNull: ["$amount", 0] } } } } }]),
   ]);
+  // Noida centre payments, matched by phone (last 10 digits) or email
+  const phones = users.map((u) => last10(u.phone)).filter((x) => x.length === 10);
+  const emails = users.map((u) => String(u.email || "").toLowerCase()).filter(Boolean);
+  const noidaPaid = phones.length || emails.length
+    ? await NoidaAppointment.find({ paymentStatus: "paid", $or: [...(phones.length ? [{ phone: { $in: phones.flatMap((x) => [x, `+91${x}`, `91${x}`, `+91 ${x}`]) } }] : []), ...(emails.length ? [{ email: { $in: emails } }] : [])] }, { phone: 1, email: 1, amount: 1, date: 1 }).lean()
+    : [];
+  const noidaBy = new Map();
+  for (const u of users) {
+    const ph = last10(u.phone); const em = String(u.email || "").toLowerCase();
+    const mine = noidaPaid.filter((n) => (ph.length === 10 && last10(n.phone) === ph) || (em && String(n.email || "").toLowerCase() === em));
+    if (mine.length) noidaBy.set(String(u._id), { spent: mine.reduce((x, n) => x + (n.amount || 0), 0), n: mine.length, last: mine.map((n) => n.date).sort().pop() });
+  }
   const m = (arr) => new Map(arr.map((x) => [String(x._id), x]));
   const B = m(bk); const A = m(ar); const O = m(ao); const W = m(wb);
   const data = users.map((u) => {
     const id = String(u._id);
-    const b = B.get(id) || {}; const a = A.get(id) || {}; const o = O.get(id) || {}; const w = W.get(id) || {};
-    const last = [b.last, a.last, u.last_visit].filter(Boolean).map((d) => new Date(d)).sort((x, y) => y - x)[0] || null;
+    const b = B.get(id) || {}; const a = A.get(id) || {}; const o = O.get(id) || {}; const w = W.get(id) || {}; const nd = noidaBy.get(id) || {};
+    const last = [b.last, a.last, u.last_visit, nd.last].filter(Boolean).map((d) => new Date(d)).sort((x, y) => y - x)[0] || null;
     return {
       _id: id, name: u.name, email: u.email, phone: u.phone, photo: u.profile || "", joined: u.createdAt, verified: !!u.is_verified,
       sessions: b.sessions || 0, completed: b.completed || 0, upcoming: b.upcoming || 0, assessments: a.n || 0, workshops: w.n || 0,
-      spent: Math.round((b.spent || 0) + (o.spent || 0) + (w.spent || 0)), lastActivity: last,
+      noida: nd.n || 0, spent: Math.round((b.spent || 0) + (o.spent || 0) + (w.spent || 0) + (nd.spent || 0)), lastActivity: last,
     };
   });
   res.json({ status: true, data, total, page, pages: Math.max(1, Math.ceil(total / limit)) });
