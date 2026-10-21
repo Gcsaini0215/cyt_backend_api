@@ -3,7 +3,7 @@ import {
   traineeAuth, myNotifications, readMyNotifications, traineeStream, myOverview, myAttendance, traineeCheckIn, traineeCheckOut, myTasks, updateMyTask, myNotes, myCertificates,
   myProfile, saveMyProfile, upgradeInfo, upgradeOrder, upgradeVerify,
   adminPeople, adminAttendance, adminFixAttendance, adminTasks, adminCreateTask, adminUpdateTask, adminDeleteTask,
-  adminGrantPlan, adminGrants, adminRemoveGrant, adminNotes, adminCreateNote, adminDeleteNote, adminCertificates, adminSendCertificate, adminDeleteCertificate,
+  adminGrantPlan, adminGrants, adminRemoveGrant, publicTracks, adminTracks, adminSaveTracks, adminNotes, adminCreateNote, adminDeleteNote, adminCertificates, adminSendCertificate, adminDeleteCertificate,
 } from "../controllers/traineePortalController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
 import { upload, uploadResource, uploadTraineeMaterial } from "../services/fileUpload.js";
@@ -17,6 +17,7 @@ const one = (mw, field) => (req, res, next) => mw.single(field)(req, res, (err) 
 
 // trainee portal (trainee token)
 router.get("/trainee-portal/stream", traineeStream); // SSE, token in ?token=
+router.get("/trainee-portal/tracks", publicTracks); // public: tracks open for applications
 router.get("/trainee-portal/notifications", traineeAuth, myNotifications);
 router.post("/trainee-portal/notifications/read", traineeAuth, readMyNotifications);
 router.get("/trainee-portal/overview", traineeAuth, myOverview);
@@ -44,6 +45,8 @@ router.patch("/admin/trainee-portal/tasks/:id", adm, adminUpdateTask);
 router.delete("/admin/trainee-portal/tasks/:id", adm, adminDeleteTask);
 router.post("/admin/trainee-portal/grant", adm, adminGrantPlan);
 router.get("/admin/trainee-portal/grants", adm, adminGrants);
+router.get("/admin/trainee-portal/tracks", adm, adminTracks);
+router.put("/admin/trainee-portal/tracks", adm, adminSaveTracks);
 router.post("/admin/trainee-portal/grants/remove", adm, adminRemoveGrant);
 router.get("/admin/trainee-portal/notes", adm, adminNotes);
 router.post("/admin/trainee-portal/notes", adm, one(uploadTraineeMaterial, "file"), adminCreateNote);

@@ -14,6 +14,7 @@ import TraineeMaterial from "../models/TraineeMaterial.js";
 import { sendMail } from "../helper/mailer.js";
 import { INTERN_FEES, signTraineeToken } from "./traineeController.js";
 import TraineeNotification from "../models/TraineeNotification.js";
+import TraineeSetting from "../models/TraineeSetting.js";
 import { addTraineeStream, notifyTrainees, traineeChanged, toTraineeRow, emitTraineeRead } from "../services/traineeNotify.js";
 
 /* Trainee portal: attendance (check in / out), tasks from the CYT team, notes (worksheets / slides),
@@ -349,7 +350,7 @@ export const upgradeInfo = expressAsyncHandler(async (req, res) => {
     return res.json({
       status: true,
       data: {
-        application: false, tracks: TRACKS,
+        application: false, tracks: await openTracks(),
         options: Object.entries(INTERN_FEES).map(([h, fee]) => ({ hours: h, duration: DURATION_OF[h], fee, extra: hoursNum(h), pay: fee, offer: false })),
       },
     });
@@ -371,7 +372,8 @@ export const upgradeOrder = expressAsyncHandler(async (req, res) => {
   const to = String(req.body?.hours || "");
   if (!app) {
     const fee = INTERN_FEES[to];
-    const tracks = (Array.isArray(req.body?.tracks) ? req.body.tracks : []).filter((t) => TRACKS.includes(t));
+    const open = await openTracks();
+    const tracks = (Array.isArray(req.body?.tracks) ? req.body.tracks : []).filter((t) => open.includes(t));
     const mode = ["Online", "Offline"].includes(req.body?.mode) ? req.body.mode : "Online";
     if (!fee) return res.status(400).json({ status: false, message: "Please choose a plan." });
     if (!tracks.length) return res.status(400).json({ status: false, message: "Choose at least one track." });
@@ -808,4 +810,34 @@ export const adminRemoveGrant = expressAsyncHandler(async (req, res) => {
   }
   traineeChanged(email, "plan");
   res.json({ status: true, message });
+});
+
+/* ═════ Tracks on / off (admin) ═════ */
+
+async function offTracks() {
+  const doc = await TraineeSetting.findOne({ key: "main" }).lean();
+  return doc?.offTracks || [];
+}
+export async function openTracks() {
+  const off = new Set(await offTracks());
+  return TRACKS.filter((t) => !off.has(t));
+}
+
+/* GET /api/trainees/tracks — public: tracks open for applications (form + portal) */
+export const publicTracks = expressAsyncHandler(async (req, res) => {
+  res.json({ status: true, data: await openTracks(), all: TRACKS });
+});
+
+/* GET /api/admin/trainee-portal/tracks */
+export const adminTracks = expressAsyncHandler(async (req, res) => {
+  const off = new Set(await offTracks());
+  res.json({ status: true, data: TRACKS.map((t) => ({ name: t, on: !off.has(t) })) });
+});
+
+/* PUT /api/admin/trainee-portal/tracks { off: [names] } */
+export const adminSaveTracks = expressAsyncHandler(async (req, res) => {
+  const off = (Array.isArray(req.body?.off) ? req.body.off : []).filter((t) => TRACKS.includes(t));
+  if (off.length >= TRACKS.length) return res.status(400).json({ status: false, message: "Keep at least one track open" });
+  await TraineeSetting.updateOne({ key: "main" }, { $set: { offTracks: off, updatedBy: adminName(req) } }, { upsert: true });
+  res.json({ status: true, data: TRACKS.map((t) => ({ name: t, on: !off.includes(t) })), message: "Tracks saved" });
 });
