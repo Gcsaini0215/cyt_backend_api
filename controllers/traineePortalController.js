@@ -463,7 +463,7 @@ const adminName = (req) => String(req.user?.name || req.user?.email || "Admin");
 export const adminPeople = expressAsyncHandler(async (req, res) => {
   const [accs, apps] = await Promise.all([
     TraineeAccount.find({ approval: "approved" }, { firstName: 1, lastName: 1, email: 1, phone: 1, photo: 1, college: 1 }).lean(),
-    Trainee.find({ email: { $ne: "" }, status: { $ne: "rejected" } }, { name: 1, email: 1, phone: 1, hours: 1, duration: 1, mode: 1, internType: 1, status: 1, paymentStatus: 1, college: 1, availableFrom: 1 }).sort({ createdAt: -1 }).lean(),
+    Trainee.find({ email: { $ne: "" }, status: { $ne: "rejected" } }, { name: 1, email: 1, phone: 1, hours: 1, duration: 1, mode: 1, internType: 1, status: 1, paymentStatus: 1, college: 1, availableFrom: 1, passportPhoto: 1 }).sort({ createdAt: -1 }).lean(),
   ]);
   const by = new Map();
   for (const a of apps) {
@@ -472,6 +472,7 @@ export const adminPeople = expressAsyncHandler(async (req, res) => {
       by.set(e, {
         email: e, name: a.name, phone: a.phone, hours: a.hours, duration: a.duration, mode: a.mode, tracks: a.internType || [],
         status: a.status, payment: a.paymentStatus || "", college: a.college || "", startFrom: a.availableFrom || "",
+        photo: a.passportPhoto ? `documents/${a.passportPhoto}` : "",
         active: a.status === "active", // only interns marked Active on the Internships page use the portal lists
       });
     }
@@ -480,7 +481,7 @@ export const adminPeople = expressAsyncHandler(async (req, res) => {
     const e = a.email;
     const name = [a.firstName, a.lastName].filter(Boolean).join(" ");
     const cur = by.get(e) || { email: e, hours: "", status: "account", active: false, tracks: [] };
-    by.set(e, { ...cur, name: name || cur.name, phone: a.phone || cur.phone, photo: a.photo || "", college: cur.college || a.college || "" });
+    by.set(e, { ...cur, name: name || cur.name, phone: a.phone || cur.phone, photo: a.photo || cur.photo || "", college: cur.college || a.college || "" });
   }
   await closeStale({});
   const emails = [...by.keys()];
