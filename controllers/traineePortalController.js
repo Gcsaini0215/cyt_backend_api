@@ -390,23 +390,41 @@ const adminName = (req) => String(req.user?.name || req.user?.email || "Admin");
 /* GET /api/admin/trainee-portal/people — everyone who can use the portal, with today's attendance */
 export const adminPeople = expressAsyncHandler(async (req, res) => {
   const [accs, apps] = await Promise.all([
-    TraineeAccount.find({ approval: "approved" }, { firstName: 1, lastName: 1, email: 1, phone: 1, photo: 1 }).lean(),
-    Trainee.find({ email: { $ne: "" }, status: { $ne: "rejected" } }, { name: 1, email: 1, phone: 1, hours: 1, status: 1, paymentStatus: 1 }).sort({ createdAt: -1 }).lean(),
+    TraineeAccount.find({ approval: "approved" }, { firstName: 1, lastName: 1, email: 1, phone: 1, photo: 1, college: 1 }).lean(),
+    Trainee.find({ email: { $ne: "" }, status: { $ne: "rejected" } }, { name: 1, email: 1, phone: 1, hours: 1, duration: 1, mode: 1, internType: 1, status: 1, paymentStatus: 1, college: 1, availableFrom: 1 }).sort({ createdAt: -1 }).lean(),
   ]);
   const by = new Map();
   for (const a of apps) {
     const e = String(a.email).toLowerCase();
-    if (!by.has(e)) by.set(e, { email: e, name: a.name, phone: a.phone, hours: a.hours, status: a.status, payment: a.paymentStatus || "" });
+    if (!by.has(e)) {
+      by.set(e, {
+        email: e, name: a.name, phone: a.phone, hours: a.hours, duration: a.duration, mode: a.mode, tracks: a.internType || [],
+        status: a.status, payment: a.paymentStatus || "", college: a.college || "", startFrom: a.availableFrom || "",
+        active: a.status === "active", // only interns marked Active on the Internships page use the portal lists
+      });
+    }
   }
   for (const a of accs) {
     const e = a.email;
     const name = [a.firstName, a.lastName].filter(Boolean).join(" ");
-    by.set(e, { ...(by.get(e) || { email: e, hours: "", status: "account" }), name: name || by.get(e)?.name, phone: a.phone || by.get(e)?.phone, photo: a.photo || "" });
+    const cur = by.get(e) || { email: e, hours: "", status: "account", active: false, tracks: [] };
+    by.set(e, { ...cur, name: name || cur.name, phone: a.phone || cur.phone, photo: a.photo || "", college: cur.college || a.college || "" });
   }
   await closeStale({});
-  const today = await TraineeAttendance.find({ date: istDate() }).lean();
+  const emails = [...by.keys()];
+  const [today, totals, open] = await Promise.all([
+    TraineeAttendance.find({ date: istDate() }).lean(),
+    TraineeAttendance.find({ email: { $in: emails } }, { email: 1, checkIn: 1, checkOut: 1 }).lean(),
+    TraineeTask.aggregate([{ $match: { email: { $in: emails }, status: { $ne: "done" } } }, { $group: { _id: "$email", n: { $sum: 1 } } }]),
+  ]);
   const att = new Map(today.map((r) => [r.email, rowOut(r)]));
-  const data = [...by.values()].map((p) => ({ ...p, today: att.get(p.email) || null })).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const mins = new Map();
+  const days = new Map();
+  for (const r of totals) { mins.set(r.email, (mins.get(r.email) || 0) + minutesOf(r)); days.set(r.email, (days.get(r.email) || 0) + 1); }
+  const openTasks = new Map(open.map((x) => [x._id, x.n]));
+  const data = [...by.values()].map((p) => ({
+    ...p, today: att.get(p.email) || null, totalMinutes: mins.get(p.email) || 0, days: days.get(p.email) || 0, openTasks: openTasks.get(p.email) || 0,
+  })).sort((x, y) => String(x.name).localeCompare(String(y.name)));
   res.json({ status: true, data });
 });
 
