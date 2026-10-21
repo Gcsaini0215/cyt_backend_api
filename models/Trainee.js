@@ -31,6 +31,10 @@ const TraineeSchema = new Schema(
     collegeId: { type: String, default: "" },
     passportPhoto: { type: String, default: "" },
     status: { type: String, enum: ["pending", "active", "completed", "rejected"], default: "pending" },
+    // trainee portal sign-in (email OTP) — separate from the client / therapist accounts
+    login_otp: { type: String, default: "", select: false },
+    login_otp_at: { type: Date, default: null },
+    login_otp_tries: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

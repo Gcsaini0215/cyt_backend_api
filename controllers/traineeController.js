@@ -3,6 +3,11 @@ import Joi from "joi";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import Trainee from "../models/Trainee.js";
+import TraineeAccount from "../models/TraineeAccount.js";
+import Jwt from "jsonwebtoken";
+import { generate6DigitOTP } from "../helper/generate.js";
+import { sendMail } from "../helper/mailer.js";
+import { loginOtpEmail } from "../services/mailTemplates.js";
 
 // Program fee ladder — the source of truth for what an application is charged. The public form
 // shows the same numbers, but the amount is always decided here, never taken from the browser.
@@ -141,11 +146,13 @@ export const createTrainee = expressAsyncHandler(async (req, res, next) => {
 
 /* GET /api/trainees/:slug — public, powers the trainee's profile page */
 export const getTraineeBySlug = expressAsyncHandler(async (req, res, next) => {
-  const trainee = await Trainee.findOne({ slug: req.params.slug });
+  const trainee = await Trainee.findOne({ slug: req.params.slug })
+    .select("slug name internType mode duration hours status availableFrom college createdAt").lean();
   if (!trainee) {
     res.status(404);
     throw new Error("Trainee not found");
   }
+  // public: no contact details, payment ids or documents — those come from /trainees/me after sign-in
   res.json({ status: true, data: trainee });
 });
 
@@ -180,4 +187,129 @@ export const deleteTrainee = expressAsyncHandler(async (req, res, next) => {
     throw new Error("Trainee not found");
   }
   res.json({ status: true, message: "Trainee deleted" });
+});
+
+/* ── Trainee portal sign-in: email OTP — against the internship application (Trainee) or a portal account
+   made with "Create account" (TraineeAccount). The token is a trainee-only JWT ({ kind: "trainee" }),
+   kept apart from the client / therapist login. ── */
+const TRAINEE_TTL = "30d";
+const OTP_VALID_MS = 10 * 60 * 1000;
+const cleanEmail = (email) => {
+  const e = String(email || "").trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : "";
+};
+const emailRx = (e) => new RegExp(`^${e.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+const applicationByEmail = (e) => Trainee.findOne({ email: emailRx(e), status: { $ne: "rejected" } }).sort({ createdAt: -1 });
+
+// who signs in with this email: the application first, otherwise a verified portal account
+async function loginTarget(e, withOtp = false) {
+  let q = applicationByEmail(e);
+  if (withOtp) q = q.select("+login_otp");
+  const app = await q;
+  if (app) return { doc: app, app };
+  let aq = TraineeAccount.findOne({ email: e, verified: true });
+  if (withOtp) aq = aq.select("+login_otp");
+  const acc = await aq;
+  return acc ? { doc: acc, app: null } : null;
+}
+
+const nameOf = (d) => d.name || [d.firstName, d.lastName].filter(Boolean).join(" ") || "Trainee";
+export const signTraineeToken = (doc, app) => Jwt.sign({
+  kind: "trainee",
+  traineeId: app ? String(app._id) : null,
+  accountId: app ? null : String(doc._id),
+  slug: app ? app.slug : null,
+  name: nameOf(app || doc),
+  email: (app || doc).email,
+  phone: (app || doc).phone || "",
+}, process.env.JWT_SECRET, { expiresIn: TRAINEE_TTL, algorithm: "HS256" });
+
+async function sendCode(doc, subject) {
+  if (doc.login_otp_at && Date.now() - new Date(doc.login_otp_at).getTime() < 30000) return { wait: true };
+  const otp = String(generate6DigitOTP());
+  doc.login_otp = otp;
+  doc.login_otp_at = new Date();
+  doc.login_otp_tries = 0;
+  await doc.save();
+  const ok = await sendMail(doc.email, subject, `Your Choose Your Therapist trainee portal code is ${otp}. It is valid for 10 minutes.`, loginOtpEmail(nameOf(doc), otp));
+  return { ok };
+}
+async function checkCode(doc, otp) {
+  if (!doc || !doc.login_otp) return "Please request a new code.";
+  if (!doc.login_otp_at || Date.now() - new Date(doc.login_otp_at).getTime() > OTP_VALID_MS) return "This code has expired — please request a new one.";
+  if (doc.login_otp_tries >= 5) return "Too many wrong codes — please request a new one.";
+  if (String(otp || "").trim() !== doc.login_otp) {
+    doc.login_otp_tries += 1;
+    await doc.save();
+    return "That code isn't right — please check and try again.";
+  }
+  doc.login_otp = "";
+  doc.login_otp_tries = 0;
+  return "";
+}
+
+/* POST /api/trainees/login { email } — send a sign-in code */
+export const traineeLoginOtp = expressAsyncHandler(async (req, res) => {
+  const e = cleanEmail(req.body?.email);
+  if (!e) return res.status(400).json({ status: false, message: "Enter a valid email address" });
+  const target = await loginTarget(e);
+  if (!target) return res.status(404).json({ status: false, message: "No trainee account with this email yet — tap Create account below." });
+  const r = await sendCode(target.doc, "Your trainee portal sign-in code");
+  if (r.wait) return res.status(429).json({ status: false, message: "A code was just sent — please wait a few seconds and try again." });
+  if (!r.ok) return res.status(502).json({ status: false, message: "Couldn't send the code — please try again." });
+  res.json({ status: true, message: "Code sent to your email" });
+});
+
+/* POST /api/trainees/verify-otp { email, otp } — returns { token, slug } (slug null = no application yet) */
+export const traineeVerifyOtp = expressAsyncHandler(async (req, res) => {
+  const e = cleanEmail(req.body?.email);
+  const target = e ? await loginTarget(e, true) : null;
+  const err = await checkCode(target?.doc, req.body?.otp);
+  if (err) return res.status(err.startsWith("Too many") ? 429 : 400).json({ status: false, message: err });
+  await target.doc.save();
+  res.json({ status: true, token: signTraineeToken(target.doc, target.app), slug: target.app ? target.app.slug : null });
+});
+
+/* POST /api/trainees/register { firstName, lastName, phone, email } — "Create account": sends a code */
+export const traineeRegister = expressAsyncHandler(async (req, res) => {
+  const firstName = String(req.body?.firstName || "").trim().slice(0, 60);
+  const lastName = String(req.body?.lastName || "").trim().slice(0, 60);
+  const phone = String(req.body?.phone || "").replace(/\D/g, "").slice(-10);
+  const e = cleanEmail(req.body?.email);
+  if (firstName.length < 2) return res.status(400).json({ status: false, message: "Enter your first name" });
+  if (!/^[6-9]\d{9}$/.test(phone)) return res.status(400).json({ status: false, message: "Enter a valid 10-digit mobile number" });
+  if (!e) return res.status(400).json({ status: false, message: "Enter a valid email address" });
+  if (await applicationByEmail(e) || await TraineeAccount.exists({ email: e, verified: true })) {
+    return res.status(409).json({ status: false, message: "An account with this email already exists — please sign in instead." });
+  }
+  let acc = await TraineeAccount.findOne({ email: e });
+  if (!acc) acc = new TraineeAccount({ email: e, firstName });
+  acc.firstName = firstName; acc.lastName = lastName; acc.phone = phone;
+  const r = await sendCode(acc, "Verify your trainee portal account");
+  if (r.wait) return res.status(429).json({ status: false, message: "A code was just sent — please wait a few seconds and try again." });
+  if (!r.ok) return res.status(502).json({ status: false, message: "Couldn't send the code — please try again." });
+  res.json({ status: true, message: "Code sent to your email" });
+});
+
+/* POST /api/trainees/register/verify { email, otp } — verifies the new account and signs in */
+export const traineeRegisterVerify = expressAsyncHandler(async (req, res) => {
+  const e = cleanEmail(req.body?.email);
+  const acc = e ? await TraineeAccount.findOne({ email: e }).select("+login_otp") : null;
+  const err = await checkCode(acc, req.body?.otp);
+  if (err) return res.status(err.startsWith("Too many") ? 429 : 400).json({ status: false, message: err });
+  acc.verified = true;
+  await acc.save();
+  const app = await applicationByEmail(e);
+  res.json({ status: true, token: signTraineeToken(acc, app), slug: app ? app.slug : null });
+});
+
+/* GET /api/trainees/me — the signed-in trainee: their application (if any) and account details */
+export const traineeMe = expressAsyncHandler(async (req, res) => {
+  const h = req.headers.authorization || "";
+  let d = null;
+  try { d = h.startsWith("Bearer ") ? Jwt.verify(h.slice(7), process.env.JWT_SECRET, { algorithms: ["HS256"] }) : null; } catch { d = null; }
+  if (!d || d.kind !== "trainee") return res.status(401).json({ status: false, message: "Please sign in" });
+  let app = d.traineeId ? await Trainee.findById(d.traineeId) : null;
+  if (!app && d.email) app = await applicationByEmail(String(d.email).toLowerCase()); // applied after making the account
+  res.json({ status: true, data: app, account: { name: d.name, email: d.email, phone: d.phone || "" }, token: app && !d.traineeId ? signTraineeToken(app, app) : undefined });
 });
