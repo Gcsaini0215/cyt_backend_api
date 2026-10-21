@@ -345,7 +345,15 @@ const upgradeOptions = (current, app = null) => {
 /* GET /api/trainee-portal/upgrade */
 export const upgradeInfo = expressAsyncHandler(async (req, res) => {
   const app = await applicationOf(req.trainee);
-  if (!app) return res.json({ status: true, data: { application: false } });
+  if (!app) {
+    return res.json({
+      status: true,
+      data: {
+        application: false, tracks: TRACKS,
+        options: Object.entries(INTERN_FEES).map(([h, fee]) => ({ hours: h, duration: DURATION_OF[h], fee, extra: hoursNum(h), pay: fee, offer: false })),
+      },
+    });
+  }
   res.json({
     status: true,
     data: {
@@ -360,8 +368,19 @@ export const upgradeInfo = expressAsyncHandler(async (req, res) => {
 /* POST /api/trainee-portal/upgrade/order { hours } — the amount is the fee difference, decided here */
 export const upgradeOrder = expressAsyncHandler(async (req, res) => {
   const app = await applicationOf(req.trainee);
-  if (!app) return res.status(400).json({ status: false, message: "Apply for the internship first." });
   const to = String(req.body?.hours || "");
+  if (!app) {
+    const fee = INTERN_FEES[to];
+    const tracks = (Array.isArray(req.body?.tracks) ? req.body.tracks : []).filter((t) => TRACKS.includes(t));
+    const mode = ["Online", "Offline"].includes(req.body?.mode) ? req.body.mode : "Online";
+    if (!fee) return res.status(400).json({ status: false, message: "Please choose a plan." });
+    if (!tracks.length) return res.status(400).json({ status: false, message: "Choose at least one track." });
+    const order = await getRazorpay().orders.create({
+      amount: fee * 100, currency: "INR", receipt: `intern_new_${Date.now()}`,
+      notes: { purpose: "internship-new", email: req.trainee.email, to, pay: String(fee), mode, tracks: tracks.join("|").slice(0, 250) },
+    });
+    return res.json({ status: true, data: { orderId: order.id, amount: fee, keyId: process.env.RAZORPAY_KEY_ID } });
+  }
   const opt = INTERN_FEES[app.hours] ? upgradeOptions(app.hours, app).find((o) => o.hours === to) : null;
   if (!opt || opt.pay <= 0) return res.status(400).json({ status: false, message: "Please choose a bigger plan than your current one." });
   const order = await getRazorpay().orders.create({
@@ -378,7 +397,38 @@ export const upgradeVerify = expressAsyncHandler(async (req, res) => {
   const expected = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(`${oid}|${pid}`).digest("hex");
   if (expected !== sig) return res.status(400).json({ status: false, message: "Payment could not be verified." });
   const app = await applicationOf(req.trainee);
-  if (!app) return res.status(400).json({ status: false, message: "Application not found — please contact support with your payment ID." });
+  if (!app) {
+    // first plan bought inside the portal
+    const order = await getRazorpay().orders.fetch(oid);
+    const n = order.notes || {};
+    const fee = INTERN_FEES[n.to];
+    if (n.purpose !== "internship-new" || String(n.email || "").toLowerCase() !== req.trainee.email || !fee || order.amount !== fee * 100) {
+      return res.status(400).json({ status: false, message: "The payment doesn't match this plan. Please contact support with your payment ID." });
+    }
+    const dup = await Trainee.findOne({ razorpayPaymentId: pid });
+    if (dup) return res.json({ status: true, data: dup, message: "Plan already active" });
+    const acc = await TraineeAccount.findOne({ email: req.trainee.email });
+    const name = acc ? [acc.firstName, acc.lastName].filter(Boolean).join(" ") : req.trainee.name;
+    let slug = slugify(name);
+    if (await Trainee.exists({ slug })) slug = `${slug}-${Date.now().toString().slice(-4)}`;
+    const tracks = String(n.tracks || "").split("|").filter((t) => TRACKS.includes(t));
+    const made = await Trainee.create({
+      slug, name: name || "Trainee", email: req.trainee.email, phone: acc?.phone || "", city: acc?.city || "", gender: acc?.gender || "", dob: acc?.dob || "",
+      college: acc?.college || "", degree: acc?.course || "", year: acc?.year || "",
+      internType: tracks, mode: n.mode === "Offline" ? "Offline" : "Online", duration: DURATION_OF[n.to], hours: n.to,
+      programFee: fee, transactionId: pid, paymentMethod: "razorpay", paymentStatus: "paid", razorpayOrderId: oid, razorpayPaymentId: pid,
+      status: "pending", availableFrom: istDate(),
+      upgrades: [{ from: "", to: n.to, amount: fee, paymentId: pid, orderId: oid, at: new Date() }],
+    });
+    mail(TEAM, `New internship plan bought in the portal — ${made.name}: ${n.to}`,
+      `${made.name} (${made.email}) bought ${n.to} (${made.duration}) for ₹${fee} in the trainee portal. Tracks: ${tracks.join(", ")}. Mode: ${made.mode}. Payment ${pid}. Mark them Active on the Internships page.`,
+      `<p><b>${esc(made.name)}</b> (${esc(made.email)}) bought <b>${esc(n.to)}</b> (${esc(made.duration)}) for <b>₹${fee}</b> in the trainee portal.</p><p>Tracks: ${esc(tracks.join(", "))} · Mode: ${esc(made.mode)}</p><p>Payment ID: ${esc(pid)}</p><p>Mark them <b>Active</b> on the Internships page.</p>`);
+    mail(made.email, `Your internship plan: ${n.to}`,
+      `Hi ${made.name}, thank you! Your ${n.to} (${made.duration}) internship plan is booked. We received ₹${fee}. Payment ID: ${pid}.`,
+      `<p>Hi ${esc(made.name)},</p><p>Thank you! Your <b>${esc(n.to)}</b> (${esc(made.duration)}) internship plan is booked. We received <b>₹${fee}</b>.</p><p>Payment ID: ${esc(pid)}</p><p><a href="${PORTAL}">Open your trainee portal →</a></p>`);
+    notifyTrainees(made.email, { type: "plan", title: `Your ${n.to} plan is booked`, body: `Payment of ₹${fee} received.`, link: "/trainee" });
+    return res.json({ status: true, data: made, message: `Your ${n.to} plan is booked` });
+  }
   if ((app.upgrades || []).some((u) => u.paymentId === pid)) return res.json({ status: true, data: app, message: "Upgrade already applied" });
   const order = await getRazorpay().orders.fetch(oid);
   const n = order.notes || {};
