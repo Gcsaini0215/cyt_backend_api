@@ -319,9 +319,27 @@ export const saveMyProfile = expressAsyncHandler(async (req, res) => {
 
 /* ═════════════ Upgrade internship hours ═════════════ */
 
-const upgradeOptions = (current) => Object.entries(INTERN_FEES)
-  .filter(([h]) => hoursNum(h) > hoursNum(current))
-  .map(([h, fee]) => ({ hours: h, duration: DURATION_OF[h], fee, pay: fee })); // a bigger plan costs its full price
+// Upgrade rule (kept simple): for OFFER_DAYS after getting the current plan, an upgrade costs the difference
+// (but at least MIN_PER_HOUR for every extra hour, and never more than the new plan's full price).
+// After that window it costs the new plan's full price.
+const OFFER_DAYS = 7;
+const MIN_PER_HOUR = 50;
+// when the current plan was bought: the last upgrade, else the application
+const planSince = (app) => {
+  const ups = (app?.upgrades || []).filter((u) => u.to === app.hours && u.at);
+  return ups.length ? new Date(ups[ups.length - 1].at) : new Date(app?.createdAt || Date.now());
+};
+const offerEnds = (app) => new Date(planSince(app).getTime() + OFFER_DAYS * 86400000);
+const upgradeOptions = (current, app = null) => {
+  const inOffer = !!app && Date.now() < offerEnds(app).getTime();
+  return Object.entries(INTERN_FEES)
+    .filter(([h]) => hoursNum(h) > hoursNum(current))
+    .map(([h, fee]) => {
+      const extra = hoursNum(h) - hoursNum(current);
+      const offer = Math.min(fee, Math.max(fee - (INTERN_FEES[current] || 0), extra * MIN_PER_HOUR));
+      return { hours: h, duration: DURATION_OF[h], fee, extra, pay: inOffer ? offer : fee, offer: inOffer };
+    });
+};
 
 /* GET /api/trainee-portal/upgrade */
 export const upgradeInfo = expressAsyncHandler(async (req, res) => {
@@ -331,8 +349,9 @@ export const upgradeInfo = expressAsyncHandler(async (req, res) => {
     status: true,
     data: {
       application: true, paid: app.paymentStatus === "paid", free: app.paymentStatus === "free", hours: app.hours, duration: app.duration,
-      fee: INTERN_FEES[app.hours] || app.programFee || 0, options: INTERN_FEES[app.hours] ? upgradeOptions(app.hours) : [],
+      fee: INTERN_FEES[app.hours] || app.programFee || 0, options: INTERN_FEES[app.hours] ? upgradeOptions(app.hours, app) : [],
       upgrades: app.upgrades || [],
+      offer: { days: OFFER_DAYS, minPerHour: MIN_PER_HOUR, since: planSince(app), endsAt: offerEnds(app), active: Date.now() < offerEnds(app).getTime() },
     },
   });
 });
@@ -342,11 +361,11 @@ export const upgradeOrder = expressAsyncHandler(async (req, res) => {
   const app = await applicationOf(req.trainee);
   if (!app) return res.status(400).json({ status: false, message: "Apply for the internship first." });
   const to = String(req.body?.hours || "");
-  const opt = INTERN_FEES[app.hours] ? upgradeOptions(app.hours).find((o) => o.hours === to) : null;
+  const opt = INTERN_FEES[app.hours] ? upgradeOptions(app.hours, app).find((o) => o.hours === to) : null;
   if (!opt || opt.pay <= 0) return res.status(400).json({ status: false, message: "Please choose a bigger plan than your current one." });
   const order = await getRazorpay().orders.create({
     amount: opt.pay * 100, currency: "INR", receipt: `intern_up_${Date.now()}`,
-    notes: { purpose: "internship-upgrade", traineeId: String(app._id), from: app.hours, to },
+    notes: { purpose: "internship-upgrade", traineeId: String(app._id), from: app.hours, to, pay: String(opt.pay), offer: opt.offer ? "1" : "0" },
   });
   res.json({ status: true, data: { orderId: order.id, amount: opt.pay, keyId: process.env.RAZORPAY_KEY_ID, to: opt } });
 });
@@ -362,8 +381,8 @@ export const upgradeVerify = expressAsyncHandler(async (req, res) => {
   if ((app.upgrades || []).some((u) => u.paymentId === pid)) return res.json({ status: true, data: app, message: "Upgrade already applied" });
   const order = await getRazorpay().orders.fetch(oid);
   const n = order.notes || {};
-  const pay = INTERN_FEES[n.to] || 0;
-  if (n.purpose !== "internship-upgrade" || n.traineeId !== String(app._id) || n.from !== app.hours || pay <= 0 || order.amount !== pay * 100) {
+  const pay = Number(n.pay) || INTERN_FEES[n.to] || 0;
+  if (n.purpose !== "internship-upgrade" || n.traineeId !== String(app._id) || n.from !== app.hours || !INTERN_FEES[n.to] || pay <= 0 || pay > INTERN_FEES[n.to] || order.amount !== pay * 100) {
     return res.status(400).json({ status: false, message: "The payment doesn't match this upgrade. Please contact support with your payment ID." });
   }
   app.upgrades = [...(app.upgrades || []), { from: n.from, to: n.to, amount: pay, paymentId: pid, orderId: oid, at: new Date() }];
