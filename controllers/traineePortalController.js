@@ -376,7 +376,7 @@ export const upgradeOrder = expressAsyncHandler(async (req, res) => {
     const tracks = (Array.isArray(req.body?.tracks) ? req.body.tracks : []).filter((t) => open.includes(t));
     const mode = ["Online", "Offline"].includes(req.body?.mode) ? req.body.mode : "Online";
     if (!fee) return res.status(400).json({ status: false, message: "Please choose a plan." });
-    if (!tracks.length) return res.status(400).json({ status: false, message: "Choose at least one track." });
+    if (!tracks.length) return res.status(400).json({ status: false, message: "Choose at least one Apply for option." });
     const order = await getRazorpay().orders.create({
       amount: fee * 100, currency: "INR", receipt: `intern_new_${Date.now()}`,
       notes: { purpose: "internship-new", email: req.trainee.email, to, pay: String(fee), mode, tracks: tracks.join("|").slice(0, 250) },
@@ -720,7 +720,7 @@ export const adminGrantPlan = expressAsyncHandler(async (req, res) => {
     }
     const name = [acc.firstName, acc.lastName].filter(Boolean).join(" ") || "Trainee";
     const tracks = (Array.isArray(b.tracks) ? b.tracks : []).filter((t) => TRACKS.includes(t));
-    if (!tracks.length) return res.status(400).json({ status: false, message: "Choose at least one track" });
+    if (!tracks.length) return res.status(400).json({ status: false, message: "Choose at least one Apply for option" });
     if (paid) {
       amount = Number(b.amount);
       if (!Number.isFinite(amount) || amount < 0) amount = INTERN_FEES[hours];
@@ -837,7 +837,7 @@ export const adminTracks = expressAsyncHandler(async (req, res) => {
 /* PUT /api/admin/trainee-portal/tracks { off: [names] } */
 export const adminSaveTracks = expressAsyncHandler(async (req, res) => {
   const off = (Array.isArray(req.body?.off) ? req.body.off : []).filter((t) => TRACKS.includes(t));
-  if (off.length >= TRACKS.length) return res.status(400).json({ status: false, message: "Keep at least one track open" });
+  if (off.length >= TRACKS.length) return res.status(400).json({ status: false, message: "Keep at least one Apply for option open" });
   await TraineeSetting.updateOne({ key: "main" }, { $set: { offTracks: off, updatedBy: adminName(req) } }, { upsert: true });
-  res.json({ status: true, data: TRACKS.map((t) => ({ name: t, on: !off.includes(t) })), message: "Tracks saved" });
+  res.json({ status: true, data: TRACKS.map((t) => ({ name: t, on: !off.includes(t) })), message: "Apply for list saved" });
 });
