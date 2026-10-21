@@ -566,61 +566,98 @@ export const adminDeleteCertificate = expressAsyncHandler(async (req, res) => {
 const TRACKS = ["Clinical Psychology", "Counselling Psychology", "Industrial & Organizational Psychology", "Research & Data", "Content / Social Media", "Administrative / Operations", "Social Media & Outreach"];
 const slugify = (name) => String(name || "trainee").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "trainee";
 
-/* POST /api/admin/trainee-portal/grant { email, hours, tracks?, mode?, note? }
-   Gives a trainee internship hours free of charge: upgrades an existing application, or — for someone
-   who only made a portal account — creates their internship with that plan. */
+/* POST /api/admin/trainee-portal/grant
+   { email, hours, kind: "free" | "paid", amount?, ref?, tracks?, mode?, note?, name?, phone? }
+   Gives a trainee internship hours — free of charge, or recorded as already paid (offline / earlier).
+   Upgrades an existing application; creates the internship for someone who only made a portal account;
+   and with name (+ phone) adds a trainee who never signed up (their account is created, approved). */
 export const adminGrantPlan = expressAsyncHandler(async (req, res) => {
   const b = req.body || {};
   const email = String(b.email || "").toLowerCase().trim();
   const hours = String(b.hours || "");
-  if (!email) return res.status(400).json({ status: false, message: "Choose a trainee" });
+  const paid = b.kind === "paid";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ status: false, message: "Enter a valid email" });
   if (!INTERN_FEES[hours]) return res.status(400).json({ status: false, message: "Choose a valid plan" });
   const note = clip(b.note, 300);
+  const ref = clip(b.ref, 120);
   const by = adminName(req);
+  const stamp = `${paid ? "admin-paid" : "admin-free"}-${Date.now()}`;
+  const label = `by ${by}${paid ? ` · paid${ref ? ` (${ref})` : ""}` : ""}${note ? ` — ${note}` : ""}`;
   const app = await applicationOf({ email, traineeId: null });
   let message;
+  let amount = 0;
   if (app) {
     if (hoursNum(hours) <= hoursNum(app.hours)) return res.status(400).json({ status: false, message: `They already have ${app.hours}. Choose a bigger plan.` });
     const from = app.hours;
-    app.upgrades = [...(app.upgrades || []), { from, to: hours, amount: 0, paymentId: `free-${Date.now()}`, orderId: `by ${by}${note ? ` — ${note}` : ""}`, at: new Date() }];
+    if (paid) {
+      amount = Number(b.amount);
+      if (!Number.isFinite(amount) || amount < 0) amount = Math.max(0, (INTERN_FEES[hours] || 0) - (INTERN_FEES[from] || 0));
+    }
+    app.upgrades = [...(app.upgrades || []), { from, to: hours, amount: Math.round(amount), paymentId: ref && paid ? `${stamp}:${ref}` : stamp, orderId: label, at: new Date() }];
     app.hours = hours;
     app.duration = DURATION_OF[hours] || app.duration;
+    if (paid) app.programFee = INTERN_FEES[hours];
     if (app.status === "pending" || app.status === "rejected") app.status = "active";
     await app.save();
-    message = `Upgraded ${app.name} from ${from || "—"} to ${hours} — free`;
+    message = `Upgraded ${app.name} from ${from || "—"} to ${hours}${paid ? ` — recorded as paid ₹${Math.round(amount)}` : " — free"}`;
   } else {
-    const acc = await TraineeAccount.findOne({ email });
-    if (!acc) return res.status(404).json({ status: false, message: "No trainee account with this email" });
+    let acc = await TraineeAccount.findOne({ email });
+    if (!acc) {
+      const nm = clip(b.name, 120);
+      if (nm.length < 2) return res.status(404).json({ status: false, message: "No trainee with this email — add their name to create them" });
+      const phone = clip(b.phone, 16);
+      if (phone && !/^[0-9+\-\s]{7,16}$/.test(phone)) return res.status(400).json({ status: false, message: "Enter a valid mobile number" });
+      acc = await TraineeAccount.create({ ...splitName(nm), email, phone, verified: true, approval: "approved", reviewedAt: new Date(), reviewedBy: by });
+    }
     const name = [acc.firstName, acc.lastName].filter(Boolean).join(" ") || "Trainee";
-    let slug = slugify(name);
-    if (await Trainee.exists({ slug })) slug = `${slug}-${Date.now().toString().slice(-4)}`;
     const tracks = (Array.isArray(b.tracks) ? b.tracks : []).filter((t) => TRACKS.includes(t));
     if (!tracks.length) return res.status(400).json({ status: false, message: "Choose at least one track" });
+    if (paid) {
+      amount = Number(b.amount);
+      if (!Number.isFinite(amount) || amount < 0) amount = INTERN_FEES[hours];
+    }
+    let slug = slugify(name);
+    if (await Trainee.exists({ slug })) slug = `${slug}-${Date.now().toString().slice(-4)}`;
     await Trainee.create({
       slug, name, email, phone: acc.phone || "", city: acc.city || "", gender: acc.gender || "", dob: acc.dob || "",
       college: acc.college || "", degree: acc.course || "", year: acc.year || "",
       internType: tracks, mode: ["Online", "Offline"].includes(b.mode) ? b.mode : "Online",
-      duration: DURATION_OF[hours], hours, programFee: 0, paymentMethod: "free-by-admin", paymentStatus: "free",
-      transactionId: `free — by ${by}${note ? ` — ${note}` : ""}`, status: "active",
+      duration: DURATION_OF[hours], hours,
+      programFee: paid ? Math.round(amount) : 0,
+      paymentMethod: paid ? "offline-by-admin" : "free-by-admin",
+      paymentStatus: paid ? "paid" : "free",
+      transactionId: ref || `${paid ? "paid" : "free"} — ${label}`, status: "active",
       availableFrom: istDate(),
-      upgrades: [{ from: "", to: hours, amount: 0, paymentId: `free-${Date.now()}`, orderId: `by ${by}${note ? ` — ${note}` : ""}`, at: new Date() }],
+      upgrades: [{ from: "", to: hours, amount: Math.round(amount), paymentId: ref && paid ? `${stamp}:${ref}` : stamp, orderId: label, at: new Date() }],
     });
-    message = `Gave ${name} a free ${hours} internship`;
+    message = paid ? `Added ${name} — ${hours}, recorded as paid ₹${Math.round(amount)}` : `Gave ${name} a free ${hours} internship`;
   }
-  notifyTrainees(email, { type: "plan", title: `You've got ${hours} free`, body: note || `The CYT team gave you ${hours} (${DURATION_OF[hours]}) of internship free of charge.`, link: "/trainee" });
+  notifyTrainees(email, paid
+    ? { type: "plan", title: `Your internship plan: ${hours}`, body: note || `${hours} (${DURATION_OF[hours]}) is now active on your portal.`, link: "/trainee" }
+    : { type: "plan", title: `You've got ${hours} free`, body: note || `The CYT team gave you ${hours} (${DURATION_OF[hours]}) of internship free of charge.`, link: "/trainee" });
   // giving a plan also lets a waiting account sign in
   await TraineeAccount.updateOne({ email, approval: "pending" }, { $set: { approval: "approved", reviewedAt: new Date(), reviewedBy: by } });
-  mail(email, `Your internship plan: ${hours}`,
-    `Good news! The CYT team has given you ${hours} (${DURATION_OF[hours]}) of internship free of charge.${note ? ` ${note}` : ""} Open your trainee portal: ${PORTAL}`,
-    `<p>Good news!</p><p>The CYT team has given you <b>${esc(hours)}</b> (${esc(DURATION_OF[hours])}) of internship <b>free of charge</b>.</p>${note ? `<p>${esc(note)}</p>` : ""}<p><a href="${PORTAL}">Open your trainee portal →</a></p>`);
+  const portal = "https://www.chooseyourtherapist.in/supervision-login";
+  mail(email, paid ? `Your internship plan is active: ${hours}` : `Your internship plan: ${hours}`,
+    paid
+      ? `Your Choose Your Therapist internship plan ${hours} (${DURATION_OF[hours]}) is now active.${note ? ` ${note}` : ""} Sign in to your trainee portal with this email: ${portal}`
+      : `Good news! The CYT team has given you ${hours} (${DURATION_OF[hours]}) of internship free of charge.${note ? ` ${note}` : ""} Sign in to your trainee portal with this email: ${portal}`,
+    paid
+      ? `<p>Your Choose Your Therapist internship plan <b>${esc(hours)}</b> (${esc(DURATION_OF[hours])}) is now active.</p>${note ? `<p>${esc(note)}</p>` : ""}<p>Sign in to your trainee portal with this email address:</p><p><a href="${portal}">Open the trainee portal →</a></p>`
+      : `<p>Good news!</p><p>The CYT team has given you <b>${esc(hours)}</b> (${esc(DURATION_OF[hours])}) of internship <b>free of charge</b>.</p>${note ? `<p>${esc(note)}</p>` : ""}<p>Sign in to your trainee portal with this email address:</p><p><a href="${portal}">Open the trainee portal →</a></p>`);
   res.json({ status: true, message });
 });
 
-/* GET /api/admin/trainee-portal/grants — free plans / upgrades given so far */
+/* GET /api/admin/trainee-portal/grants — plans / upgrades added by the team (free or already paid) */
 export const adminGrants = expressAsyncHandler(async (req, res) => {
-  const apps = await Trainee.find({ "upgrades.amount": 0 }, { name: 1, email: 1, hours: 1, upgrades: 1, paymentStatus: 1 }).sort({ updatedAt: -1 }).limit(500).lean();
+  const apps = await Trainee.find({ "upgrades.paymentId": /^(free-|admin-)/ }, { name: 1, email: 1, hours: 1, upgrades: 1, paymentStatus: 1 }).sort({ updatedAt: -1 }).limit(500).lean();
   const rows = [];
-  for (const a of apps) for (const u of a.upgrades || []) if (u.amount === 0) rows.push({ name: a.name, email: a.email, from: u.from, to: u.to, by: u.orderId, at: u.at, newPlan: a.paymentStatus === "free" && !u.from });
+  for (const a of apps) {
+    for (const u of a.upgrades || []) {
+      if (!/^(free-|admin-)/.test(u.paymentId || "")) continue;
+      rows.push({ name: a.name, email: a.email, from: u.from, to: u.to, amount: u.amount, kind: /^admin-paid/.test(u.paymentId) ? "paid" : "free", by: u.orderId, at: u.at });
+    }
+  }
   rows.sort((x, y) => new Date(y.at) - new Date(x.at));
   res.json({ status: true, data: rows, tracks: TRACKS, fees: INTERN_FEES });
 });
