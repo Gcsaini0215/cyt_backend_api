@@ -676,9 +676,48 @@ export const adminGrants = expressAsyncHandler(async (req, res) => {
   for (const a of apps) {
     for (const u of a.upgrades || []) {
       if (!/^(free-|admin-)/.test(u.paymentId || "")) continue;
-      rows.push({ name: a.name, email: a.email, from: u.from, to: u.to, amount: u.amount, kind: /^admin-paid/.test(u.paymentId) ? "paid" : "free", confirmed: !!u.from && u.from === u.to, by: u.orderId, at: u.at });
+      rows.push({ appId: String(a._id), paymentId: u.paymentId, name: a.name, email: a.email, from: u.from, to: u.to, amount: u.amount, kind: /^admin-paid/.test(u.paymentId) ? "paid" : "free", confirmed: !!u.from && u.from === u.to, by: u.orderId, at: u.at });
     }
   }
   rows.sort((x, y) => new Date(y.at) - new Date(x.at));
   res.json({ status: true, data: rows, tracks: TRACKS, fees: INTERN_FEES });
+});
+
+/* POST /api/admin/trainee-portal/grants/remove { appId, paymentId } — undo a plan the team added:
+   a new internship made by the team is deleted; an upgrade goes back to the previous hours (latest one
+   only); a confirmed payment goes back to "not verified". */
+export const adminRemoveGrant = expressAsyncHandler(async (req, res) => {
+  const { appId, paymentId } = req.body || {};
+  if (!/^[a-f0-9]{24}$/i.test(String(appId || "")) || !paymentId) return res.status(400).json({ status: false, message: "Nothing to remove" });
+  const app = await Trainee.findById(appId);
+  const list = app?.upgrades || [];
+  const idx = list.findIndex((u) => u.paymentId === paymentId);
+  if (!app || idx < 0 || !/^(free-|admin-)/.test(paymentId)) return res.status(404).json({ status: false, message: "That entry is already gone" });
+  const u = list[idx];
+  const email = String(app.email || "").toLowerCase();
+  let message;
+  if (!u.from) {
+    // a whole internship the team created — only when it was made here (never a real applicant's form)
+    if (!["free-by-admin", "offline-by-admin"].includes(app.paymentMethod) || list.length > 1) {
+      return res.status(400).json({ status: false, message: "Remove their later upgrades first" });
+    }
+    await Trainee.deleteOne({ _id: app._id });
+    message = `Removed ${app.name}'s ${u.to} plan`;
+  } else {
+    if (idx !== list.length - 1) return res.status(400).json({ status: false, message: "Remove the newer change for this trainee first" });
+    if (u.from === u.to) {
+      app.paymentStatus = "unverified";
+      if (app.paymentMethod === "offline-by-admin") app.paymentMethod = "upi-manual";
+      message = `Undid the payment confirmation for ${app.name}`;
+    } else {
+      app.hours = u.from;
+      app.duration = DURATION_OF[u.from] || app.duration;
+      if (/^admin-paid/.test(paymentId)) app.programFee = INTERN_FEES[u.from] || app.programFee;
+      message = `${app.name} is back on ${u.from}`;
+    }
+    app.upgrades = list.filter((_, i) => i !== idx);
+    await app.save();
+  }
+  traineeChanged(email, "plan");
+  res.json({ status: true, message });
 });

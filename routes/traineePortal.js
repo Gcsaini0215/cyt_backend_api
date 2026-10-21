@@ -3,7 +3,7 @@ import {
   traineeAuth, myNotifications, readMyNotifications, traineeStream, myOverview, myAttendance, traineeCheckIn, traineeCheckOut, myTasks, updateMyTask, myNotes, myCertificates,
   myProfile, saveMyProfile, upgradeInfo, upgradeOrder, upgradeVerify,
   adminPeople, adminAttendance, adminFixAttendance, adminTasks, adminCreateTask, adminUpdateTask, adminDeleteTask,
-  adminGrantPlan, adminGrants, adminNotes, adminCreateNote, adminDeleteNote, adminCertificates, adminSendCertificate, adminDeleteCertificate,
+  adminGrantPlan, adminGrants, adminRemoveGrant, adminNotes, adminCreateNote, adminDeleteNote, adminCertificates, adminSendCertificate, adminDeleteCertificate,
 } from "../controllers/traineePortalController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
 import { upload, uploadResource, uploadTraineeMaterial } from "../services/fileUpload.js";
@@ -44,6 +44,7 @@ router.patch("/admin/trainee-portal/tasks/:id", adm, adminUpdateTask);
 router.delete("/admin/trainee-portal/tasks/:id", adm, adminDeleteTask);
 router.post("/admin/trainee-portal/grant", adm, adminGrantPlan);
 router.get("/admin/trainee-portal/grants", adm, adminGrants);
+router.post("/admin/trainee-portal/grants/remove", adm, adminRemoveGrant);
 router.get("/admin/trainee-portal/notes", adm, adminNotes);
 router.post("/admin/trainee-portal/notes", adm, one(uploadTraineeMaterial, "file"), adminCreateNote);
 router.delete("/admin/trainee-portal/notes/:id", adm, adminDeleteNote);
