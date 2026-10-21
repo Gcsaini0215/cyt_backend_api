@@ -586,8 +586,27 @@ export const adminGrantPlan = expressAsyncHandler(async (req, res) => {
   const app = await applicationOf({ email, traineeId: null });
   let message;
   let amount = 0;
-  if (app) {
-    if (hoursNum(hours) <= hoursNum(app.hours)) return res.status(400).json({ status: false, message: `They already have ${app.hours}. Choose a bigger plan.` });
+  let confirmed = false;
+  if (app && paid && hours === app.hours) {
+    // "already paid" for the plan they chose — confirm the payment and give portal access (no upgrade)
+    amount = Number(b.amount);
+    if (!Number.isFinite(amount) || amount < 0) amount = INTERN_FEES[hours] || 0;
+    app.paymentStatus = "paid";
+    if (app.paymentMethod !== "razorpay") app.paymentMethod = "offline-by-admin";
+    app.programFee = Math.round(amount);
+    if (ref) app.transactionId = ref;
+    if (app.status === "pending" || app.status === "rejected") app.status = "active";
+    app.upgrades = [...(app.upgrades || []), { from: hours, to: hours, amount: Math.round(amount), paymentId: ref ? `${stamp}:${ref}` : stamp, orderId: label, at: new Date() }];
+    await app.save();
+    // the portal account (if they made one) is approved too
+    const name = app.name || "Trainee";
+    if (!(await TraineeAccount.exists({ email }))) {
+      await TraineeAccount.create({ ...splitName(name), email, phone: app.phone || "", verified: true, approval: "approved", reviewedAt: new Date(), reviewedBy: by });
+    }
+    confirmed = true;
+    message = `Confirmed ${name}'s ${hours} plan as paid ₹${Math.round(amount)} — they can sign in now`;
+  } else if (app) {
+    if (hoursNum(hours) <= hoursNum(app.hours)) return res.status(400).json({ status: false, message: `They already have ${app.hours}. Choose a bigger plan${paid ? `, or ${app.hours} to confirm it as paid` : ""}.` });
     const from = app.hours;
     if (paid) {
       amount = Number(b.amount);
@@ -632,13 +651,15 @@ export const adminGrantPlan = expressAsyncHandler(async (req, res) => {
     });
     message = paid ? `Added ${name} — ${hours}, recorded as paid ₹${Math.round(amount)}` : `Gave ${name} a free ${hours} internship`;
   }
-  notifyTrainees(email, paid
+  notifyTrainees(email, confirmed
+    ? { type: "plan", title: `Your ${hours} plan is confirmed`, body: note || "Payment received — your internship is active.", link: "/trainee" }
+    : paid
     ? { type: "plan", title: `Your internship plan: ${hours}`, body: note || `${hours} (${DURATION_OF[hours]}) is now active on your portal.`, link: "/trainee" }
     : { type: "plan", title: `You've got ${hours} free`, body: note || `The CYT team gave you ${hours} (${DURATION_OF[hours]}) of internship free of charge.`, link: "/trainee" });
   // giving a plan also lets a waiting account sign in
   await TraineeAccount.updateOne({ email, approval: "pending" }, { $set: { approval: "approved", reviewedAt: new Date(), reviewedBy: by } });
   const portal = "https://www.chooseyourtherapist.in/supervision-login";
-  mail(email, paid ? `Your internship plan is active: ${hours}` : `Your internship plan: ${hours}`,
+  mail(email, confirmed ? `Your internship is confirmed — ${hours}` : paid ? `Your internship plan is active: ${hours}` : `Your internship plan: ${hours}`,
     paid
       ? `Your Choose Your Therapist internship plan ${hours} (${DURATION_OF[hours]}) is now active.${note ? ` ${note}` : ""} Sign in to your trainee portal with this email: ${portal}`
       : `Good news! The CYT team has given you ${hours} (${DURATION_OF[hours]}) of internship free of charge.${note ? ` ${note}` : ""} Sign in to your trainee portal with this email: ${portal}`,
@@ -655,7 +676,7 @@ export const adminGrants = expressAsyncHandler(async (req, res) => {
   for (const a of apps) {
     for (const u of a.upgrades || []) {
       if (!/^(free-|admin-)/.test(u.paymentId || "")) continue;
-      rows.push({ name: a.name, email: a.email, from: u.from, to: u.to, amount: u.amount, kind: /^admin-paid/.test(u.paymentId) ? "paid" : "free", by: u.orderId, at: u.at });
+      rows.push({ name: a.name, email: a.email, from: u.from, to: u.to, amount: u.amount, kind: /^admin-paid/.test(u.paymentId) ? "paid" : "free", confirmed: !!u.from && u.from === u.to, by: u.orderId, at: u.at });
     }
   }
   rows.sort((x, y) => new Date(y.at) - new Date(x.at));
