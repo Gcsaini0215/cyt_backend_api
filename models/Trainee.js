@@ -30,6 +30,11 @@ const TraineeSchema = new Schema(
     resume: { type: String, default: "" },
     collegeId: { type: String, default: "" },
     passportPhoto: { type: String, default: "" },
+    // hours upgrades bought later from the trainee portal (pays only the difference)
+    upgrades: {
+      type: [{ from: String, to: String, amount: Number, paymentId: String, orderId: String, at: Date }],
+      default: [],
+    },
     status: { type: String, enum: ["pending", "active", "completed", "rejected"], default: "pending" },
     // trainee portal sign-in (email OTP) — separate from the client / therapist accounts
     login_otp: { type: String, default: "", select: false },

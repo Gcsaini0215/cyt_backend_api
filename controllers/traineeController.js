@@ -11,7 +11,7 @@ import { loginOtpEmail } from "../services/mailTemplates.js";
 
 // Program fee ladder — the source of truth for what an application is charged. The public form
 // shows the same numbers, but the amount is always decided here, never taken from the browser.
-const INTERN_FEES = {
+export const INTERN_FEES = {
   "30 hrs": 1999,
   "40 hrs": 2499,
   "60 hrs": 3499,

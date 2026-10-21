@@ -107,6 +107,21 @@ export const uploadTherapistCompletion = multer({
   limits: { fileSize: 5 * MB },
 });
 
+// Trainee-portal notes from the CYT team — worksheets, slides, documents, sheets, images (25 MB)
+const MATERIAL_EXT = [...DOC_EXT, ".ppt", ".pptx", ".xls", ".xlsx"];
+const MATERIAL_MIME = [
+  ...DOC_MIME,
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+];
+export const uploadTraineeMaterial = multer({
+  storage: diskStore(resourcesPath),
+  fileFilter: checkFile(MATERIAL_EXT, MATERIAL_MIME),
+  limits: { fileSize: 25 * MB },
+});
+
 // Delete uploaded file
 export const deleteFile = (filePath) => {
   fs.unlink(filePath, (err) => {
