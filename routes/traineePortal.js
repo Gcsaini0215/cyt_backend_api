@@ -2,7 +2,7 @@ import express from "express";
 import {
   traineeAuth, myNotifications, readMyNotifications, traineeStream, myOverview, myAttendance, traineeCheckIn, traineeCheckOut, myTasks, updateMyTask, myNotes, myCertificates,
   myProfile, saveMyProfile, upgradeInfo, upgradeOrder, upgradeVerify,
-  adminPeople, adminAttendance, adminFixAttendance, adminTasks, adminCreateTask, adminUpdateTask, adminDeleteTask,
+  adminPeople, adminAttendance, adminFixAttendance, adminSetAttendance, adminDeleteAttendance, adminTasks, adminCreateTask, adminUpdateTask, adminDeleteTask,
   adminGrantPlan, adminGrants, adminRemoveGrant, publicTracks, adminTracks, adminSaveTracks, adminNotes, adminCreateNote, adminDeleteNote, adminCertificates, adminSendCertificate, adminDeleteCertificate,
 } from "../controllers/traineePortalController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
@@ -39,6 +39,8 @@ const adm = hasPermission("probono");
 router.get("/admin/trainee-portal/people", adm, adminPeople);
 router.get("/admin/trainee-portal/attendance", adm, adminAttendance);
 router.patch("/admin/trainee-portal/attendance/:id", adm, adminFixAttendance);
+router.post("/admin/trainee-portal/attendance", adm, adminSetAttendance);
+router.delete("/admin/trainee-portal/attendance/:id", adm, adminDeleteAttendance);
 router.get("/admin/trainee-portal/tasks", adm, adminTasks);
 router.post("/admin/trainee-portal/tasks", adm, adminCreateTask);
 router.patch("/admin/trainee-portal/tasks/:id", adm, adminUpdateTask);

@@ -841,3 +841,30 @@ export const adminSaveTracks = expressAsyncHandler(async (req, res) => {
   await TraineeSetting.updateOne({ key: "main" }, { $set: { offTracks: off, updatedBy: adminName(req) } }, { upsert: true });
   res.json({ status: true, data: TRACKS.map((t) => ({ name: t, on: !off.includes(t) })), message: "Apply for list saved" });
 });
+
+/* POST /api/admin/trainee-portal/attendance { email, name, date, checkIn, checkOut } — add / correct a day */
+export const adminSetAttendance = expressAsyncHandler(async (req, res) => {
+  const b = req.body || {};
+  const email = String(b.email || "").toLowerCase().trim();
+  const date = String(b.date || "");
+  if (!email || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ status: false, message: "Choose a trainee and a day" });
+  const read = (v) => (v ? new Date(v) : null);
+  const checkIn = read(b.checkIn);
+  const checkOut = read(b.checkOut);
+  if (!checkIn || Number.isNaN(checkIn.getTime())) return res.status(400).json({ status: false, message: "Enter the check-in time" });
+  if (checkOut && (Number.isNaN(checkOut.getTime()) || checkOut < checkIn)) return res.status(400).json({ status: false, message: "Check-out must be after check-in" });
+  const row = await TraineeAttendance.findOneAndUpdate(
+    { email, date },
+    { $set: { checkIn, checkOut, autoOut: false, name: clip(b.name, 120) || undefined }, $setOnInsert: { email, date } },
+    { upsert: true, new: true },
+  );
+  traineeChanged(email, "attendance");
+  res.json({ status: true, data: { ...rowOut(row), email: row.email, name: row.name }, message: "Attendance saved" });
+});
+
+/* DELETE /api/admin/trainee-portal/attendance/:id — remove a day */
+export const adminDeleteAttendance = expressAsyncHandler(async (req, res) => {
+  const row = await TraineeAttendance.findByIdAndDelete(req.params.id);
+  if (row) traineeChanged(row.email, "attendance");
+  res.json({ status: true, message: "Day removed" });
+});
