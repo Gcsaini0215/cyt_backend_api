@@ -331,7 +331,8 @@ const planSince = (app) => {
 };
 const offerEnds = (app) => new Date(planSince(app).getTime() + OFFER_DAYS * 86400000);
 const upgradeOptions = (current, app = null) => {
-  const inOffer = !!app && Date.now() < offerEnds(app).getTime();
+  // the offer credits money actually paid — a plan given free by CYT gets no credit (full price)
+  const inOffer = !!app && app.paymentStatus !== "free" && Date.now() < offerEnds(app).getTime();
   return Object.entries(INTERN_FEES)
     .filter(([h]) => hoursNum(h) > hoursNum(current))
     .map(([h, fee]) => {
@@ -351,7 +352,7 @@ export const upgradeInfo = expressAsyncHandler(async (req, res) => {
       application: true, paid: app.paymentStatus === "paid", free: app.paymentStatus === "free", hours: app.hours, duration: app.duration,
       fee: INTERN_FEES[app.hours] || app.programFee || 0, options: INTERN_FEES[app.hours] ? upgradeOptions(app.hours, app) : [],
       upgrades: app.upgrades || [],
-      offer: { days: OFFER_DAYS, minPerHour: MIN_PER_HOUR, since: planSince(app), endsAt: offerEnds(app), active: Date.now() < offerEnds(app).getTime() },
+      offer: { days: OFFER_DAYS, minPerHour: MIN_PER_HOUR, since: planSince(app), endsAt: offerEnds(app), freePlan: app.paymentStatus === "free", active: app.paymentStatus !== "free" && Date.now() < offerEnds(app).getTime() },
     },
   });
 });
