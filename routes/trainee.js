@@ -3,6 +3,7 @@ import {
   createTrainee, createTraineeOrder, getTraineeBySlug,
   getAllTrainees, updateTraineeStatus, deleteTrainee,
   traineeLoginOtp, traineeVerifyOtp, traineeMe, traineeRegister, traineeRegisterVerify,
+  adminTraineeAccounts, adminReviewTraineeAccount,
 } from "../controllers/traineeController.js";
 import { leadRateLimit } from "../middlewares/rateLimitMiddleware.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
@@ -22,6 +23,8 @@ router.post(
   createTrainee
 );
 router.get("/admin/trainees", hasPermission("probono"), getAllTrainees);
+router.get("/admin/trainee-accounts", hasPermission("probono"), adminTraineeAccounts);
+router.patch("/admin/trainee-accounts/:id", hasPermission("probono"), adminReviewTraineeAccount);
 router.patch("/admin/trainees/:id/status", hasPermission("probono"), updateTraineeStatus);
 router.delete("/admin/trainees/:id", hasPermission("probono"), deleteTrainee);
 // trainee portal sign-in (before /trainees/:slug so "me" isn't read as a slug)

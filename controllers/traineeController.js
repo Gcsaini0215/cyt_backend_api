@@ -212,6 +212,10 @@ async function loginTarget(e, withOtp = false) {
   const acc = await aq;
   return acc ? { doc: acc, app: null } : null;
 }
+const NOT_APPROVED = {
+  pending: "Your account is waiting for approval by the CYT team. We'll email you as soon as it's approved.",
+  rejected: "Your account request wasn't approved. Please contact us at +91 80777 57951 if you think this is a mistake.",
+};
 
 const nameOf = (d) => d.name || [d.firstName, d.lastName].filter(Boolean).join(" ") || "Trainee";
 export const signTraineeToken = (doc, app) => Jwt.sign({
@@ -254,6 +258,7 @@ export const traineeLoginOtp = expressAsyncHandler(async (req, res) => {
   if (!e) return res.status(400).json({ status: false, message: "Enter a valid email address" });
   const target = await loginTarget(e);
   if (!target) return res.status(404).json({ status: false, message: "No trainee account with this email yet — tap Create account below." });
+  if (!target.app && target.doc.approval !== "approved") return res.status(403).json({ status: false, pending: target.doc.approval === "pending", message: NOT_APPROVED[target.doc.approval] || NOT_APPROVED.pending });
   const r = await sendCode(target.doc, "Your trainee portal sign-in code");
   if (r.wait) return res.status(429).json({ status: false, message: "A code was just sent — please wait a few seconds and try again." });
   if (!r.ok) return res.status(502).json({ status: false, message: "Couldn't send the code — please try again." });
@@ -264,6 +269,7 @@ export const traineeLoginOtp = expressAsyncHandler(async (req, res) => {
 export const traineeVerifyOtp = expressAsyncHandler(async (req, res) => {
   const e = cleanEmail(req.body?.email);
   const target = e ? await loginTarget(e, true) : null;
+  if (target && !target.app && target.doc.approval !== "approved") return res.status(403).json({ status: false, message: NOT_APPROVED[target.doc.approval] || NOT_APPROVED.pending });
   const err = await checkCode(target?.doc, req.body?.otp);
   if (err) return res.status(err.startsWith("Too many") ? 429 : 400).json({ status: false, message: err });
   await target.doc.save();
@@ -279,8 +285,10 @@ export const traineeRegister = expressAsyncHandler(async (req, res) => {
   if (firstName.length < 2) return res.status(400).json({ status: false, message: "Enter your first name" });
   if (!/^[6-9]\d{9}$/.test(phone)) return res.status(400).json({ status: false, message: "Enter a valid 10-digit mobile number" });
   if (!e) return res.status(400).json({ status: false, message: "Enter a valid email address" });
-  if (await applicationByEmail(e) || await TraineeAccount.exists({ email: e, verified: true })) {
-    return res.status(409).json({ status: false, message: "An account with this email already exists — please sign in instead." });
+  if (await applicationByEmail(e)) return res.status(409).json({ status: false, message: "An account with this email already exists — please sign in instead." });
+  const existing = await TraineeAccount.findOne({ email: e, verified: true }).lean();
+  if (existing) {
+    return res.status(409).json({ status: false, message: existing.approval === "approved" ? "An account with this email already exists — please sign in instead." : NOT_APPROVED[existing.approval] });
   }
   let acc = await TraineeAccount.findOne({ email: e });
   if (!acc) acc = new TraineeAccount({ email: e, firstName });
@@ -300,7 +308,9 @@ export const traineeRegisterVerify = expressAsyncHandler(async (req, res) => {
   acc.verified = true;
   await acc.save();
   const app = await applicationByEmail(e);
-  res.json({ status: true, token: signTraineeToken(acc, app), slug: app ? app.slug : null });
+  if (app || acc.approval === "approved") return res.json({ status: true, token: signTraineeToken(acc, app), slug: app ? app.slug : null });
+  notifyTeamOfAccount(acc);
+  res.json({ status: true, pending: true, message: "Account created! The CYT team will approve it shortly — we'll email you when you can sign in." });
 });
 
 /* GET /api/trainees/me — the signed-in trainee: their application (if any) and account details */
@@ -312,4 +322,41 @@ export const traineeMe = expressAsyncHandler(async (req, res) => {
   let app = d.traineeId ? await Trainee.findById(d.traineeId) : null;
   if (!app && d.email) app = await applicationByEmail(String(d.email).toLowerCase()); // applied after making the account
   res.json({ status: true, data: app, account: { name: d.name, email: d.email, phone: d.phone || "" }, token: app && !d.traineeId ? signTraineeToken(app, app) : undefined });
+});
+
+// tell the team a new account is waiting (best effort)
+function notifyTeamOfAccount(acc) {
+  const name = nameOf(acc);
+  sendMail("hello@chooseyourtherapist.in", `New trainee account to approve — ${name}`,
+    `${name} (${acc.email}, ${acc.phone}) created a trainee portal account. Approve it in Admin → Trainees → Account requests.`,
+    `<p><b>${name}</b> (${acc.email}, ${acc.phone}) created a trainee portal account.</p><p>Approve it in <b>Admin → Trainees → Account requests</b>.</p>`).catch(() => {});
+}
+
+/* GET /api/admin/trainee-accounts — portal accounts (newest first) */
+export const adminTraineeAccounts = expressAsyncHandler(async (req, res) => {
+  const list = await TraineeAccount.find({ verified: true }).sort({ createdAt: -1 }).limit(500).lean();
+  const emails = list.map((a) => a.email);
+  const apps = await Trainee.find({ email: { $in: emails } }, { email: 1, slug: 1, status: 1 }).lean();
+  const byEmail = new Map(apps.map((a) => [String(a.email).toLowerCase(), a]));
+  res.json({ status: true, data: list.map((a) => ({ ...a, application: byEmail.get(a.email) || null })) });
+});
+
+/* PATCH /api/admin/trainee-accounts/:id { approval: "approved" | "rejected" } */
+export const adminReviewTraineeAccount = expressAsyncHandler(async (req, res) => {
+  const approval = String(req.body?.approval || "");
+  if (!["approved", "rejected", "pending"].includes(approval)) return res.status(400).json({ status: false, message: "Choose approve or reject" });
+  const acc = await TraineeAccount.findById(req.params.id);
+  if (!acc) return res.status(404).json({ status: false, message: "Account not found" });
+  const was = acc.approval;
+  acc.approval = approval;
+  acc.reviewedAt = new Date();
+  acc.reviewedBy = String(req.user?.name || req.user?.email || "Admin");
+  await acc.save();
+  if (approval === "approved" && was !== "approved") {
+    const site = "https://www.chooseyourtherapist.in/supervision-login";
+    sendMail(acc.email, "Your trainee account is approved",
+      `Hi ${acc.firstName}, your Choose Your Therapist trainee portal account is approved. Sign in here: ${site}`,
+      `<p>Hi ${acc.firstName},</p><p>Your Choose Your Therapist <b>trainee portal account is approved</b>. You can sign in now with your email.</p><p><a href="${site}">Sign in to the trainee portal →</a></p>`).catch(() => {});
+  }
+  res.json({ status: true, data: acc, message: approval === "approved" ? "Approved — the trainee has been emailed" : approval === "rejected" ? "Rejected" : "Moved back to pending" });
 });

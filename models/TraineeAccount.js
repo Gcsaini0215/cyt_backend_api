@@ -9,7 +9,11 @@ const TraineeAccountSchema = new Schema(
     lastName: { type: String, default: "", trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     phone: { type: String, default: "" },
-    verified: { type: Boolean, default: false },
+    verified: { type: Boolean, default: false }, // email confirmed with the code
+    // the CYT team approves new accounts before they can sign in
+    approval: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
+    reviewedAt: { type: Date, default: null },
+    reviewedBy: { type: String, default: "" },
     login_otp: { type: String, default: "", select: false },
     login_otp_at: { type: Date, default: null },
     login_otp_tries: { type: Number, default: 0 },
