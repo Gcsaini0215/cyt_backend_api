@@ -321,7 +321,7 @@ export const saveMyProfile = expressAsyncHandler(async (req, res) => {
 
 const upgradeOptions = (current) => Object.entries(INTERN_FEES)
   .filter(([h]) => hoursNum(h) > hoursNum(current))
-  .map(([h, fee]) => ({ hours: h, duration: DURATION_OF[h], fee, pay: fee - (INTERN_FEES[current] || 0) }));
+  .map(([h, fee]) => ({ hours: h, duration: DURATION_OF[h], fee, pay: fee })); // a bigger plan costs its full price
 
 /* GET /api/trainee-portal/upgrade */
 export const upgradeInfo = expressAsyncHandler(async (req, res) => {
@@ -362,7 +362,7 @@ export const upgradeVerify = expressAsyncHandler(async (req, res) => {
   if ((app.upgrades || []).some((u) => u.paymentId === pid)) return res.json({ status: true, data: app, message: "Upgrade already applied" });
   const order = await getRazorpay().orders.fetch(oid);
   const n = order.notes || {};
-  const pay = (INTERN_FEES[n.to] || 0) - (INTERN_FEES[n.from] || 0);
+  const pay = INTERN_FEES[n.to] || 0;
   if (n.purpose !== "internship-upgrade" || n.traineeId !== String(app._id) || n.from !== app.hours || pay <= 0 || order.amount !== pay * 100) {
     return res.status(400).json({ status: false, message: "The payment doesn't match this upgrade. Please contact support with your payment ID." });
   }
@@ -591,7 +591,7 @@ export const adminGrantPlan = expressAsyncHandler(async (req, res) => {
     const from = app.hours;
     if (paid) {
       amount = Number(b.amount);
-      if (!Number.isFinite(amount) || amount < 0) amount = Math.max(0, (INTERN_FEES[hours] || 0) - (INTERN_FEES[from] || 0));
+      if (!Number.isFinite(amount) || amount < 0) amount = INTERN_FEES[hours] || 0;
     }
     app.upgrades = [...(app.upgrades || []), { from, to: hours, amount: Math.round(amount), paymentId: ref && paid ? `${stamp}:${ref}` : stamp, orderId: label, at: new Date() }];
     app.hours = hours;
