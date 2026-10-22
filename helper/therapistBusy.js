@@ -68,3 +68,17 @@ export async function onlineStartsBetween(therapistId, from, to) {
   const rows = await Booking.find({ therapist: therapistId, source: { $ne: "noida" }, booking_date: { $gte: from, $lte: to }, ...liveBooking() }).select("booking_date").lean();
   return rows.map((b) => new Date(b.booking_date).getTime());
 }
+
+/* the online (website) sessions of a psychologist in a date range, with the client — shown in the CYT Noida
+   slot table so the desk sees when Deepak is busy online */
+export async function onlineSessionsBetween(therapistId, from, to) {
+  const rows = await Booking.find({ therapist: therapistId, source: { $ne: "noida" }, booking_date: { $gte: from, $lte: to }, ...liveBooking() })
+    .select("booking_date client cname service format session_type meet_link payment_status createdAt")
+    .populate("client", "name phone email")
+    .lean();
+  return rows.map((b) => ({
+    _id: String(b._id), online: true, at: b.booking_date, name: b.cname || b.client?.name || "Online client",
+    phone: b.client?.phone || "", email: b.client?.email || "", service: b.service || "", format: b.format || "",
+    mode: b.session_type || "", meetLink: b.meet_link || "", paymentStatus: b.payment_status || "", createdAt: b.createdAt,
+  }));
+}

@@ -11,7 +11,7 @@ import { resolveCoupon, normalizeCouponCode } from "../helper/noidaCoupon.js";
 import { ensureClientCode, ensureBackfilled, phoneTailRegex, samePhone } from "../helper/noidaClient.js";
 import { resolveOfferedTherapist, getOfferedTherapists } from "../helper/noidaTherapist.js";
 import { syncNoidaBooking, removeNoidaBookings, reconcileNoidaBookings, noPreferenceTherapist, noidaSlotDate, backfillPastNoidaBookings } from "../helper/noidaBookingSync.js";
-import { onlineBusyNear, onlineStartsBetween } from "../helper/therapistBusy.js";
+import { onlineBusyNear, onlineSessionsBetween } from "../helper/therapistBusy.js";
 import { requestReviewByEmail } from "./NoidaReviewController.js";
 import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import Lead from "../models/Lead.js";
@@ -207,6 +207,24 @@ async function therapistBusy(date, slot, therapistId, excludeId = null) {
 const SLOT_FULL_MESSAGE = "Sorry, that slot was just booked by someone else. Please pick another.";
 const THERAPIST_BUSY_MESSAGE = "That psychologist already has a session at this time — please pick another time, or choose no preference.";
 
+// The default psychologist's (Deepak's) online sessions laid onto centre slots: "date|slot" → [session].
+// A slot within the hour of an online session takes one place, the same as a centre booking.
+async function onlineBySlot(slots) {
+  const out = new Map();
+  if (!slots.length) return out;
+  const deepak = await noPreferenceTherapist();
+  if (!deepak) return out;
+  const dates = slots.map((s) => s.date).sort();
+  const sessions = await onlineSessionsBetween(deepak, new Date(`${dates[0]}T00:00:00+05:30`), new Date(new Date(`${dates[dates.length - 1]}T00:00:00+05:30`).getTime() + 2 * 86400000));
+  if (!sessions.length) return out;
+  for (const s of slots) {
+    const t = noidaSlotDate(s.date, s.slot).getTime();
+    const hits = sessions.filter((o) => Math.abs(new Date(o.at).getTime() - t) < 59 * 60000);
+    if (hits.length) out.set(`${s.date}|${s.slot}`, hits);
+  }
+  return out;
+}
+
 export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
   const { date } = req.query;
   const type = normalizeType(req.query.type);
@@ -236,10 +254,11 @@ export const getAvailableSlots = expressAsyncHandler(async (req, res, next) => {
   // once it holds its capacity; full slots stay in the list so the client sees what's taken.
   const caps = capacityMap(allDocs, def);
   const counts = countBy(booked);
+  const online = await onlineBySlot(annotated.map(({ slot }) => ({ date, slot })));
   const data = annotated.map(({ slot, lastMinute, past }) => {
     const k = `${date}|${slot}`;
     const cap = caps.get(k) || def;
-    const n = counts.get(k) || 0;
+    const n = (counts.get(k) || 0) + (online.get(k)?.length || 0);
     return { slot, booked: n >= cap, left: Math.max(0, cap - n), cap, lastMinute, past };
   });
 
@@ -269,14 +288,8 @@ export const getPublicSlotsMatrix = expressAsyncHandler(async (req, res, next) =
   const caps = capacityMap(capDocs, def);
   const counts = countBy(booked);
   // the default psychologist (Deepak) on an online session at that time → one place fewer at the centre
-  const deepak = await noPreferenceTherapist();
-  const online = deepak ? await onlineStartsBetween(deepak, new Date(`${today}T00:00:00+05:30`), new Date(maxDate.getTime() + 86400000)) : [];
-  if (online.length) {
-    for (const s of allSlots) {
-      const t = noidaSlotDate(s.date, s.slot).getTime();
-      if (online.some((o) => Math.abs(o - t) < 59 * 60000)) { const k = `${s.date}|${s.slot}`; counts.set(k, (counts.get(k) || 0) + 1); }
-    }
-  }
+  const online = await onlineBySlot(allSlots);
+  for (const [k, list] of online) counts.set(k, (counts.get(k) || 0) + list.length);
   const byDate = new Map();
   for (const s of allSlots) {
     if (!byDate.has(s.date)) byDate.set(s.date, []);
@@ -316,6 +329,8 @@ export const getFollowupDates = expressAsyncHandler(async (req, res, next) => {
 
     const caps = capacityMap(capDocs, def);
     const counts = countBy(booked);
+    const online = await onlineBySlot(allSlots);
+    for (const [k, list] of online) counts.set(k, (counts.get(k) || 0) + list.length);
     const openDates = new Set();
     for (const s of allSlots) {
       const k = `${s.date}|${s.slot}`;
@@ -2209,13 +2224,19 @@ export const getFollowupSlots = expressAsyncHandler(async (req, res, next) => {
     // Who holds a booked slot travels with it — this endpoint is admin-only, and the
     // reception screen shows the names in the box and the full details on tap.
     // booked = has at least one booking; full = no place left; booking = the first (older screens).
+    // Deepak's online (website) sessions show in the slot too — they take one place, but stay out of
+    // `bookings` (those are centre appointments the desk can act on)
+    const online = await onlineBySlot(slots);
     const data = slots.map((s) => {
       const k = `${s.date}|${s.slot}`;
       const capacity = caps.get(k) || def;
       const list = (byKey.get(k) || []).map(({ date, slot, bookedByAdmin, ...rest }) => ({ ...rest, bookedByAdmin: !!bookedByAdmin }));
+      const onl = online.get(k) || [];
+      const count = list.length + onl.length;
       return {
-        ...s, capacity, bookedCount: list.length, full: list.length >= capacity, booked: list.length > 0,
+        ...s, capacity, bookedCount: count, full: count >= capacity, booked: count > 0,
         ...(list.length ? { booking: list[0], bookings: list } : {}),
+        ...(onl.length ? { online: onl } : {}),
       };
     });
     return res.status(200).json({ status: true, data });
