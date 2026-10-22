@@ -1061,25 +1061,30 @@ export const joinSession = expressAsyncHandler(async (req, res) => {
 });
 
 // POST /bookings/:id/reschedule { booking_date, reason? } — therapist moves an upcoming session
-export const rescheduleSession = expressAsyncHandler(async (req, res) => {
-  const { id } = req.params;
-  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ status: false, message: "Invalid booking." });
-  const when = new Date(req.body?.booking_date);
-  if (isNaN(when)) return res.status(400).json({ status: false, message: "Pick a valid date and time." });
-  if (when.getTime() < Date.now() + 30 * 60000) return res.status(400).json({ status: false, message: "Pick a time at least 30 minutes from now." });
-  if (when.getTime() > Date.now() + 90 * 86400000) return res.status(400).json({ status: false, message: "Pick a time within the next 90 days." });
+/* Moves one upcoming online session to `when` — shared by the therapist (POST /bookings/:id/reschedule)
+   and the admin panel (POST /admin/bookings/:id/reschedule). Checks clashes, updates the Meet event and
+   tells the client (and, when an admin moves it, the therapist). Returns { code, body } for the response. */
+async function moveSession(id, body, { byAdmin = false, userId = null } = {}) {
+  const fail = (code, message) => ({ code, body: { status: false, message } });
+  if (!mongoose.Types.ObjectId.isValid(id)) return fail(400, "Invalid booking.");
+  const when = new Date(body?.booking_date);
+  if (isNaN(when)) return fail(400, "Pick a valid date and time.");
+  // the team may fix a time closer in (e.g. a wrong-timezone booking); therapists need 30 minutes' notice
+  if (when.getTime() < Date.now() + (byAdmin ? 5 : 30) * 60000) return fail(400, `Pick a time at least ${byAdmin ? 5 : 30} minutes from now.`);
+  if (when.getTime() > Date.now() + 90 * 86400000) return fail(400, "Pick a time within the next 90 days.");
   const b = await Booking.findById(id).populate("client", "name email").populate({ path: "therapist", select: "_id user", populate: { path: "user", select: "name" } });
-  if (!b) return res.status(404).json({ status: false, message: "Booking not found." });
-  if (!(await ownsBooking(req.user._id, { therapist: b.therapist._id }))) return res.status(403).json({ status: false, message: "This booking isn't yours." });
-  if (b.status !== SESSION_STATUS.NEW) return res.status(400).json({ status: false, message: `Only upcoming sessions can be rescheduled (this one is ${String(b.status).toLowerCase()}).` });
-  if (b.source === "noida") return res.status(400).json({ status: false, message: "This is a CYT Noida centre session — to change its time, please ask the Noida desk (+91 80777 57951)." });
+  if (!b) return fail(404, "Booking not found.");
+  if (!byAdmin && !(await ownsBooking(userId, { therapist: b.therapist._id }))) return fail(403, "This booking isn't yours.");
+  if (b.status !== SESSION_STATUS.NEW) return fail(400, `Only upcoming sessions can be rescheduled (this one is ${String(b.status).toLowerCase()}).`);
+  if (b.source === "noida") return fail(400, byAdmin ? "This is a CYT Noida session — reschedule it from Noida Centre → CYT Noida." : "This is a CYT Noida centre session — to change its time, please ask the Noida desk (+91 80777 57951).");
+  const who = byAdmin ? "The therapist" : "You";
   const clash = await Booking.findOne({
     _id: { $ne: b._id }, therapist: b.therapist._id, status: { $nin: ["Cancelled", "Completed"] },
     booking_date: { $gt: new Date(when.getTime() - 60 * 60000), $lt: new Date(when.getTime() + 60 * 60000) },
     $or: [{ payment_status: "Paid" }, { transaction: { $ne: null } }],
   }).select("_id booking_date").lean();
-  if (clash) return res.status(409).json({ status: false, message: `You already have a session at ${new Date(clash.booking_date).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" })} that day — pick a time at least an hour apart.` });
-  if (await busyNear(b.therapist._id, when, { excludeBookingId: b._id })) return res.status(409).json({ status: false, message: "You have a CYT Noida session around that time — pick a time at least an hour apart." });
+  if (clash) return fail(409, `${who} already ${byAdmin ? "has" : "have"} a session at ${new Date(clash.booking_date).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" })} that day — pick a time at least an hour apart.`);
+  if (await busyNear(b.therapist._id, when, { excludeBookingId: b._id })) return fail(409, `${who} ${byAdmin ? "has" : "have"} a CYT Noida session around that time — pick a time at least an hour apart.`);
 
   const oldTime = formatSlotIST(b.booking_date);
   b.booking_date = when;
@@ -1090,18 +1095,38 @@ export const rescheduleSession = expressAsyncHandler(async (req, res) => {
   const moved = await moveMeetEvent(b);
 
   const newTime = formatSlotIST(when);
-  const reason = String(req.body?.reason || "").trim().slice(0, 300);
+  const reason = String(body?.reason || "").trim().slice(0, 300);
   notifyClient(b.client?._id, {
     type: "rescheduled", title: "Your session was moved", body: `${b.therapist?.user?.name || "Your therapist"} · now ${newTime}${reason ? ` — ${reason}` : ""}`,
     link: "/client/my-bookings", ref: `resched:${b._id}:${when.getTime()}`,
   });
+  if (byAdmin && b.therapist?.user?._id) {
+    notifyTherapists([b.therapist.user._id], {
+      type: "booking", title: "A session was moved by the CYT team",
+      body: `${b.cname || b.client?.name || "Client"} · now ${newTime} (was ${oldTime})${reason ? ` — ${reason}` : ""}`,
+      link: "/appointments", ref: `resched:${b._id}:${when.getTime()}`,
+    });
+  }
   if (b.client?.email) {
     sendMail(b.client.email, `Session rescheduled: ${newTime}`,
       `Your session with ${b.therapist?.user?.name || "your therapist"} has moved to ${newTime} (was ${oldTime}).${b.meet_link ? " Meeting link: " + b.meet_link : ""}`,
       sessionRescheduledMail({ clientName: b.cname || b.client.name, therapistName: b.therapist?.user?.name, service: b.service, format: b.format, oldTime, newTime, meetLink: b.meet_link, reason }))
       .catch(() => {});
   }
-  res.json({ status: true, message: `Moved to ${newTime}. ${b.client?.email ? "The client has been emailed." : ""}${moved ? " Calendar updated." : ""}`.trim(), data: { _id: b._id, booking_date: b.booking_date } });
+  const told = [b.client?.email ? "The client has been emailed." : "", byAdmin ? "The therapist has been notified." : "", moved ? "Calendar updated." : ""].filter(Boolean).join(" ");
+  return { code: 200, body: { status: true, message: `Moved to ${newTime}. ${told}`.trim(), data: { _id: b._id, booking_date: b.booking_date } } };
+}
+
+// POST /bookings/:id/reschedule — the therapist moves one of their sessions
+export const rescheduleSession = expressAsyncHandler(async (req, res) => {
+  const out = await moveSession(req.params.id, req.body, { userId: req.user._id });
+  res.status(out.code).json(out.body);
+});
+
+// POST /admin/bookings/:id/reschedule — the CYT team moves a session (permission "bookings")
+export const adminRescheduleSession = expressAsyncHandler(async (req, res) => {
+  const out = await moveSession(req.params.id, req.body, { byAdmin: true });
+  res.status(out.code).json(out.body);
 });
 
 // In-person sessions: POST /start-session/send-code { bookingId } — emails the client a fresh 6-digit

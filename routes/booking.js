@@ -9,6 +9,7 @@ import {
   startSessionNow,
   joinSession,
   rescheduleSession,
+  adminRescheduleSession,
   generatePaymentQR,
   getBookedSlots,
   releaseBookingSlot,
@@ -53,6 +54,7 @@ router.post("/start-session/send-code", isTherapist, sendSessionStartCode);
 router.post("/start-session-now", isTherapist, startSessionNow);
 router.post("/bookings/:id/join", isAuthCommon, joinSession);
 router.post("/bookings/:id/reschedule", isTherapist, rescheduleSession);
+router.post("/admin/bookings/:id/reschedule", hasPermission("bookings"), adminRescheduleSession);
 
 router.post("/end-session",isTherapist, EndSession);
 
