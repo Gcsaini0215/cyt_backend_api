@@ -126,3 +126,12 @@ export const collabOtpRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// AI-referral visit pings from the website (routes/aiVisits.js) — a real visitor sends one or two
+export const aiVisitRateLimit = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  message: { status: false },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
