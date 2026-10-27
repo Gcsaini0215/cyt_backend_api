@@ -129,6 +129,21 @@ const bookingSchema = new Schema({
   noida_session_value: { type: Number, default: undefined },
   // the therapist payout that covered this session (Admin → Payouts); null = not paid out yet
   payout_id: { type: Schema.Types.ObjectId, ref: "TherapistPayout", default: null }, // "Online (Razorpay)" / "UPI QR" / "Cash" / "Package session"
+  // admin moved this session to another therapist (Client 360 → Replace therapist): newest last.
+  // Shown in Client 360's history and on the new therapist's dashboard ("how this client came to you").
+  reassignments: {
+    type: [{
+      from: { type: Schema.Types.ObjectId, ref: "Therapists" },
+      fromName: { type: String, default: "" },
+      to: { type: Schema.Types.ObjectId, ref: "Therapists" },
+      toName: { type: String, default: "" },
+      reason: { type: String, default: "" },
+      by: { type: String, default: "" }, // admin's name
+      at: { type: Date, default: Date.now },
+      _id: false,
+    }],
+    default: [],
+  },
 });
 
 // the therapist / client portals list bookings newest-first by these fields

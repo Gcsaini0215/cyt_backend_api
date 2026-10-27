@@ -835,7 +835,7 @@ export const getBookings = expressAsyncHandler(async (req, res, next) => {
     } else {
       findKey = "client";
       queryId  = req.user._id;
-      select   = "";
+      select   = "-reassignments"; // admin's internal note on a therapist change stays with admin / therapists
     }
 
     let result = await Booking.find({ [findKey]: queryId, $or: [{ transaction: { $exists: true, $ne: null } }, { source: "noida" }] }).select(select)

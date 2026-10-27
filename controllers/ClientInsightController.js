@@ -126,8 +126,16 @@ export const clientDetail = expressAsyncHandler(async (req, res) => {
       payment: b.payment_status || "", amount, paymentId: b.transaction?.transaction_id || "", paymentMethod: b.transaction?.payment_method || "",
       startedAt: b.session_started_at || null, completedAt: b.session_completed_at || null, notes: b.notes || "",
       assessments: (b.assessments || []).map((a) => ({ tool: a.tool, name: testShort(a.tool), fee: a.fee })), assessmentFee: b.assessment_fee || 0,
+      // admin moved it to another therapist (Replace therapist) — and whether it can still be moved
+      reassignments: (b.reassignments || []).map((r) => ({ fromName: r.fromName, toName: r.toName, reason: r.reason, by: r.by, at: r.at })),
+      canReassign: !["Cancelled", "Completed", "Started"].includes(b.status) && !b.session_started_at && !b.session_completed_at && !b.payout_id,
+      source: b.source || "",
     };
   });
+  // every therapist change on this client's sessions, newest first (Client 360 history)
+  const therapistChanges = sessions
+    .flatMap((x) => x.reassignments.map((r) => ({ ...r, sessionId: x._id, sessionDate: x.date, service: x.service })))
+    .sort((a, b) => new Date(b.at) - new Date(a.at));
   const assessments = requests.map((r) => ({
     _id: String(r._id), tool: r.tool, name: testName(r.tool), short: testShort(r.tool), status: r.status,
     by: r.selfOnly ? "Self (bought by client)" : therapistOf(r.therapist)?.name || "", therapist: therapistOf(r.therapist), selfOnly: !!r.selfOnly,
@@ -167,7 +175,7 @@ export const clientDetail = expressAsyncHandler(async (req, res) => {
         cancelled: sessions.filter((s) => s.state === "cancelled").length, assessments: assessments.length + freeTools.length, workshops: workshops.length,
         noida: noida.length, paid: Math.round(paidTotal), therapists: new Set(sessions.map((s) => s.therapist?.id).filter(Boolean)).size,
       },
-      sessions, assessments, freeTools, payments,
+      sessions, therapistChanges, assessments, freeTools, payments,
       workshops: workshops.map((w) => ({ _id: String(w._id), name: w.workshop?.name || w.workshop?.title || "Workshop", date: w.workshop?.date || w.createdAt, amount: num(w.transaction?.amount ?? w.amount), paid: !!w.is_payment_success, student: !!w.is_student })),
       noida: noida.map((n) => ({ _id: String(n._id), code: n.clientCode || "", date: n.date, slot: n.slot, therapist: n.therapistName || "", type: n.type, mode: n.sessionMode, format: n.format, status: n.status, attendance: n.attendance || "", amount: n.amount || 0, payment: n.paymentStatus, package: n.packageName || "" })),
       referrals: { code: user.referral_code || "", credit: user.referral_credit || 0, friends: referred.map((r) => ({ name: r.friend?.name || "", email: r.friend?.email || "", amount: r.amount || 0, at: r.createdAt })), by: referredBy ? { name: referredBy.referrer?.name || "", email: referredBy.referrer?.email || "", at: referredBy.createdAt } : null },
