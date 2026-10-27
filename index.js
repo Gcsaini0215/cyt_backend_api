@@ -9,6 +9,7 @@ import { startSessionAutoComplete } from "./services/sessionAutoComplete.js";
 import { startPendingPaymentMails } from "./services/pendingPaymentMail.js";
 import { startSessionReminders } from "./services/sessionReminderMail.js";
 import { startTopBadgeJob } from "./helper/therapistGrowth.js";
+import { startTherapistAreaJob } from "./helper/therapistArea.js";
 
 mongoose.set("strictQuery", true);
 mongoose.connect(process.env.MONGODB_URI).then(() => {
@@ -21,5 +22,6 @@ mongoose.connect(process.env.MONGODB_URI).then(() => {
     startPendingPaymentMails();
     startSessionReminders();
     startTopBadgeJob();
+    startTherapistAreaJob();
   });
 }).catch((err) => console.log(err));

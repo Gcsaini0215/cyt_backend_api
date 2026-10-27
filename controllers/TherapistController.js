@@ -370,7 +370,11 @@ export const getFilteredTherapists = expressAsyncHandler(
               completion_token_hash: 0, completion_items: 0, completion_note: 0, completion_expires: 0,
               completion_requested_at: 0, completion_submitted_at: 0, verification_checklist: 0,
               verification_note: 0, verified_by: 0, profile_recheck: 0, reupload_docs: 0,
-              availability_reminder_last_at: 0, availability_reminders_off: 0, monthly_goal: 0
+              availability_reminder_last_at: 0, availability_reminders_off: 0, monthly_goal: 0,
+              // privacy: the practice address is often a home — only office_area (≈1 km, "City, State") is public;
+              // and what a therapist paid for their plan is nobody else's business
+              office_address: 0, office_location: 0, office_pincode: 0, "office_area.key": 0,
+              subscription_transaction_id: 0, subscription_amount: 0
             }
           }
         ]),
@@ -398,7 +402,7 @@ export const getProfile = expressAsyncHandler(async (req, res, next) => {
       return next(new Error("Invalid user ID format"));
     }
    let therapist = await Therapists.findById(userId)
-      .select("-resume -__v -is_mail_sent -completion_token_hash -completion_items -completion_note -completion_expires -completion_requested_at -completion_submitted_at -verification_checklist -verification_note -verified_by -profile_recheck -reupload_docs -availability_reminder_last_at -availability_reminders_off -monthly_goal")
+      .select("-resume -__v -is_mail_sent -completion_token_hash -completion_items -completion_note -completion_expires -completion_requested_at -completion_submitted_at -verification_checklist -verification_note -verified_by -profile_recheck -reupload_docs -availability_reminder_last_at -availability_reminders_off -monthly_goal -office_address -office_location -office_pincode -office_area.key -subscription_transaction_id -subscription_amount")
       .populate("user", "name bio profile gender").lean(); // public profile: no phone / email / date of birth
     
     if (!therapist) {

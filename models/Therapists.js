@@ -104,6 +104,16 @@ const TherapistSchema = new Schema(
     office_city: { type: String, default: "" },
     office_state: { type: String, default: "" },
     office_location: { lat: { type: Number, default: null }, lng: { type: Number, default: null } },
+    // public, approximate place for in-person sessions (helper/therapistArea.js): the practice address
+    // geocoded and rounded to ~1 km, with only city + state as text — the street address is never public
+    office_area: {
+      lat: { type: Number, default: null },
+      lng: { type: Number, default: null },
+      label: { type: String, default: "" }, // "Ahmedabad, Gujarat"
+      exact: { type: Boolean, default: false }, // false = only the state was found
+      key: { type: String, default: "" },      // the address it was made from — redone when that changes
+      at: { type: Date, default: null },
+    },
 
     // "slots are empty — update your timings" reminder emails
     availability_reminder_last_at: { type: Date, default: null },
