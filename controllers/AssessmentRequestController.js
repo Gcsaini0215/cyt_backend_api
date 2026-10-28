@@ -55,7 +55,7 @@ export const myRequests = expressAsyncHandler(async (req, res) => {
     status: true,
     data: rows.map((r) => ({
       _id: r._id, tool: r.tool, name: nameOf(r.tool), selfOnly: !!r.selfOnly, therapist: r.selfOnly ? "" : r.therapistUser?.name || "Your psychologist",
-      booking_date: r.booking?.booking_date || null, status: ["sent", "done", "released"].includes(r.status) ? r.status : "sent",
+      booking_date: r.booking?.booking_date || null, createdAt: r.createdAt, status: ["sent", "done", "released"].includes(r.status) ? r.status : "sent",
       ...(r.status === "released" ? { result: { score: r.result?.score ?? null, level: r.result?.level || "" }, note: r.note } : {}),
     })),
   });

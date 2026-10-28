@@ -82,6 +82,7 @@ const UserSchema = new Schema(
     // "Give ₹200, get ₹200" (helper/referral.js): the client's share code and unspent reward
     referral_code: { type: String, unique: true, sparse: true, uppercase: true, trim: true },
     referral_credit: { type: Number, default: 0 },
+    rebook_nudge_off: { type: Boolean, default: false }, // unsubscribed from "book your next session" emails
   },
   { timestamps: true }
 );

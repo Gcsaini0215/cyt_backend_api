@@ -104,6 +104,9 @@ const bookingSchema = new Schema({
   reminder_1h_sent_at: { type: Date, default: null }, // "your session starts in an hour" email to the client (sent once)
   pending_mail_sent_at: { type: Date, default: null }, // "complete your payment" reminder (sent once, if still unpaid)
   slot_released_at: { type: Date, default: null }, // client closed Razorpay without paying → the slot is free again
+  // "book your next session" nudge after a completed session (services/rebookNudge.js): "sent" | "skip", and when
+  rebook_nudge: { type: String, default: "" },
+  rebook_nudge_at: { type: Date, default: null },
   // referrals (helper/referral.js): a friend's code used on this booking, and the client's own credit spent on it
   referral_code: { type: String, default: "" },
   referral_discount: { type: Number, default: 0 },

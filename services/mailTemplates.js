@@ -697,6 +697,21 @@ export const reminderCheckinMail = ({ firstName, customNote }) =>
     foot: "You're receiving this as a past client of CYT &middot; Unsubscribe anytime",
   });
 
+// a week or more after a completed session with no next one booked (services/rebookNudge.js)
+export const rebookNudgeMail = ({ firstName, therapistName, lastDate, slotText, bookHref, otherHref, credit, unsubscribe }) =>
+  shell({
+    preheader: `Ready for your next session with ${therapistName}?`,
+    withBanner: true,
+    body:
+      eyebrow("Keep the momentum going", OK) +
+      heading(`Hi ${esc(firstName || "there")}, how are you doing?`) +
+      para(`Your last session with ${esc(therapistName)} was on ${esc(lastDate)}. Regular sessions are where therapy does its work — booking the next one takes under a minute.`) +
+      (credit > 0 ? note(`You have <b>&#8377;${Number(credit).toLocaleString("en-IN")} referral credit</b> — it comes off your next booking automatically.`) : "") +
+      button(slotText ? `Book ${esc(slotText)}` : `Book with ${esc(therapistName)}`, bookHref) +
+      `<div style="text-align:center;margin-top:12px;font-size:12px;"><a href="${otherHref}" style="color:${BRAND.green};font-weight:600;">Pick another time</a></div>`,
+    foot: `You're receiving this because you had a session with CYT &middot; <a href="${unsubscribe}" style="color:#9a9f97;">Stop these reminders</a>`,
+  });
+
 // ============================================================================
 // PLAIN-TEXT BODIES  (unchanged — used alongside the HTML above)
 // ============================================================================
