@@ -104,6 +104,12 @@ const bookingSchema = new Schema({
   reminder_1h_sent_at: { type: Date, default: null }, // "your session starts in an hour" email to the client (sent once)
   pending_mail_sent_at: { type: Date, default: null }, // "complete your payment" reminder (sent once, if still unpaid)
   slot_released_at: { type: Date, default: null }, // client closed Razorpay without paying → the slot is free again
+  // session packs (helper/sessionBundle.js): bought with this booking (size, the fee it was priced on, the
+  // pack total charged), or this booking used one of the pack's sessions (bundle). amount = one session's share.
+  pack_size: { type: Number, default: 0 },
+  pack_fee: { type: Number, default: 0 },
+  pack_total: { type: Number, default: 0 },
+  bundle: { type: Schema.Types.ObjectId, ref: "SessionBundle", default: null },
   // "book your next session" nudge after a completed session (services/rebookNudge.js): "sent" | "skip", and when
   rebook_nudge: { type: String, default: "" },
   rebook_nudge_at: { type: Date, default: null },

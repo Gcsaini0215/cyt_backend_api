@@ -50,6 +50,16 @@ import { attachBookingAssessments } from "./AssessmentRequestController.js";
 import { assessmentsActive } from "./TherapistAddonController.js";
 import { getPricing } from "../helper/assessmentPricing.js";
 import { findUsableCoupon } from "../helper/coupon.js";
+import SessionBundle from "../models/SessionBundle.js";
+import { feeFor, packPrice, isUsable, takeSession, returnSession, activatePackFor } from "../helper/sessionBundle.js";
+import Jwt from "jsonwebtoken";
+
+// the signed-in user behind this request (Bearer token), or "" — /book-therapist has no auth middleware
+const tokenUserId = (req) => {
+  const h = req.headers.authorization || "";
+  if (!h.startsWith("Bearer ")) return "";
+  try { return String(Jwt.verify(h.slice(7), process.env.JWT_SECRET, { algorithms: ["HS256"] }).userId || ""); } catch { return ""; }
+};
 
 export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
   const validateSchema = Joi.object({
@@ -159,6 +169,31 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
     assessmentFee = assessmentLines.reduce((n, l) => n + l.fee, 0);
     assessmentShare = Math.round(assessmentFee * pricing.therapistShare);
     if (Number(req.body.amount) < assessmentFee) { res.status(400); return next(new Error("The amount doesn't cover the chosen assessments. Please refresh and try again.")); }
+  }
+
+  // session packs (helper/sessionBundle.js): buy one with this booking (pack_size), or book one of the
+  // sessions of a pack already bought (bundle_id). Priced here, never from the browser; no other discounts.
+  const packSize = Number(req.body.pack_size) || 0;
+  const bundleId = req.body.bundle_id ? String(req.body.bundle_id) : "";
+  let pack = null, useBundle = null;
+  if (packSize || bundleId) {
+    if (wanted.length || req.body.coupon || req.body.referral_code || Number(req.body.credit_used) > 0) {
+      res.status(400); return next(new Error("A session pack can't be combined with coupons, referral credit or assessments."));
+    }
+  }
+  if (packSize) {
+    const fee = await feeFor(req.body.therapist, req.body.service, req.body.format);
+    pack = fee ? packPrice(fee, packSize) : null;
+    if (!pack) { res.status(400); return next(new Error("This session pack isn't available for this session. Please refresh and try again.")); }
+  } else if (bundleId) {
+    const me = tokenUserId(req);
+    if (!req.body.is_logged_in || !me || me !== String(req.body.user_id) || !mongoose.Types.ObjectId.isValid(bundleId)) {
+      res.status(401); return next(new Error("Please sign in to book from your session pack."));
+    }
+    useBundle = await SessionBundle.findById(bundleId).lean();
+    if (!isUsable(useBundle) || String(useBundle.client) !== me || String(useBundle.therapist) !== String(req.body.therapist)) {
+      res.status(400); return next(new Error("This session pack can't be used for this booking — it may have no sessions left or have expired."));
+    }
   }
 
   const session = await mongoose.startSession();
@@ -302,8 +337,9 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       [{
         therapist,
         client: user._id,
-        service,
-        format,
+        // a pack session is always the pack's own service + format (that's what it was priced on)
+        service: useBundle ? useBundle.service : service,
+        format: useBundle ? useBundle.format : format,
         session_type: session_type || "",
         booking_date: parsedBookingDate,
         whom,
@@ -311,7 +347,8 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         age,
         relation_with_client,
         notes,
-        amount,
+        amount: pack ? pack.per_session : useBundle ? useBundle.per_session : amount,
+        ...(pack ? { pack_size: pack.size, pack_fee: pack.fee, pack_total: pack.total } : {}),
         otp: generatedOtp,
         guest_email_verified: !is_logged_in && !!guest_email_verified,
         payment_status: "Pending Payment",
@@ -334,10 +371,34 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
     await session.commitTransaction();
     session.endSession();
 
+    // from a pack: nothing to pay — take one of its sessions and confirm the booking now
+    if (useBundle) {
+      const b = await takeSession(useBundle._id, user._id, therapist);
+      if (!b) {
+        await Booking.deleteOne({ _id: booked[0]._id });
+        res.status(400);
+        return next(new Error("Your session pack has no sessions left."));
+      }
+      const tx = await Transaction.create({
+        booking: booked[0]._id, bookingModel: "Booking", user: user._id, amount: useBundle.per_session,
+        payment_method: "Session pack", status: PAYMENT_STATUS.SUCCESS, is_payment_success: true,
+        transaction_id: `PACK-${String(b._id).slice(-6).toUpperCase()}-${b.used}`,
+      });
+      await Booking.updateOne({ _id: booked[0]._id }, { $set: { transaction: tx._id, payment_status: "Paid", bundle: b._id } });
+      // emails + Meet link take a few seconds — answer first, confirm in the background
+      loadForConfirm(booked[0]._id).then((full) => confirmPaidBooking(full, tx.transaction_id))
+        .catch((e) => console.error("[pack] confirm failed:", e.message));
+      return res.status(201).json({
+        status: true,
+        message: "Session booked from your pack.",
+        data: { id: booked[0]._id, paid: true, pack_left: Math.max(0, b.size - b.used) },
+      });
+    }
+
     return res.status(201).json({
       status: true,
       message: "Booking saved successfully.",
-      data: { id: booked[0]._id },
+      data: { id: booked[0]._id, ...(pack ? { amount: pack.total } : {}) },
     });
 
   } catch (err) {
@@ -574,7 +635,8 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
 });
 
 export const createRazorpayOrder = expressAsyncHandler(async (req, res, next) => {
-  const { amount, booking_id } = req.body;
+  let { amount } = req.body;
+  const { booking_id } = req.body;
   
   console.log("Creating Razorpay Order - Amount:", amount, "Booking ID:", booking_id);
   console.log("Razorpay Key ID:", process.env.RAZORPAY_KEY_ID ? "Found" : "Missing");
@@ -585,7 +647,7 @@ export const createRazorpayOrder = expressAsyncHandler(async (req, res, next) =>
   }
 
   if (mongoose.Types.ObjectId.isValid(booking_id)) {
-    const b = await Booking.findById(booking_id).select("therapist client booking_date payment_status slot_released_at");
+    const b = await Booking.findById(booking_id).select("therapist client booking_date payment_status slot_released_at pack_size pack_total");
     if (b?.payment_status === "Paid") {
       res.status(409);
       return next(new Error("This booking is already paid."));
@@ -594,6 +656,8 @@ export const createRazorpayOrder = expressAsyncHandler(async (req, res, next) =>
       res.status(409);
       return next(new Error("Sorry, this time slot has just been booked by someone else. Please pick another slot."));
     }
+    // a session pack is charged its server-side total, whatever the page sent
+    if (b?.pack_size > 0 && b.pack_total > 0) amount = b.pack_total;
     // paying again → hold the slot again
     if (b?.slot_released_at) await Booking.updateOne({ _id: b._id }, { $set: { slot_released_at: null } });
   }
@@ -628,6 +692,129 @@ export const createRazorpayOrder = expressAsyncHandler(async (req, res, next) =>
     return next(new Error(err.message || "Error creating Razorpay order"));
   }
 });
+
+// After a booking is paid (Razorpay, or a session from a pack): assessments, referral rewards, the client's
+// and therapist's notifications, the Meet link and the confirmation emails (client, therapist, admin).
+async function confirmPaidBooking(isBookingDetail, transactionId) {
+    attachBookingAssessments(isBookingDetail); // clinical assessments booked with it → sent to the client to complete before the session
+    settleBookingRewards(isBookingDetail).catch((e) => console.error("[referral] settle failed:", e.message));
+    notifyClient(isBookingDetail.client?._id, {
+      type: "booking", title: `Session confirmed with ${isBookingDetail.therapist?.user?.name || "your therapist"}`,
+      body: `${formatSlotIST(isBookingDetail.booking_date)} · ${isBookingDetail.service || "Session"}`, link: "/client/my-bookings", ref: `booking:${isBookingDetail._id}`,
+    });
+
+    // tell the therapist this instant — before the Meet link and emails, which take a few seconds
+    notifyTherapists([isBookingDetail.therapist.user._id], {
+      type: "booking", title: "New session booked",
+      body: `${isBookingDetail.client?.name || "A client"} · ${isBookingDetail.service || "Session"} · ${formatSlotIST(isBookingDetail.booking_date)}`,
+      link: "/appointments", ref: `booking:${isBookingDetail._id}`,
+    });
+
+    // online session + therapist connected Google → a Meet link on their calendar (never blocks confirmation)
+    const meet = await createMeetWithTimeout(isBookingDetail);
+    if (meet) {
+      isBookingDetail.meet_link = meet.link;
+      isBookingDetail.calendar_event_id = meet.eventId;
+      await Booking.updateOne({ _id: isBookingDetail._id }, { $set: { meet_link: meet.link, calendar_event_id: meet.eventId } });
+    }
+    const meetLink = isBookingDetail.meet_link || "";
+
+    // Send emails (Reuse the logic from saveTransactionId)
+    const therapistName = isBookingDetail.therapist.user.name;
+    const therapistId = isBookingDetail.therapist.profile_code;
+    const clientName = isBookingDetail.client.name;
+    const clientAge = isBookingDetail.client.age;
+    const paymentAmount = isBookingDetail.amount;
+    const pin = isBookingDetail.otp;
+    const service = isBookingDetail.service;
+    const format = isBookingDetail.format;
+    const whom = isBookingDetail.whom;
+    const cname = isBookingDetail.cname;
+    const relation_with_client = isBookingDetail.relation_with_client;
+    const notes = isBookingDetail.notes;
+    const sessionDateTime = formatSlotIST(isBookingDetail.booking_date);
+    const sessionMode = formatSessionMode(isBookingDetail.session_type);
+
+    //Client Mail
+    const subjectClient = `Session Confirmed! ${isBookingDetail.therapist.user.name} · ${sessionDateTime}`;
+    const textClient = clientText(isBookingDetail, transactionId);
+    const clientHtml = bookingConfirmationMail({
+      clientName,
+      therapistName,
+      clientAge,
+      transactionId: transactionId,
+      service,
+      format,
+      sessionDateTime,
+      sessionMode,
+      whom,
+      cname,
+      relation_with_client,
+      notes,
+      meetLink
+    });
+    const clientMailSent = await sendMail(isBookingDetail.client.email, subjectClient, textClient, clientHtml);
+    if (!clientMailSent) console.error(`[confirmPaidBooking] Client mail FAILED to ${isBookingDetail.client.email} for booking ${isBookingDetail._id}`);
+
+    //Therapist Mail
+    const subjectTherapist = `NEW SESSION: ${clientName} · ${sessionDateTime} · ${service || 'General'}`;
+    const textTherapist = therapistText(isBookingDetail, transactionId);
+    const therapistHtml = therapistSessionMail({
+      therapistName,
+      clientName,
+      clientAge,
+      paymentAmount,
+      transactionId,
+      service,
+      format,
+      sessionDateTime,
+      sessionMode,
+      whom,
+      cname,
+      relation_with_client,
+      notes,
+      meetLink
+    });
+    if (!isBookingDetail.therapist?.user?.email) {
+      console.error(`[confirmPaidBooking] Therapist has no email on file — booking ${isBookingDetail._id}, therapist ${isBookingDetail.therapist?._id}`);
+    } else {
+      const therapistMailSent = await sendMail(isBookingDetail.therapist.user.email, subjectTherapist, textTherapist, therapistHtml);
+      if (!therapistMailSent) console.error(`[confirmPaidBooking] Therapist mail FAILED to ${isBookingDetail.therapist.user.email} for booking ${isBookingDetail._id}`);
+    }
+    await pushToUsers(
+      { userId: isBookingDetail.therapist.user._id },
+      "New Session Booked",
+      `${clientName} booked a ${service || 'General'} session with you.`,
+      "/appointments"
+    );
+
+    //Admin Mail
+    const subjectAdmin = `CONFIRMED BOOKING: ${clientName} booked ${isBookingDetail.therapist.user.name} | ₹${paymentAmount}`;
+    const textAdmin = adminText(isBookingDetail, transactionId);
+    const htmlAdmin = newSessionAdminMail({
+      therapistName,
+      clientName,
+      clientAge,
+      paymentAmount,
+      transactionId,
+      therapistId,
+      service,
+      format,
+      sessionDateTime,
+      sessionMode,
+      whom,
+      cname,
+      relation_with_client,
+      notes,
+      meetLink
+    });
+    await sendMail("hello@chooseyourtherapist.in", subjectAdmin, textAdmin, htmlAdmin);
+}
+
+// a booking with what confirmPaidBooking needs
+const loadForConfirm = (id) => Booking.findById(id).populate("client", "_id name email age role").populate({
+  path: "therapist", select: "_id user profile_code", populate: { path: "user", select: "name profile email" },
+}).populate("transaction", "amount transaction_id payment_method");
 
 export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) => {
   const {
@@ -692,120 +879,11 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     isBookingDetail.transaction = savedTransaction._id;
     isBookingDetail.payment_status = "Paid";
     await isBookingDetail.save();
-    attachBookingAssessments(isBookingDetail); // clinical assessments booked with it → sent to the client to complete before the session
-    settleBookingRewards(isBookingDetail).catch((e) => console.error("[referral] settle failed:", e.message));
-    notifyClient(isBookingDetail.client?._id, {
-      type: "booking", title: `Session confirmed with ${isBookingDetail.therapist?.user?.name || "your therapist"}`,
-      body: `${formatSlotIST(isBookingDetail.booking_date)} · ${isBookingDetail.service || "Session"}`, link: "/client/my-bookings", ref: `booking:${isBookingDetail._id}`,
-    });
-
-    // tell the therapist this instant — before the Meet link and emails, which take a few seconds
-    notifyTherapists([isBookingDetail.therapist.user._id], {
-      type: "booking", title: "New session booked",
-      body: `${isBookingDetail.client?.name || "A client"} · ${isBookingDetail.service || "Session"} · ${formatSlotIST(isBookingDetail.booking_date)}`,
-      link: "/appointments", ref: `booking:${isBookingDetail._id}`,
-    });
-
-    // online session + therapist connected Google → a Meet link on their calendar (never blocks confirmation)
-    const meet = await createMeetWithTimeout(isBookingDetail);
-    if (meet) {
-      isBookingDetail.meet_link = meet.link;
-      isBookingDetail.calendar_event_id = meet.eventId;
-      await Booking.updateOne({ _id: isBookingDetail._id }, { $set: { meet_link: meet.link, calendar_event_id: meet.eventId } });
+    // a pack bought with this booking: this is its first session
+    if (isBookingDetail.pack_size && !isBookingDetail.bundle) {
+      try { await activatePackFor(isBookingDetail, razorpay_payment_id); } catch (e) { console.error("[pack] activate failed:", e.message); }
     }
-    const meetLink = isBookingDetail.meet_link || "";
-
-    // Send emails (Reuse the logic from saveTransactionId)
-    const therapistName = isBookingDetail.therapist.user.name;
-    const therapistId = isBookingDetail.therapist.profile_code;
-    const clientName = isBookingDetail.client.name;
-    const clientAge = isBookingDetail.client.age;
-    const paymentAmount = isBookingDetail.amount;
-    const pin = isBookingDetail.otp;
-    const service = isBookingDetail.service;
-    const format = isBookingDetail.format;
-    const whom = isBookingDetail.whom;
-    const cname = isBookingDetail.cname;
-    const relation_with_client = isBookingDetail.relation_with_client;
-    const notes = isBookingDetail.notes;
-    const transactionId = razorpay_payment_id;
-    const sessionDateTime = formatSlotIST(isBookingDetail.booking_date);
-    const sessionMode = formatSessionMode(isBookingDetail.session_type);
-
-    //Client Mail
-    const subjectClient = `Session Confirmed! ${isBookingDetail.therapist.user.name} · ${sessionDateTime}`;
-    const textClient = clientText(isBookingDetail, transactionId);
-    const clientHtml = bookingConfirmationMail({
-      clientName,
-      therapistName,
-      clientAge,
-      transactionId: transactionId,
-      service,
-      format,
-      sessionDateTime,
-      sessionMode,
-      whom,
-      cname,
-      relation_with_client,
-      notes,
-      meetLink
-    });
-    const clientMailSent = await sendMail(isBookingDetail.client.email, subjectClient, textClient, clientHtml);
-    if (!clientMailSent) console.error(`[verifyRazorpayPayment] Client mail FAILED to ${isBookingDetail.client.email} for booking ${isBookingDetail._id}`);
-
-    //Therapist Mail
-    const subjectTherapist = `NEW SESSION: ${clientName} · ${sessionDateTime} · ${service || 'General'}`;
-    const textTherapist = therapistText(isBookingDetail, transactionId);
-    const therapistHtml = therapistSessionMail({
-      therapistName,
-      clientName,
-      clientAge,
-      paymentAmount,
-      transactionId,
-      service,
-      format,
-      sessionDateTime,
-      sessionMode,
-      whom,
-      cname,
-      relation_with_client,
-      notes,
-      meetLink
-    });
-    if (!isBookingDetail.therapist?.user?.email) {
-      console.error(`[verifyRazorpayPayment] Therapist has no email on file — booking ${isBookingDetail._id}, therapist ${isBookingDetail.therapist?._id}`);
-    } else {
-      const therapistMailSent = await sendMail(isBookingDetail.therapist.user.email, subjectTherapist, textTherapist, therapistHtml);
-      if (!therapistMailSent) console.error(`[verifyRazorpayPayment] Therapist mail FAILED to ${isBookingDetail.therapist.user.email} for booking ${isBookingDetail._id}`);
-    }
-    await pushToUsers(
-      { userId: isBookingDetail.therapist.user._id },
-      "New Session Booked",
-      `${clientName} booked a ${service || 'General'} session with you.`,
-      "/appointments"
-    );
-
-    //Admin Mail
-    const subjectAdmin = `CONFIRMED BOOKING: ${clientName} booked ${isBookingDetail.therapist.user.name} | ₹${paymentAmount}`;
-    const textAdmin = adminText(isBookingDetail, transactionId);
-    const htmlAdmin = newSessionAdminMail({
-      therapistName,
-      clientName,
-      clientAge,
-      paymentAmount,
-      transactionId,
-      therapistId,
-      service,
-      format,
-      sessionDateTime,
-      sessionMode,
-      whom,
-      cname,
-      relation_with_client,
-      notes,
-      meetLink
-    });
-    await sendMail("hello@chooseyourtherapist.in", subjectAdmin, textAdmin, htmlAdmin);
+    await confirmPaidBooking(isBookingDetail, razorpay_payment_id);
 
     res.status(200).json({
       status: true,
@@ -1423,8 +1501,10 @@ export const cancelBooking = expressAsyncHandler(async (req, res, next) => {
     const booking = await Booking.findById(id);
     if (!booking) return res.status(404).json({ status: false, message: "Booking not found." });
 
+    const wasCancelled = booking.status === SESSION_STATUS.CANCELED;
     booking.status = SESSION_STATUS.CANCELED;
     await booking.save();
+    if (!wasCancelled) await returnSession(booking); // a pack session goes back to the pack
     deleteMeetEvent(booking);
 
     await notifyBookingRemoved(booking, "cancelled");
@@ -1442,6 +1522,7 @@ export const deleteBooking = expressAsyncHandler(async (req, res, next) => {
     if (!booking) return res.status(404).json({ status: false, message: "Booking not found." });
 
     await notifyBookingRemoved(booking, "deleted");
+    if (booking.status !== SESSION_STATUS.CANCELED) await returnSession(booking);
     await Booking.findByIdAndDelete(id);
     res.status(200).json({ status: true, message: "Booking deleted successfully." });
   } catch (err) {
