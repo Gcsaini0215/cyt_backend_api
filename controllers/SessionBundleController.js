@@ -3,7 +3,8 @@ import mongoose from "mongoose";
 import SessionBundle from "../models/SessionBundle.js";
 import "../models/Therapists.js";
 import "../models/Users.js";
-import { bundleRow, remainingOf, PACKS, PACK_DAYS } from "../helper/sessionBundle.js";
+import PackPricing from "../models/PackPricing.js";
+import { bundleRow, remainingOf, getPackConfig, clearPackCache } from "../helper/sessionBundle.js";
 
 const DAY = 86400000;
 const therapistPop = { path: "therapist", select: "_id user profile_type state", populate: { path: "user", select: "name profile" } };
@@ -18,8 +19,36 @@ export const myBundles = expressAsyncHandler(async (req, res) => {
   });
 });
 
-// GET /session-packs — the pack sizes and discounts (the booking page shows them)
-export const packOptions = (req, res) => res.json({ status: true, data: { packs: Object.entries(PACKS).map(([size, pct]) => ({ size: Number(size), pct })), days: PACK_DAYS } });
+// GET /session-packs — the packs on sale and their discounts (the booking page shows them)
+export const packOptions = expressAsyncHandler(async (req, res) => {
+  const cfg = await getPackConfig();
+  res.json({ status: true, data: { packs: cfg.packs.filter((p) => p.active).map(({ size, pct }) => ({ size, pct })), days: cfg.days } });
+});
+
+// GET /admin/pack-pricing — all packs (on and off) + validity
+export const adminPackPricing = expressAsyncHandler(async (req, res) => {
+  res.json({ status: true, data: await getPackConfig() });
+});
+
+// PUT /admin/pack-pricing { packs: [{ size, pct, active }], days } — super admin. Packs already bought keep
+// the price and validity they were bought with.
+export const savePackPricing = expressAsyncHandler(async (req, res) => {
+  const list = Array.isArray(req.body?.packs) ? req.body.packs : [];
+  const packs = [];
+  for (const p of list) {
+    const size = Math.round(Number(p.size)), pct = Math.round(Number(p.pct) * 10) / 10;
+    if (!(size >= 2 && size <= 24)) return res.status(400).json({ status: false, message: "A pack must have 2–24 sessions." });
+    if (!(pct >= 0 && pct <= 50)) return res.status(400).json({ status: false, message: "Discount must be between 0% and 50%." });
+    if (packs.some((x) => x.size === size)) return res.status(400).json({ status: false, message: `There are two packs of ${size} sessions.` });
+    packs.push({ size, pct, active: p.active !== false });
+  }
+  if (!packs.length || packs.length > 6) return res.status(400).json({ status: false, message: "Add 1–6 packs." });
+  const days = Math.round(Number(req.body?.days));
+  if (!(days >= 7 && days <= 730)) return res.status(400).json({ status: false, message: "Validity must be 7–730 days." });
+  await PackPricing.findOneAndUpdate({ key: "default" }, { $set: { packs, days, updatedBy: req.user?.name || req.user?.email || "admin" } }, { upsert: true });
+  clearPackCache();
+  res.json({ status: true, message: "Pack pricing saved.", data: await getPackConfig() });
+});
 
 // GET /admin/session-packs?status=active|expired|used|all
 export const adminBundles = expressAsyncHandler(async (req, res) => {

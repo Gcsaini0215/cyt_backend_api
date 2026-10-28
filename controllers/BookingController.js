@@ -51,7 +51,7 @@ import { assessmentsActive } from "./TherapistAddonController.js";
 import { getPricing } from "../helper/assessmentPricing.js";
 import { findUsableCoupon } from "../helper/coupon.js";
 import SessionBundle from "../models/SessionBundle.js";
-import { feeFor, packPrice, isUsable, takeSession, returnSession, activatePackFor } from "../helper/sessionBundle.js";
+import { feeFor, packPrice, isUsable, takeSession, returnSession, activatePackFor, getPackConfig } from "../helper/sessionBundle.js";
 import Jwt from "jsonwebtoken";
 
 // the signed-in user behind this request (Bearer token), or "" — /book-therapist has no auth middleware
@@ -183,7 +183,9 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
   }
   if (packSize) {
     const fee = await feeFor(req.body.therapist, req.body.service, req.body.format);
-    pack = fee ? packPrice(fee, packSize) : null;
+    const cfg = await getPackConfig();
+    pack = fee ? packPrice(fee, packSize, cfg) : null;
+    if (pack) pack.days = cfg.days;
     if (!pack) { res.status(400); return next(new Error("This session pack isn't available for this session. Please refresh and try again.")); }
   } else if (bundleId) {
     const me = tokenUserId(req);
@@ -348,7 +350,7 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         relation_with_client,
         notes,
         amount: pack ? pack.per_session : useBundle ? useBundle.per_session : amount,
-        ...(pack ? { pack_size: pack.size, pack_fee: pack.fee, pack_total: pack.total } : {}),
+        ...(pack ? { pack_size: pack.size, pack_fee: pack.fee, pack_total: pack.total, pack_pct: pack.pct, pack_days: pack.days } : {}),
         otp: generatedOtp,
         guest_email_verified: !is_logged_in && !!guest_email_verified,
         payment_status: "Pending Payment",

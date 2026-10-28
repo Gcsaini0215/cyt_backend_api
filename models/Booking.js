@@ -109,6 +109,8 @@ const bookingSchema = new Schema({
   pack_size: { type: Number, default: 0 },
   pack_fee: { type: Number, default: 0 },
   pack_total: { type: Number, default: 0 },
+  pack_pct: { type: Number, default: 0 },  // the % off when booked (Admin → Pack Pricing may change later)
+  pack_days: { type: Number, default: 0 }, // validity when booked
   bundle: { type: Schema.Types.ObjectId, ref: "SessionBundle", default: null },
   // "book your next session" nudge after a completed session (services/rebookNudge.js): "sent" | "skip", and when
   rebook_nudge: { type: String, default: "" },
