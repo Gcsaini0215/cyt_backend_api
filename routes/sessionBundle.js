@@ -1,6 +1,7 @@
 import express from "express";
 import { myBundles, packOptions, adminBundles, extendBundle } from "../controllers/SessionBundleController.js";
 import { myMoods, saveMood } from "../controllers/MoodController.js";
+import { getMyNote, saveMyNote } from "../controllers/SessionNoteController.js";
 import { isAuth, hasPermission } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
@@ -12,4 +13,7 @@ router.post("/admin/session-packs/:id/extend", hasPermission("bookings"), extend
 // My Space mood check-in
 router.get("/my-moods", isAuth, myMoods);
 router.post("/my-moods", isAuth, saveMood);
+// the client's private notes for a session
+router.get("/my-session-notes/:bookingId", isAuth, getMyNote);
+router.put("/my-session-notes/:bookingId", isAuth, saveMyNote);
 export default router;
