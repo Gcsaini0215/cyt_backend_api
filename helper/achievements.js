@@ -39,12 +39,14 @@ export async function achievementsFor(therapist) {
   const stats = await statsOf(therapist);
   const saved = await TherapistAchievement.find({ therapist: therapist._id }).lean();
   const have = new Map(saved.map((x) => [x.key, x]));
+  const fresh = []; // unlocked by this call
   for (const a of ACHIEVEMENTS) {
     if (have.has(a.key) || !met(a, stats)) continue;
     for (let i = 0; i < 3; i++) {
       try {
         const doc = await TherapistAchievement.create({ therapist: therapist._id, key: a.key, code: newCode(), stats: { sessions: stats.sessions, goodReviews: stats.goodReviews, avgRating: stats.avgRating, months: stats.months } });
         have.set(a.key, doc.toObject());
+        fresh.push({ key: a.key, title: a.title, tier: a.tier, line: a.line, code: doc.code });
         break;
       } catch (e) {
         if (e?.code !== 11000) throw e;
@@ -62,5 +64,13 @@ export async function achievementsFor(therapist) {
       unlocked: !!got, code: got?.code || null, unlockedAt: got?.unlockedAt || null,
     };
   });
-  return { stats, list };
+  return { stats, list, fresh };
+}
+
+// a therapist's unlocked achievements for the public profile: [{ key, title, tier, code, unlockedAt }]
+export async function publicAchievements(therapistId) {
+  const rows = await TherapistAchievement.find({ therapist: therapistId }).select("key code unlockedAt").sort({ unlockedAt: 1 }).lean();
+  const order = Object.fromEntries(ACHIEVEMENTS.map((a, i) => [a.key, i]));
+  return rows.filter((r) => byKey[r.key]).sort((a, b) => order[a.key] - order[b.key])
+    .map((r) => ({ key: r.key, title: byKey[r.key].title, tier: byKey[r.key].tier, code: r.code, unlockedAt: r.unlockedAt }));
 }

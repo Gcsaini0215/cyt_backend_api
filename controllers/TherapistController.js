@@ -2,6 +2,7 @@ import expressAsyncHandler from "express-async-handler";
 import { mailProfileLiveOnce } from "../helper/profileLive.js";
 import Therapists, { defaultFees } from "../models/Therapists.js";
 import { placeFromPin, areaKey } from "../helper/therapistArea.js";
+import { publicAchievements } from "../helper/achievements.js";
 import TherapistAddon from "../models/TherapistAddon.js";
 import Users from "../models/Users.js";
 import Bank from "../models/Bank.js";
@@ -420,6 +421,7 @@ export const getProfile = expressAsyncHandler(async (req, res, next) => {
 
      therapist.workshops = workshop;
      therapist.reviews = reviews;
+     therapist.achievements = await publicAchievements(therapist._id).catch(() => []); // badges on the profile
 
     res.status(200).json({
       message: "Fetched successfully",

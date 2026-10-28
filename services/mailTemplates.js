@@ -697,6 +697,23 @@ export const reminderCheckinMail = ({ firstName, customNote }) =>
     foot: "You're receiving this as a past client of CYT &middot; Unsubscribe anytime",
   });
 
+// a therapist reached one or more achievements (services/achievementJob.js)
+export const achievementUnlockedMail = ({ firstName, items = [], link }) =>
+  shell({
+    preheader: items.length > 1 ? `You unlocked ${items.length} achievements on CYT` : `You unlocked ${items[0]?.title || "an achievement"} on CYT`,
+    withBanner: true,
+    body:
+      eyebrow("Achievement unlocked", OK) +
+      heading(`Congratulations, ${esc(firstName || "there")}!`) +
+      para(items.length > 1 ? "You've earned new achievements on Choose Your Therapist:" : "You've earned a new achievement on Choose Your Therapist:") +
+      items.map((a) => `<div style="border:1px solid #e6d3a3;background:#fffaf0;border-radius:12px;padding:12px 14px;margin:0 0 10px;">
+        <div style="font-size:15px;font-weight:700;color:#14532d;">&#127942; ${esc(a.title)}</div>
+        <div style="font-size:12.5px;color:#5b6157;margin-top:3px;line-height:1.5;">Awarded ${esc(a.line)}.</div></div>`).join("") +
+      note("Your certificate is ready to download and share — it has a code and QR that anyone can verify. Earned badges also show on your public profile.") +
+      button("See my certificates", link),
+    foot: "You're receiving this as a therapist on Choose Your Therapist.",
+  });
+
 // a week or more after a completed session with no next one booked (services/rebookNudge.js)
 export const rebookNudgeMail = ({ firstName, therapistName, lastDate, slotText, bookHref, otherHref, credit, unsubscribe }) =>
   shell({
