@@ -14,6 +14,7 @@ import {
   getBookedSlots,
   releaseBookingSlot,
   getBookingPayInfo,
+  getMyPendingBookings,
   getBookings,
   getBookingsForAdmin,
   saveTransactionId,
@@ -40,6 +41,8 @@ router.post("/booking/:id/release-slot", releaseBookingSlot);
 router.get("/booking/:id/pay-info", getBookingPayInfo);
 
 router.get("/get-bookings", isAuthCommon, getBookings);
+
+router.get("/my-pending-bookings", isAuthCommon, getMyPendingBookings);
 
 router.get("/get-booking-admin", hasPermission(["bookings","bdm"]), getBookingsForAdmin);
 

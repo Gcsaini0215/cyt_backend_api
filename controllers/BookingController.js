@@ -845,7 +845,9 @@ export const getBookings = expressAsyncHandler(async (req, res, next) => {
       })
       .populate({
         path: "therapist",
-        select: "_id user profile_code profile_type state",
+        // the practice address is private (helper/therapistArea.js) — loaded here only so a client with a
+        // paid in-person session can be told where to go; stripped from every other booking below
+        select: `_id user profile_code profile_type state${req.user.role === 1 ? "" : " office_address office_city office_state office_pincode office_location"}`,
         populate: {
           path: "user",
           select: "name email profile",
@@ -872,6 +874,16 @@ export const getBookings = expressAsyncHandler(async (req, res, next) => {
         // a Noida booking made without an email has no client account: name + phone from the booking
         const client = o.client || (o.source === "noida" ? { name: o.cname || "Client", phone: o.noida_phone || "", email: "" } : o.client);
         return { ...o, client, therapist_share: sp.therapist, platform_share: sp.platform, client_paid: sp.paid, share_pct: sp.pct };
+      });
+    } else {
+      result = result.map((b) => {
+        const o = b.toObject();
+        if (!o.therapist) return o;
+        const { office_address, office_city, office_state, office_pincode, office_location, ...ther } = o.therapist;
+        const paid = o.payment_status === "Paid" || !!o.transaction;
+        if (!paid || o.status === "Cancelled" || o.source === "noida" || !isInPerson(o)) return { ...o, therapist: ther };
+        const loc = office_location && Number.isFinite(office_location.lat) && Number.isFinite(office_location.lng) ? office_location : null;
+        return { ...o, therapist: ther, meet_at: { address: office_address || "", city: office_city || "", state: office_state || ther.state || "", pincode: office_pincode || "", location: loc } };
       });
     }
 
@@ -923,6 +935,42 @@ export const releaseBookingSlot = expressAsyncHandler(async (req, res) => {
     { $set: { slot_released_at: new Date() } }
   );
   return res.status(200).json({ status: true, released: r.modifiedCount === 1 });
+});
+
+// GET /my-pending-bookings — the client's own unpaid bookings for a session still ahead, so the dashboard
+// can offer "Complete payment" (get-bookings lists only paid ones). Leaves out bookings started more than
+// 7 days ago and any the client has since paid for another way (a paid booking with the same therapist
+// at the same time, or a later paid booking with that therapist).
+export const getMyPendingBookings = expressAsyncHandler(async (req, res) => {
+  if (req.user.role === 1) return res.status(200).json({ status: true, data: [] });
+  const since = mongoose.Types.ObjectId.createFromTime(Math.floor((Date.now() - 7 * 86400000) / 1000));
+  const rows = await Booking.find({
+    client: req.user._id, payment_status: "Pending Payment", status: { $ne: "Cancelled" },
+    booking_date: { $gt: new Date() }, _id: { $gt: since },
+  }).select("therapist client service format session_type booking_date amount createdAt").sort({ _id: -1 }).limit(10).lean();
+  if (!rows.length) return res.status(200).json({ status: true, data: [] });
+  const paid = await Booking.find({
+    client: req.user._id, therapist: { $in: rows.map((r) => r.therapist) }, status: { $ne: "Cancelled" },
+    $or: [{ payment_status: "Paid" }, { transaction: { $exists: true, $ne: null } }],
+  }).select("_id therapist booking_date").lean();
+  const seen = new Set();
+  const out = [];
+  for (const b of rows) {
+    const k = `${b.therapist}|${new Date(b.booking_date).getTime()}`;
+    if (seen.has(k)) continue; // tried the same slot twice — the newest attempt is enough
+    seen.add(k);
+    const done = paid.some((p) => String(p.therapist) === String(b.therapist)
+      && (new Date(p.booking_date).getTime() === new Date(b.booking_date).getTime() || String(p._id) > String(b._id)));
+    if (done) continue;
+    const ther = await Therapists.findById(b.therapist).select("_id user profile_type state").populate("user", "name profile").lean();
+    out.push({
+      _id: String(b._id), state: (await slotTakenByOther(b)) ? "taken" : "payable",
+      therapist: ther ? { _id: String(ther._id), profile_type: ther.profile_type || "", state: ther.state || "", user: { name: ther.user?.name || "", profile: ther.user?.profile || "" } } : null,
+      service: b.service, format: b.format, session_type: b.session_type || "", booking_date: b.booking_date, amount: b.amount,
+    });
+    if (out.length >= 3) break;
+  }
+  return res.status(200).json({ status: true, data: out });
 });
 
 // Is this booking's slot taken by somebody else — a paid booking, or another person's live checkout?
