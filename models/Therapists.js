@@ -107,6 +107,9 @@ const TherapistSchema = new Schema(
     // set when the therapist places / confirms the pin on the Settings map — only then does the pin (not the
     // typed address) decide the area clients see (registration pins came from often-wrong browser GPS)
     office_location_confirmed_at: { type: Date, default: null },
+    // the therapist's choice in Settings: a clinic / centre (clients see the exact pin + address before
+    // booking) or practice from home (only the ~1 km area)
+    office_is_clinic: { type: Boolean, default: false },
     // public, approximate place for in-person sessions (helper/therapistArea.js): the practice address
     // geocoded and rounded to ~1 km, with only city + state as text — the street address is never public
     office_area: {
@@ -115,6 +118,8 @@ const TherapistSchema = new Schema(
       label: { type: String, default: "" }, // "Ahmedabad, Gujarat"
       exact: { type: Boolean, default: false }, // false = only the state was found
       key: { type: String, default: "" },      // the address it was made from — redone when that changes
+      clinic: { type: Boolean, default: false }, // a clinic: lat/lng is the exact pin and address is shown
+      address: { type: String, default: "" },   // the clinic's address (only for a clinic)
       at: { type: Date, default: null },
     },
 

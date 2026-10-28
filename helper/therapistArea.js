@@ -25,7 +25,7 @@ const pinOf = (t) => {
 };
 export const areaKey = (t) => {
   const pin = pinOf(t);
-  if (pin) return `pin|${pin.lat.toFixed(5)},${pin.lng.toFixed(5)}`;
+  if (pin) return `pin|${pin.lat.toFixed(5)},${pin.lng.toFixed(5)}${t.office_is_clinic ? `|clinic|${clean(t.office_address)}` : ""}`;
   return [clean(t.office_address), clean(t.office_city), clean(t.office_state) || clean(t.state)].join("|").toLowerCase();
 };
 
@@ -75,9 +75,16 @@ export async function areaFromPin({ lat, lng }, fallbackState = "") {
   return { lat: round(lat), lng: round(lng), label: label || fallbackState, exact: true, pin: true };
 }
 
+// a clinic shows its exact pin and address; practice from home only the rounded area
+export async function placeFromPin(pin, t) {
+  const area = await areaFromPin(pin, (clean(t.office_state) || clean(t.state)).split(",").pop().trim());
+  if (!t.office_is_clinic) return { ...area, clinic: false, address: "" };
+  return { ...area, lat: pin.lat, lng: pin.lng, clinic: true, address: [clean(t.office_address), clean(t.office_city)].filter(Boolean).join(", ") };
+}
+
 export async function geocodeTherapist(t) {
   const pin = pinOf(t);
-  if (pin) return areaFromPin(pin, (clean(t.office_state) || clean(t.state)).split(",").pop().trim());
+  if (pin) return placeFromPin(pin, t);
   if (/D-?137|choose your therapist/i.test(clean(t.office_address))) return { ...CENTRE };
   const { list, state } = candidates(t);
   for (const q of list) {
@@ -98,7 +105,7 @@ const inPerson = (t) => /in[- ]?person|offline/i.test(String(t.session_formats |
 
 // fill in / refresh office_area for in-person therapists whose address changed
 export async function refreshTherapistAreas() {
-  const list = await Therapists.find({}).select("office_address office_city office_state state session_formats office_area office_location office_location_confirmed_at").lean();
+  const list = await Therapists.find({}).select("office_address office_city office_state state session_formats office_area office_location office_location_confirmed_at office_is_clinic").lean();
   let done = 0;
   for (const t of list) {
     if (!inPerson(t)) continue;
