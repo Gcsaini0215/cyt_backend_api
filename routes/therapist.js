@@ -27,6 +27,8 @@ import {
   deleteReview,
   deleteUser,
   getMyReviews,
+  getPracticeLocation,
+  savePracticeLocation,
 } from "../controllers/TherapistController.js";  
 import { upload } from "../services/fileUpload.js";
 import { getTherapistStats } from "../controllers/TherapistStatsController.js";  
@@ -86,6 +88,10 @@ router.get("/get-my-reviews", isAuthCommon, getMyReviews);
 router.post("/set-dashboard-since", isTherapist, setDashboardSince);
 
 // One-click "stop availability reminders" link from the reminder email
+// Settings → practice location: the pin on the map (the public area is made from it)
+router.get("/therapist/practice-location", isTherapist, getPracticeLocation);
+router.put("/therapist/practice-location", isTherapist, savePracticeLocation);
+
 router.get("/availability-reminders/unsubscribe", async (req, res) => {
   const id = String(req.query.id || "");
   const t = String(req.query.t || "");

@@ -17,7 +17,17 @@ const CENTRE = { lat: 28.58, lng: 77.37, label: "Sector 51, Noida, Uttar Pradesh
 // "Chandigarh, Chandigarh" → "Chandigarh"
 const labelOf = (place, state) => [place, state].map((x) => String(x || "").trim()).filter(Boolean).filter((x, i, a) => a.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === i).join(", ");
 
-export const areaKey = (t) => [clean(t.office_address), clean(t.office_city), clean(t.office_state) || clean(t.state)].join("|").toLowerCase();
+// the therapist's own pin (Settings → practice location) wins over geocoding the typed address
+const pinOf = (t) => {
+  if (!t?.office_location_confirmed_at) return null;
+  const lat = Number(t?.office_location?.lat), lng = Number(t?.office_location?.lng);
+  return t?.office_location?.lat != null && Number.isFinite(lat) && Number.isFinite(lng) && lat >= 6 && lat <= 37.5 && lng >= 68 && lng <= 97.5 ? { lat, lng } : null;
+};
+export const areaKey = (t) => {
+  const pin = pinOf(t);
+  if (pin) return `pin|${pin.lat.toFixed(5)},${pin.lng.toFixed(5)}`;
+  return [clean(t.office_address), clean(t.office_city), clean(t.office_state) || clean(t.state)].join("|").toLowerCase();
+};
 
 async function search(q) {
   const { data } = await axios.get("https://nominatim.openstreetmap.org/search", {
@@ -49,7 +59,25 @@ function candidates(t) {
   return { list: out, state };
 }
 
+// the ~1 km area around a pin, labelled "Locality, City" from OpenStreetMap's reverse lookup
+export async function areaFromPin({ lat, lng }, fallbackState = "") {
+  let label = "";
+  try {
+    const { data } = await axios.get("https://nominatim.openstreetmap.org/reverse", {
+      params: { lat, lon: lng, format: "jsonv2", zoom: 14, addressdetails: 1 },
+      headers: { "User-Agent": UA, "Accept-Language": "en" }, timeout: 15000,
+    });
+    const a = data?.address || {};
+    const local = a.suburb || a.neighbourhood || a.quarter || a.city_district || "";
+    const city = String(a.city || a.town || a.village || a.state_district || a.county || "").replace(/\s+(Municipal Corporation|Municipality|Nagar Nigam|Tehsil|District)$/i, "");
+    label = labelOf(local && local.toLowerCase() !== city.toLowerCase() ? `${local}, ${city}` : city, a.state || fallbackState);
+  } catch { /* label stays empty — the map still shows */ }
+  return { lat: round(lat), lng: round(lng), label: label || fallbackState, exact: true, pin: true };
+}
+
 export async function geocodeTherapist(t) {
+  const pin = pinOf(t);
+  if (pin) return areaFromPin(pin, (clean(t.office_state) || clean(t.state)).split(",").pop().trim());
   if (/D-?137|choose your therapist/i.test(clean(t.office_address))) return { ...CENTRE };
   const { list, state } = candidates(t);
   for (const q of list) {
@@ -70,7 +98,7 @@ const inPerson = (t) => /in[- ]?person|offline/i.test(String(t.session_formats |
 
 // fill in / refresh office_area for in-person therapists whose address changed
 export async function refreshTherapistAreas() {
-  const list = await Therapists.find({}).select("office_address office_city office_state state session_formats office_area").lean();
+  const list = await Therapists.find({}).select("office_address office_city office_state state session_formats office_area office_location office_location_confirmed_at").lean();
   let done = 0;
   for (const t of list) {
     if (!inPerson(t)) continue;

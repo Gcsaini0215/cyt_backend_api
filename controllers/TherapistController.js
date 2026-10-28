@@ -1,6 +1,7 @@
 import expressAsyncHandler from "express-async-handler";
 import { mailProfileLiveOnce } from "../helper/profileLive.js";
 import Therapists, { defaultFees } from "../models/Therapists.js";
+import { areaFromPin, areaKey } from "../helper/therapistArea.js";
 import TherapistAddon from "../models/TherapistAddon.js";
 import Users from "../models/Users.js";
 import Bank from "../models/Bank.js";
@@ -863,4 +864,28 @@ export const deleteReview = expressAsyncHandler(async (req, res, next) => {
     res.status(400);
     throw new Error(error.message);
   }
+});
+// GET /therapist/practice-location — the therapist's own pin and the area clients see (Settings)
+export const getPracticeLocation = expressAsyncHandler(async (req, res) => {
+  const t = await Therapists.findOne({ user: req.user._id }).select("office_location office_location_confirmed_at office_area office_address office_city office_state state").lean();
+  if (!t) return res.status(404).json({ status: false, message: "Profile not found." });
+  const pin = t.office_location?.lat != null && t.office_location?.lng != null ? { lat: t.office_location.lat, lng: t.office_location.lng } : null;
+  res.json({ status: true, data: { pin, confirmed: !!t.office_location_confirmed_at, area: t.office_area?.lat != null ? { lat: t.office_area.lat, lng: t.office_area.lng, label: t.office_area.label || "" } : null, address: t.office_address || "" } });
+});
+
+// PUT /therapist/practice-location { lat, lng } — the pin dropped / dragged on the map. The public area
+// (~1 km, never the exact spot) is made from it right away.
+export const savePracticeLocation = expressAsyncHandler(async (req, res) => {
+  const lat = Number(req.body?.lat), lng = Number(req.body?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < 6 || lat > 37.5 || lng < 68 || lng > 97.5) {
+    return res.status(400).json({ status: false, message: "Please place the pin on your practice in India." });
+  }
+  const t = await Therapists.findOne({ user: req.user._id }).select("office_state state");
+  if (!t) return res.status(404).json({ status: false, message: "Profile not found." });
+  const pin = { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6 };
+  const area = await areaFromPin(pin, String(t.office_state || t.state || "").split(",").pop().trim());
+  const confirmedAt = new Date();
+  const key = areaKey({ office_location: pin, office_location_confirmed_at: confirmedAt });
+  await Therapists.updateOne({ _id: t._id }, { $set: { office_location: pin, office_location_confirmed_at: confirmedAt, office_area: { lat: area.lat, lng: area.lng, label: area.label, exact: true, key, at: new Date() } } });
+  res.json({ status: true, message: "Practice location saved.", data: { pin, area: { lat: area.lat, lng: area.lng, label: area.label } } });
 });
