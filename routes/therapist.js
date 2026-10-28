@@ -1,5 +1,6 @@
 import { Router } from "express";  
 import { unsubscribeToken } from "../services/availabilityReminder.js";
+import { myAchievements, verifyAchievement } from "../controllers/AchievementController.js";
 import TherapistsModel from "../models/Therapists.js";
 import { hasPermission, isTherapist, isAuthCommon } from "../middlewares/authMiddleware.js";
   
@@ -88,6 +89,10 @@ router.get("/get-my-reviews", isAuthCommon, getMyReviews);
 router.post("/set-dashboard-since", isTherapist, setDashboardSince);
 
 // One-click "stop availability reminders" link from the reminder email
+// achievements + their certificates (helper/achievements.js); verify is public
+router.get("/therapist/achievements", isTherapist, myAchievements);
+router.get("/achievements/verify/:code", verifyAchievement);
+
 // Settings → practice location: the pin on the map (the public area is made from it)
 router.get("/therapist/practice-location", isTherapist, getPracticeLocation);
 router.put("/therapist/practice-location", isTherapist, savePracticeLocation);
