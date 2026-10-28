@@ -13,7 +13,7 @@ import { deleteMeetEvent } from "../helper/googleMeet.js";
 import { therapistBookingsChanged } from "../services/therapistNotify.js";
 import { changed as clientBookingsChanged } from "../services/clientNotify.js";
 import { THERAPIST_PCT, payoutSplit, bookingSplit } from "../helper/payoutSplit.js";
-import { splitLevelFor } from "../helper/achievements.js";
+import { splitLevelFor, stampTherapistPct } from "../helper/achievements.js";
 import { razorpayxReady, payoutDestination, sendRazorpayxPayout, fetchRazorpayxPayout } from "../helper/razorpayx.js";
 import { generateQrCode } from "../helper/generate.js";
 import TherapistFeedback from "../models/TherapistFeedback.js";
@@ -135,7 +135,7 @@ export const myPayouts = expressAsyncHandler(async (req, res) => {
   const me = await Therapists.findOne({ user: req.user._id }).select("_id createdAt").lean();
   const level = me ? await splitLevelFor(me).catch(() => ({ therapistPct: THERAPIST_PCT, platformPct: 100 - THERAPIST_PCT })) : { therapistPct: THERAPIST_PCT, platformPct: 100 - THERAPIST_PCT };
   const sessions = me ? await Booking.find({ therapist: me._id, status: { $ne: "Cancelled" }, $or: [{ payment_status: "Paid" }, { transaction: { $ne: null } }] })
-    .select("booking_date status source cname service format payment_status amount referral_discount credit_used noida_amount noida_fee noida_session_value noida_legacy assessment_fee assessment_therapist_share transaction payout_id client")
+    .select("booking_date status source cname service format payment_status amount referral_discount credit_used noida_amount noida_fee noida_session_value noida_legacy assessment_fee assessment_therapist_share transaction payout_id client therapist_pct")
     .populate("transaction", "amount").populate("client", "name").populate("payout_id", "status amount paidAt createdAt")
     .sort({ booking_date: -1 }).limit(1000).lean() : [];
   const earnings = sessions.map((b) => {
@@ -498,7 +498,7 @@ export const adminInitiateBookingPayout = expressAsyncHandler(async (req, res) =
   if (!b) return res.status(404).json({ status: false, message: "Booking not found" });
   if (b.payout_id) return res.status(409).json({ status: false, message: "This session's payout has already been initiated." });
   const noida = b.source === "noida";
-  const sp = bookingSplit(b);
+  let sp = bookingSplit(b);
   const paid = sp.paid;
   if (!/paid/i.test(b.payment_status || "") && !b.transaction) return res.status(400).json({ status: false, message: "The client hasn't paid for this session yet." });
   if (b.status === "Cancelled") return res.status(400).json({ status: false, message: "This session was cancelled." });
@@ -514,6 +514,10 @@ export const adminInitiateBookingPayout = expressAsyncHandler(async (req, res) =
     if (b.noida_appointment) await NoidaAppointment.updateOne({ _id: b.noida_appointment, attendance: { $in: ["", "arrived"] } }, { $set: { attendance: "completed", attendanceAt: now } });
     therapistBookingsChanged(b.therapist.user._id);
     clientBookingsChanged(b.client?._id || b.client);
+    // completed just now → this session gets the therapist's current level (helper/achievements.js), then the split
+    await stampTherapistPct(b._id, b.therapist._id);
+    b.therapist_pct = (await Booking.findById(b._id).select("therapist_pct").lean())?.therapist_pct ?? null;
+    sp = bookingSplit(b);
   }
   const when = b.booking_date || new Date();
   const method = ["bank", "upi", "other"].includes(req.body?.method) ? req.body.method : "bank";
