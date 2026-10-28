@@ -5,13 +5,15 @@
 
 export const THERAPIST_PCT = 70;
 
-export function payoutSplit({ paid = 0, platformFee = 0, assessmentFee = 0, assessmentShare = 0, base: given }) {
+// pct: the therapist's % for this session — 70 by default; a therapist with a better level (helper/achievements.js
+// splitLevelFor) gets more, stamped on the booking as therapist_pct when the session is completed
+export function payoutSplit({ paid = 0, platformFee = 0, assessmentFee = 0, assessmentShare = 0, base: given, pct = THERAPIST_PCT }) {
   const base = given != null ? Math.max(0, Number(given) || 0) : Math.max(0, paid - platformFee - assessmentFee);
-  const therapist = Math.round((base * THERAPIST_PCT) / 100) + Math.round(assessmentShare || 0);
+  const therapist = Math.round((base * pct) / 100) + Math.round(assessmentShare || 0);
   // CYT's part: the rest of what was paid — for a session valued on its own (a CYT Noida / package session):
   // the rest of that value, plus the platform fee when one was paid with it
   const platform = given != null ? base - therapist + (paid > 0 ? platformFee : 0) : paid - therapist;
-  return { base, therapist, platform: Math.max(0, Math.round(platform)), pct: THERAPIST_PCT };
+  return { base, therapist, platform: Math.max(0, Math.round(platform)), pct };
 }
 
 const num = (v) => Number(v?.$numberDecimal ?? v?.toString?.() ?? v) || 0;
@@ -32,9 +34,12 @@ export function bookingSplit(b) {
   // a CYT Noida session is split on what the session is worth (a package session was paid for with the package)
   const base = paidOk && noida && b.noida_session_value != null ? Number(b.noida_session_value) || 0
     : cytFunded > 0 ? Math.max(0, paid + cytFunded - (Number(b.assessment_fee) || 0)) : undefined;
+  // sessions completed before levels existed (no therapist_pct) stay 70/30
+  const pct = Number(b.therapist_pct) > 0 ? Number(b.therapist_pct) : THERAPIST_PCT;
   return {
     paid,
     ...payoutSplit({
+      pct,
       paid, base, platformFee: noida ? Number(b.noida_fee) || 0 : 0,
       assessmentFee: paid ? Number(b.assessment_fee) || 0 : 0, assessmentShare: paid ? Number(b.assessment_therapist_share) || 0 : 0,
     }),

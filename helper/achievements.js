@@ -2,6 +2,7 @@ import crypto from "crypto";
 import Booking from "../models/Booking.js";
 import Review from "../models/Review.js";
 import TherapistAchievement from "../models/TherapistAchievement.js";
+import Therapists from "../models/Therapists.js";
 
 /* Therapist achievements on CYT, earned from real numbers: completed sessions, reviews rated 4★ or more
    (and the average rating), and time on CYT. Once a therapist meets one it is saved (with a public code)
@@ -64,7 +65,62 @@ export async function achievementsFor(therapist) {
       unlocked: !!got, code: got?.code || null, unlockedAt: got?.unlockedAt || null,
     };
   });
-  return { stats, list, fresh };
+  const level = await splitLevelFor(therapist, { stats, unlocked: new Set([...have.keys()]) });
+  return { stats, list, fresh, level };
+}
+
+/* The CYT share of each session goes down as a therapist earns achievements (never below 7%):
+   30% to start · Rising Star + 25 Sessions → 25% · + 100 Sessions + Client Favourite → 20% ·
+   all achievements → 15%, then −2% for every 100 sessions past 100, down to 7%.
+   While the average rating is under 4★ the share is back to 30% (the certificates stay). */
+export const BASE_PLATFORM_PCT = 30;
+export const MIN_PLATFORM_PCT = 7;
+const LEVELS = [
+  { pct: 25, name: "Level 1", needs: ["rising_star", "sessions_25"] },
+  { pct: 20, name: "Level 2", needs: ["rising_star", "sessions_25", "sessions_100", "client_favourite"] },
+  { pct: 15, name: "Level 3", needs: ACHIEVEMENTS.map((a) => a.key) },
+];
+
+export function platformPctOf(stats, unlocked) {
+  const has = (k) => unlocked.has(k);
+  if (stats.reviews > 0 && stats.avgRating < 4) return { pct: BASE_PLATFORM_PCT, level: "Base", ratingHold: true };
+  let cur = { pct: BASE_PLATFORM_PCT, level: "Base" };
+  for (const l of LEVELS) if (l.needs.every(has)) cur = { pct: l.pct, level: l.name };
+  if (cur.level === "Level 3") {
+    const extra = Math.floor(Math.max(0, stats.sessions - 100) / 100);
+    const pct = Math.max(MIN_PLATFORM_PCT, 15 - 2 * extra);
+    if (pct < 15) cur = { pct, level: pct === MIN_PLATFORM_PCT ? "Top level" : "Level 3+" };
+  }
+  return cur;
+}
+
+// what the therapist gets now, and what the next step down for CYT needs
+export async function splitLevelFor(therapist, known) {
+  const stats = known?.stats || (await statsOf(therapist));
+  const keys = known?.unlocked || new Set((await TherapistAchievement.find({ therapist: therapist._id }).select("key").lean()).map((x) => x.key));
+  const cur = platformPctOf(stats, keys);
+  let next = null;
+  if (cur.ratingHold) next = { pct: platformPctOf({ ...stats, avgRating: 5 }, keys).pct, needs: ["Bring your average rating back to 4★ or more"] };
+  else if (cur.pct > MIN_PLATFORM_PCT) {
+    const l = LEVELS.find((x) => x.pct < cur.pct && !x.needs.every((k) => keys.has(k)));
+    if (l) next = { pct: l.pct, needs: l.needs.filter((k) => !keys.has(k)).map((k) => byKey[k].title) };
+    else {
+      const target = (Math.floor(Math.max(0, stats.sessions - 100) / 100) + 1) * 100 + 100;
+      next = { pct: Math.max(MIN_PLATFORM_PCT, cur.pct - 2), needs: [`${target} completed sessions (${target - stats.sessions} to go)`] };
+    }
+  }
+  return { platformPct: cur.pct, therapistPct: 100 - cur.pct, level: cur.level, ratingHold: !!cur.ratingHold, next, minPlatformPct: MIN_PLATFORM_PCT };
+}
+
+// a session was just completed: keep the therapist's % for it on the booking (once — later changes don't move it)
+export async function stampTherapistPct(bookingId, therapistId) {
+  try {
+    const t = { _id: therapistId };
+    const lvl = await splitLevelFor({ ...t, createdAt: (await Therapists.findById(therapistId).select("createdAt").lean())?.createdAt });
+    await Booking.updateOne({ _id: bookingId, therapist_pct: null }, { $set: { therapist_pct: lvl.therapistPct } });
+  } catch (e) {
+    console.error("[split] stamp failed:", e.message);
+  }
 }
 
 // a therapist's unlocked achievements for the public profile: [{ key, title, tier, code, unlockedAt }]

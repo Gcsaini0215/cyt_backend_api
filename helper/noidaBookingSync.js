@@ -1,4 +1,5 @@
 import Booking from "../models/Booking.js";
+import { stampTherapistPct } from "./achievements.js";
 import Transaction from "../models/Transaction.js";
 import Users from "../models/Users.js";
 import Therapists from "../models/Therapists.js";
@@ -198,7 +199,9 @@ export async function syncNoidaBooking(appointmentOrId, { notify = false, meet =
         notes: a.concern || "", cname: a.name, noida_phone: a.phone || "", ...charges(a), noida_session_value: await noidaSessionValue(a),
       });
       if (moved) { existing.therapist_joined_at = null; existing.client_joined_at = null; }
+      const justCompleted = status === SESSION_STATUS.COMPLETED && existing.isModified("status");
       await existing.save();
+      if (justCompleted && existing.therapist) await stampTherapistPct(existing._id, existing.therapist); // this session's split
       if (existing.calendar_event_id) {
         const full = await populated(existing._id);
         if (status === SESSION_STATUS.CANCELED) await deleteMeetEvent(full);

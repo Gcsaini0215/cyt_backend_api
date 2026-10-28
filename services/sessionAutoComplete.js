@@ -1,4 +1,5 @@
 import Booking from "../models/Booking.js";
+import { stampTherapistPct } from "../helper/achievements.js";
 import { SESSION_MINUTES, JOIN_AFTER_END_MIN, deleteMeetEvent } from "../helper/googleMeet.js";
 import { notifyTherapists, therapistUserId } from "./therapistNotify.js";
 import { notifyClient } from "./clientNotify.js";
@@ -33,6 +34,7 @@ export async function runSessionAutoComplete() {
       $set: { status: "Completed", session_completed_at: new Date(new Date(b.booking_date).getTime() + SESSION_MINUTES * 60000), auto_completed: true },
     });
     if (r.modifiedCount) {
+      await stampTherapistPct(b._id, b.therapist);
       notifyTherapists([await therapistUserId(b.therapist)], {
         type: "session", title: "Session marked completed",
         body: `${b.client?.name || "Client"} — completed automatically after the session time.`, link: "/appointments", ref: `completed:${b._id}`,

@@ -112,6 +112,9 @@ const bookingSchema = new Schema({
   pack_pct: { type: Number, default: 0 },  // the % off when booked (Admin → Pack Pricing may change later)
   pack_days: { type: Number, default: 0 }, // validity when booked
   bundle: { type: Schema.Types.ObjectId, ref: "SessionBundle", default: null },
+  // the therapist's % of this session (helper/achievements.js splitLevelFor), set once when it is completed;
+  // null = completed before levels existed → 70
+  therapist_pct: { type: Number, default: null },
   // "book your next session" nudge after a completed session (services/rebookNudge.js): "sent" | "skip", and when
   rebook_nudge: { type: String, default: "" },
   rebook_nudge_at: { type: Date, default: null },

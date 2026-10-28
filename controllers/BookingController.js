@@ -52,6 +52,7 @@ import { getPricing } from "../helper/assessmentPricing.js";
 import { findUsableCoupon } from "../helper/coupon.js";
 import SessionBundle from "../models/SessionBundle.js";
 import { feeFor, packPrice, isUsable, takeSession, returnSession, activatePackFor, getPackConfig } from "../helper/sessionBundle.js";
+import { stampTherapistPct } from "../helper/achievements.js";
 import Jwt from "jsonwebtoken";
 
 // the signed-in user behind this request (Bearer token), or "" — /book-therapist has no auth middleware
@@ -1366,6 +1367,7 @@ export const EndSession = expressAsyncHandler(async (req, res, next) => {
     result.session_completed_at = new Date();
     result.status = SESSION_STATUS.COMPLETED;
     await result.save();
+    await stampTherapistPct(result._id, result.therapist?._id || result.therapist); // this session's split
     if (result.noida_appointment) {
       await NoidaAppointment.updateOne({ _id: result.noida_appointment, attendance: { $in: ["", "arrived"] } }, { $set: { attendance: "completed", attendanceAt: new Date() } }).catch(() => {});
     }

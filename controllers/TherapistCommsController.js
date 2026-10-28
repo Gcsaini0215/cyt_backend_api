@@ -13,6 +13,7 @@ import { deleteMeetEvent } from "../helper/googleMeet.js";
 import { therapistBookingsChanged } from "../services/therapistNotify.js";
 import { changed as clientBookingsChanged } from "../services/clientNotify.js";
 import { THERAPIST_PCT, payoutSplit, bookingSplit } from "../helper/payoutSplit.js";
+import { splitLevelFor } from "../helper/achievements.js";
 import { razorpayxReady, payoutDestination, sendRazorpayxPayout, fetchRazorpayxPayout } from "../helper/razorpayx.js";
 import { generateQrCode } from "../helper/generate.js";
 import TherapistFeedback from "../models/TherapistFeedback.js";
@@ -131,7 +132,8 @@ export const myPayouts = expressAsyncHandler(async (req, res) => {
   const payouts = await TherapistPayout.find({ user: req.user._id }).sort({ createdAt: -1 }).limit(200)
     .select("amount periodFrom periodTo sessions method reference status paidAt note createdAt").lean();
   // earnings by session: every session a client has paid for (newest first) — the therapist's 70% and its payout
-  const me = await Therapists.findOne({ user: req.user._id }).select("_id").lean();
+  const me = await Therapists.findOne({ user: req.user._id }).select("_id createdAt").lean();
+  const level = me ? await splitLevelFor(me).catch(() => ({ therapistPct: THERAPIST_PCT, platformPct: 100 - THERAPIST_PCT })) : { therapistPct: THERAPIST_PCT, platformPct: 100 - THERAPIST_PCT };
   const sessions = me ? await Booking.find({ therapist: me._id, status: { $ne: "Cancelled" }, $or: [{ payment_status: "Paid" }, { transaction: { $ne: null } }] })
     .select("booking_date status source cname service format payment_status amount referral_discount credit_used noida_amount noida_fee noida_session_value noida_legacy assessment_fee assessment_therapist_share transaction payout_id client")
     .populate("transaction", "amount").populate("client", "name").populate("payout_id", "status amount paidAt createdAt")
@@ -159,7 +161,8 @@ export const myPayouts = expressAsyncHandler(async (req, res) => {
         lastPaidAt: paid[0]?.paidAt || null,
         earned: done.reduce((s, e) => s + e.share, 0),            // your share of every completed session
         awaiting: done.filter((e) => !e.payout).reduce((s, e) => s + e.share, 0), // completed, payout not started yet
-        pct: THERAPIST_PCT,
+        pct: level.therapistPct, // the therapist's % now (helper/achievements.js); each session keeps the % it was completed at
+        level,
       },
       earnings,
     },
