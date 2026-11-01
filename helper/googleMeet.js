@@ -13,6 +13,7 @@ const API_BASE = process.env.API_PUBLIC_URL || "https://api.chooseyourtherapist.
 export const SITE_URL = process.env.SITE_URL || "https://www.chooseyourtherapist.in";
 const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || `${API_BASE}/api/google/callback`;
 export const SESSION_MINUTES = 60;   // calendar event length
+const PROBONO_MINUTES = 45;          // a free pro bono session
 export const JOIN_EARLY_MIN = 15;    // Join / Start open this long before the slot
 export const JOIN_AFTER_END_MIN = 30; // ...and stay open this long after the scheduled end
 
@@ -40,8 +41,8 @@ export function decrypt(blob) {
 }
 
 // signed, short-lived "state" so the callback knows which therapist is connecting
-export function authUrlFor(userId) {
-  const state = Jwt.sign({ uid: String(userId), p: "gcal" }, process.env.JWT_SECRET, { expiresIn: "15m", algorithm: "HS256" });
+export function authUrlFor(userId, who = "therapist") {
+  const state = Jwt.sign({ uid: String(userId), p: "gcal", who }, process.env.JWT_SECRET, { expiresIn: "15m", algorithm: "HS256" });
   const q = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID,
     redirect_uri: REDIRECT_URI,
@@ -59,6 +60,7 @@ export function readState(state) {
   if (d.p !== "gcal" || !d.uid) throw new Error("bad state");
   return d.uid;
 }
+export const stateIsTrainee = (state) => Jwt.decode(String(state))?.who === "trainee";
 
 const form = (o) => new URLSearchParams(o).toString();
 const formHeaders = { "Content-Type": "application/x-www-form-urlencoded" };
@@ -133,6 +135,59 @@ export async function createMeetForBooking(booking) {
       if (uid) await TherapistGoogle.updateOne({ user: uid }, { $set: { last_error: String(msg).slice(0, 300), last_error_at: new Date() } });
     } catch { /* ignore */ }
     return null;
+  }
+}
+
+/* The Meet for a free pro bono session, on the trainee's own calendar (their connection is saved under the
+   ProbonoIntern id). The client's concern stays out of the calendar event. Returns { link, eventId } or null. */
+export async function createMeetForProbono(session, intern) {
+  try {
+    const conn = await TherapistGoogle.findOne({ user: intern._id });
+    if (!googleConfigured() || !conn) return null;
+    const start = new Date(session.slot_at);
+    const end = new Date(start.getTime() + PROBONO_MINUTES * 60000);
+    const token = await accessTokenFor(conn);
+    const { data } = await axios.post(
+      "https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=all",
+      {
+        summary: "Free support session · Choose Your Therapist",
+        description: `Your free session with ${intern.name} on Choose Your Therapist.`,
+        start: { dateTime: start.toISOString(), timeZone: "Asia/Kolkata" },
+        end: { dateTime: end.toISOString(), timeZone: "Asia/Kolkata" },
+        attendees: session.email ? [{ email: session.email }] : [],
+        guestsCanInviteOthers: false,
+        guestsCanSeeOtherGuests: false,
+        conferenceData: { createRequest: { requestId: `cyt-pb-${session._id}-${new Date(session.slot_at).getTime()}`, conferenceSolutionKey: { type: "hangoutsMeet" } } },
+        reminders: { useDefault: true },
+      },
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+    );
+    const link = data.hangoutLink || data.conferenceData?.entryPoints?.find((e) => e.entryPointType === "video")?.uri || "";
+    if (conn.last_error) await TherapistGoogle.updateOne({ _id: conn._id }, { $set: { last_error: "", last_error_at: null } });
+    return link ? { link, eventId: data.id } : null;
+  } catch (err) {
+    const msg = err?.response?.data?.error?.message || err?.response?.data?.error_description || err.message;
+    console.error(`[google-meet] probono ${session?._id}: ${msg}`);
+    await TherapistGoogle.updateOne({ user: intern._id }, { $set: { last_error: String(msg).slice(0, 300), last_error_at: new Date() } }).catch(() => {});
+    return null;
+  }
+}
+
+// Remove a pro bono session's calendar event, so an old Meet link isn't left to be reused. Never throws.
+export async function deleteProbonoEvent(session, intern) {
+  try {
+    if (!googleConfigured() || !session?.calendar_event_id) return false;
+    const conn = await TherapistGoogle.findOne({ user: intern?._id || session.intern?._id || session.intern });
+    if (!conn) return false;
+    const token = await accessTokenFor(conn);
+    await axios.delete(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(session.calendar_event_id)}?sendUpdates=all`,
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }).catch((e) => {
+      if (![404, 410].includes(e?.response?.status)) throw e; // already gone is fine
+    });
+    return true;
+  } catch (err) {
+    console.error(`[google-meet] delete probono event ${session?._id}: ${err?.response?.data?.error?.message || err.message}`);
+    return false;
   }
 }
 

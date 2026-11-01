@@ -5,6 +5,7 @@ import mongoose from "mongoose";
 import Coupon from "../models/Coupan.js";
 import { resolveReferral, applicantEmail, REFERRAL_AMOUNT } from "../helper/referral.js";
 import { couponOwner, usedCounts, couponState, discountOf, findUsableCoupon } from "../helper/coupon.js";
+import { resolveProbonoCoupon } from "../helper/probono.js";
 import { couponsUnlocked } from "../helper/couponAddon.js";
 
 // making or changing coupons needs the Coupons upgrade (CouponAddonController); 402 so the page can show the offer
@@ -180,8 +181,17 @@ export const ApplyCoupon = expressAsyncHandler(async (req, res) => {
 
   const found = await findUsableCoupon(therapist_id, code, apply_for);
 
-  // not one of the therapist's coupons → a friend's referral code works on any therapist's session
+  // not one of the therapist's coupons → a free-session coupon or a friend's referral code works on any therapist's session
   if (found.error === "Invalid coupon code" && apply_for === "Therapist") {
+    const pb = await resolveProbonoCoupon({ code, email: await applicantEmail(req) });
+    if (pb?.error) return res.status(400).json({ status: false, message: pb.error });
+    if (pb) {
+      return res.status(200).json({
+        status: true,
+        message: `Coupon applied — ₹${pb.amount} off your first session`,
+        data: { code, referral: true, probono: true, discount_type: "flat", discount_value: pb.amount, discount: discountOf("flat", pb.amount, amount) },
+      });
+    }
     const ref = await resolveReferral({ code, email: await applicantEmail(req) });
     if (ref?.error) return res.status(400).json({ status: false, message: ref.error });
     if (ref) {

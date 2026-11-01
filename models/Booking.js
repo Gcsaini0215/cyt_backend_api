@@ -123,6 +123,8 @@ const bookingSchema = new Schema({
   referral_discount: { type: Number, default: 0 },
   credit_used: { type: Number, default: 0 },
   credit_settled: { type: Boolean, default: false },
+  // a free-session coupon used on this booking (helper/probono.js); its amount is in referral_discount, funded by CYT
+  probono_session: { type: Schema.Types.ObjectId, ref: "ProbonoSession", default: null },
   // the therapist's own coupon used on this booking (helper/coupon.js counts paid bookings as its uses)
   coupon_id: { type: Schema.Types.ObjectId, ref: "Coupon", default: null },
   coupon_code: { type: String, default: "" },

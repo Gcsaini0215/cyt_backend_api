@@ -1,6 +1,6 @@
 import expressAsyncHandler from "express-async-handler";
 import TherapistGoogle from "../models/TherapistGoogle.js";
-import { googleConfigured, authUrlFor, readState, exchangeCode, encrypt, revoke, createTestMeet, SITE_URL } from "../helper/googleMeet.js";
+import { googleConfigured, authUrlFor, readState, stateIsTrainee, exchangeCode, encrypt, revoke, createTestMeet, SITE_URL } from "../helper/googleMeet.js";
 
 // GET /google/status — is Google set up on the server, and has this therapist connected?
 export const googleStatus = expressAsyncHandler(async (req, res) => {
@@ -25,7 +25,9 @@ export const googleConnect = expressAsyncHandler(async (req, res) => {
 
 // GET /google/callback — Google sends the therapist back here (no auth header; identity is in `state`)
 export const googleCallback = expressAsyncHandler(async (req, res) => {
-  const back = (q) => res.redirect(`${SITE_URL}/settings?tab=account&google=${q}`);
+  // a trainee connecting for pro bono sessions goes back to the trainee portal
+  const page = stateIsTrainee(req.query.state) ? "/trainee/probono?" : "/settings?tab=account&";
+  const back = (q) => res.redirect(`${SITE_URL}${page}google=${q}`);
   if (req.query.error) return back(req.query.error === "access_denied" ? "denied" : "error");
   let uid;
   try { uid = readState(String(req.query.state || "")); } catch { return back("expired"); }

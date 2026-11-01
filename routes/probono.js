@@ -12,7 +12,8 @@ import {
   getAllProbonoReviews,
   deleteProbonoReview,
 } from "../controllers/probonoController.js";
-import { hasPermission } from "../middlewares/authMiddleware.js";
+import { myProbono, requestSession, updateDetails, cancelSession, probonoFunnel, adminSessions, adminSchedule, adminSetStatus } from "../controllers/probonoSessionController.js";
+import { hasPermission, isAuth } from "../middlewares/authMiddleware.js";
 import { upload } from "../services/fileUpload.js";
 import { leadRateLimit } from "../middlewares/rateLimitMiddleware.js";
 
@@ -29,5 +30,15 @@ router.post("/probono-interns/:id/review", leadRateLimit, saveProbonoReview);
 router.get("/probono-interns/:id/reviews", getProbonoReviews);
 router.get("/probono-reviews", hasPermission("probono"), getAllProbonoReviews);
 router.delete("/probono-reviews/:id", hasPermission("probono"), deleteProbonoReview);
+
+// the free first session: the client's details (signed in), and the team's control of it
+router.get("/probono/me", isAuth, myProbono);
+router.post("/probono/request", leadRateLimit, isAuth, requestSession);
+router.put("/probono/:id", isAuth, updateDetails);
+router.post("/probono/:id/cancel", isAuth, cancelSession);
+router.get("/admin/probono/sessions", hasPermission("probono"), adminSessions);
+router.post("/admin/probono/sessions/:id/schedule", hasPermission("probono"), adminSchedule);
+router.post("/admin/probono/sessions/:id/status", hasPermission("probono"), adminSetStatus);
+router.get("/admin/probono/funnel", hasPermission("probono"), probonoFunnel);
 
 export default router;

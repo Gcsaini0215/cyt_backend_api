@@ -5,6 +5,9 @@ import {
   adminPeople, adminAttendance, adminFixAttendance, adminSetAttendance, adminDeleteAttendance, adminTasks, adminCreateTask, adminUpdateTask, adminDeleteTask,
   adminGrantPlan, adminGrants, adminRemoveGrant, publicTracks, adminTracks, adminSaveTracks, adminNotes, adminCreateNote, adminDeleteNote, adminCertificates, adminSendCertificate, adminDeleteCertificate,
 } from "../controllers/traineePortalController.js";
+import {
+  needIntern, traineeProbono, completeSession, markNoShow, releaseSession, traineeGoogleConnect, traineeGoogleDisconnect,
+} from "../controllers/probonoSessionController.js";
 import { hasPermission } from "../middlewares/authMiddleware.js";
 import { upload, uploadResource, uploadTraineeMaterial } from "../services/fileUpload.js";
 
@@ -33,6 +36,15 @@ router.put("/trainee-portal/profile", traineeAuth, one(upload, "photo"), saveMyP
 router.get("/trainee-portal/upgrade", traineeAuth, upgradeInfo);
 router.post("/trainee-portal/upgrade/order", traineeAuth, upgradeOrder);
 router.post("/trainee-portal/upgrade/verify", traineeAuth, upgradeVerify);
+
+// pro bono sessions the team gave this trainee, and their Google connection
+const pb = [traineeAuth, needIntern];
+router.get("/trainee-portal/probono", pb, traineeProbono);
+router.get("/trainee-portal/probono/google/connect", pb, traineeGoogleConnect);
+router.post("/trainee-portal/probono/google/disconnect", pb, traineeGoogleDisconnect);
+router.post("/trainee-portal/probono/:id/release", pb, releaseSession);
+router.post("/trainee-portal/probono/:id/complete", pb, completeSession);
+router.post("/trainee-portal/probono/:id/no-show", pb, markNoShow);
 
 // admin
 const adm = hasPermission("probono");

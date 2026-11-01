@@ -17,6 +17,7 @@ import PaymentStatus from "../models/PaymentStatus.js";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import { resolveReferral, settleBookingRewards, REFERRAL_AMOUNT } from "../helper/referral.js";
+import { resolveProbonoCoupon, settleProbonoCoupon } from "../helper/probono.js";
 import { notifyClient, changed as clientBookingsChanged } from "../services/clientNotify.js";
 
 const getRazorpayInstance = () => {
@@ -301,9 +302,11 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
 
     // A friend's referral code (first session only) and the client's own referral credit.
     // Re-checked here — the discount shown on the booking page is only a preview.
-    let referral_code = "", referral_discount = 0, credit_used = 0;
+    let referral_code = "", referral_discount = 0, credit_used = 0, probono_session = null;
     if (req.body.referral_code) {
-      const ref = await resolveReferral({ code: req.body.referral_code, email: user.email });
+      const pb = await resolveProbonoCoupon({ code: req.body.referral_code, email: user.email });
+      if (pb?.session) { probono_session = pb.session._id; referral_discount = pb.amount; }
+      const ref = pb ? null : await resolveReferral({ code: req.body.referral_code, email: user.email });
       if (ref && !ref.error) { referral_code = ref.referrer.referral_code; referral_discount = REFERRAL_AMOUNT; }
     }
     // the therapist's own coupon — recorded on the booking; it counts as used once the booking is paid
@@ -357,6 +360,7 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         payment_status: "Pending Payment",
         referral_code,
         referral_discount,
+        probono_session,
         credit_used,
         coupon_id,
         coupon_code,
@@ -701,6 +705,7 @@ export const createRazorpayOrder = expressAsyncHandler(async (req, res, next) =>
 async function confirmPaidBooking(isBookingDetail, transactionId) {
     attachBookingAssessments(isBookingDetail); // clinical assessments booked with it → sent to the client to complete before the session
     settleBookingRewards(isBookingDetail).catch((e) => console.error("[referral] settle failed:", e.message));
+    if (isBookingDetail.probono_session) settleProbonoCoupon(isBookingDetail).catch((e) => console.error("[probono] coupon settle failed:", e.message));
     notifyClient(isBookingDetail.client?._id, {
       type: "booking", title: `Session confirmed with ${isBookingDetail.therapist?.user?.name || "your therapist"}`,
       body: `${formatSlotIST(isBookingDetail.booking_date)} · ${isBookingDetail.service || "Session"}`, link: "/client/my-bookings", ref: `booking:${isBookingDetail._id}`,
