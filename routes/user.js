@@ -9,6 +9,7 @@ import {
   getEmailLogs,
   updateContactMeta,
   getMyReferral,
+  refreshSession,
   getMyReviewedTherapists,
 } from "../controllers/userController.js";
 import { isAuth, isAuthCommon, hasPermission } from "../middlewares/authMiddleware.js";
@@ -21,6 +22,7 @@ const router = Router();
 router.get("/profile", isAuth, getProfile);
 router.get("/get-user", isAuthCommon, getUser);
 router.get("/my-referral", isAuth, getMyReferral);
+router.post("/session/refresh", isAuthCommon, refreshSession);
 router.get("/my-reviewed-therapists", isAuth, getMyReviewedTherapists);
 
 // the "Stop these reminders" link in the book-your-next-session email (services/rebookNudge.js)

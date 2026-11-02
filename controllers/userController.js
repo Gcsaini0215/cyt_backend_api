@@ -4,6 +4,7 @@ import Users from "../models/Users.js";
 import Review from "../models/Review.js";
 import Referral from "../models/Referral.js";
 import { ensureReferralCode, REFERRAL_AMOUNT } from "../helper/referral.js";
+import generateToken from "../config/generateToken.js";
 import UserInfo from "../models/UserInfo.js";
 import Lead from "../models/Lead.js";
 import EmailLog from "../models/EmailLog.js";
@@ -333,6 +334,13 @@ export const getEmailLogs = expressAsyncHandler(async (req, res) => {
     .limit(limit)
     .select("subject sentCount failCount sentAt recipients");
   res.status(200).json({ status: true, data: logs, total, page, pages: Math.ceil(total / limit) });
+});
+
+// The site keeps a session in use alive with this, and uses its 401 to tell a session that has really
+// ended from a good token that some route refused (client and therapist accounts only).
+export const refreshSession = expressAsyncHandler(async (req, res) => {
+  const { _id, role } = req.user;
+  res.status(200).json({ status: true, token: role === 0 || role === 1 ? generateToken(_id, role) : undefined });
 });
 
 // Client dashboard "Give ₹200, get ₹200": the client's code, unspent credit and friends who booked.
