@@ -48,3 +48,26 @@ export const settleProbonoCoupon = (booking) => ProbonoSession.updateOne(
   { _id: booking.probono_session, coupon_used_at: null },
   { $set: { coupon_used_at: new Date(), coupon_booking: booking._id } }
 );
+
+/* Who an open request may repeat, for the admin's "Possible repeat" tag. The phone isn't verified, so this helps the
+   team decide; it doesn't prove anything. */
+const nameKey = (v) => String(v || "").toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+const emailKey = (v) => {
+  const [user = "", domain = ""] = String(v || "").toLowerCase().trim().split("@");
+  const base = user.split("+")[0];
+  return `${/gmail|googlemail/.test(domain) ? base.replace(/\./g, "") : base}@${domain}`;
+};
+export const findRepeats = (row, all) => {
+  const name = nameKey(row.name);
+  const mail = emailKey(row.email);
+  const out = [];
+  for (const o of all) {
+    if (String(o._id) === String(row._id)) continue;
+    const reason = String(o.client) === String(row.client) ? "same account"
+      : o.phone && o.phone === row.phone ? "same phone"
+      : emailKey(o.email) === mail ? "same email"
+      : name.length >= 4 && nameKey(o.name) === name ? "same name" : "";
+    if (reason) out.push({ _id: o._id, name: o.name, status: o.status, reason });
+  }
+  return out.slice(0, 5);
+};

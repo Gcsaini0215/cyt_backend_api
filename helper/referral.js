@@ -11,14 +11,20 @@ export const REFERRAL_AMOUNT = 200;
 
 const namePart = (name) => String(name || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 6) || "CYT";
 
+const byReferralCode = (code) => ({ $or: [{ referral_code: code }, { referral_code_old: code }] });
+
 // The client's own code, e.g. "DEEPAK482" — made on first use, never clashing with a coupon code.
+// After a name change they get a new one from the new name; the old one was shared with friends, so it keeps working.
 export async function ensureReferralCode(user) {
-  if (user.referral_code) return user.referral_code;
+  const current = user.referral_code;
+  if (current && current.replace(/\d+$/, "") === namePart(user.name)) return current;
   for (let i = 0; i < 8; i++) {
     const code = `${namePart(user.name)}${Math.floor(100 + Math.random() * 900)}`;
-    if (await Coupon.exists({ code })) continue;
+    if (code === current || (await Coupon.exists({ code })) || (await Users.exists(byReferralCode(code)))) continue;
     try {
-      const r = await Users.updateOne({ _id: user._id, referral_code: { $exists: false } }, { $set: { referral_code: code } });
+      const r = current
+        ? await Users.updateOne({ _id: user._id, referral_code: current }, { $set: { referral_code: code }, $addToSet: { referral_code_old: current } })
+        : await Users.updateOne({ _id: user._id, referral_code: { $exists: false } }, { $set: { referral_code: code } });
       if (r.modifiedCount) return code;
       const fresh = await Users.findById(user._id).select("referral_code").lean(); // set by a parallel request
       if (fresh?.referral_code) return fresh.referral_code;
@@ -41,7 +47,7 @@ export async function isNewClient(email) {
 export async function resolveReferral({ code, email }) {
   const c = String(code || "").trim().toUpperCase();
   if (!c) return null;
-  const referrer = await Users.findOne({ referral_code: c, role: 0 }).select("_id name email referral_code").lean();
+  const referrer = await Users.findOne({ ...byReferralCode(c), role: 0 }).select("_id name email referral_code").lean();
   if (!referrer) return null;
   const mail = String(email || "").toLowerCase().trim();
   if (mail && referrer.email?.toLowerCase() === mail) return { error: "You can't use your own referral code — share it with a friend instead." };
@@ -75,7 +81,7 @@ export async function settleBookingRewards(booking) {
     }
   }
   if (booking.referral_code) {
-    const referrer = await Users.findOne({ referral_code: booking.referral_code }).select("_id").lean();
+    const referrer = await Users.findOne(byReferralCode(booking.referral_code)).select("_id").lean();
     if (!referrer || String(referrer._id) === String(clientId)) return;
     try {
       await Referral.create({ referrer: referrer._id, friend: clientId, booking: booking._id, code: booking.referral_code, amount: REFERRAL_AMOUNT });

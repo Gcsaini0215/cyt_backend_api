@@ -12,7 +12,7 @@ import {
   getAllProbonoReviews,
   deleteProbonoReview,
 } from "../controllers/probonoController.js";
-import { myProbono, requestSession, updateDetails, cancelSession, probonoFunnel, adminSessions, adminSchedule, adminSetStatus } from "../controllers/probonoSessionController.js";
+import { myProbono, requestSession, updateDetails, cancelSession, probonoFunnel, adminSessions, adminSchedule, adminSetPhone, adminSetStatus } from "../controllers/probonoSessionController.js";
 import { hasPermission, isAuth } from "../middlewares/authMiddleware.js";
 import { upload } from "../services/fileUpload.js";
 import { leadRateLimit } from "../middlewares/rateLimitMiddleware.js";
@@ -38,6 +38,7 @@ router.put("/probono/:id", isAuth, updateDetails);
 router.post("/probono/:id/cancel", isAuth, cancelSession);
 router.get("/admin/probono/sessions", hasPermission("probono"), adminSessions);
 router.post("/admin/probono/sessions/:id/schedule", hasPermission("probono"), adminSchedule);
+router.post("/admin/probono/sessions/:id/phone", hasPermission("probono"), adminSetPhone);
 router.post("/admin/probono/sessions/:id/status", hasPermission("probono"), adminSetStatus);
 router.get("/admin/probono/funnel", hasPermission("probono"), probonoFunnel);
 
