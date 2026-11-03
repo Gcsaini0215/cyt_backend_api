@@ -653,7 +653,7 @@ export const welcomeCredentialsMail = ({ name, email }) =>
       button("Go to login", `${BRAND.site}/login`),
   });
 
-export const certificateIssuedMail = ({ recipientName, certLabel, certNumber, role, startDate, endDate }) =>
+export const certificateIssuedMail = ({ recipientName, certLabel, certNumber, role, startDate, endDate, verifyLink }) =>
   shell({
     preheader: `Your ${certLabel || "certificate"} from ${BRAND.name}`,
     withBanner: true,
@@ -668,6 +668,7 @@ export const certificateIssuedMail = ({ recipientName, certLabel, certNumber, ro
         endDate && ["End date", esc(endDate)],
         ["Organisation", `${BRAND.name} LLP`],
       ]) +
+      (verifyLink ? para(`Anyone, such as your college or a future employer, can check that it is genuine by scanning the QR on it or opening <a href="${verifyLink}" style="color:${BRAND.green};">${esc(verifyLink.replace(/^https?:\/\/(www\.)?/, ""))}</a>.`) : "") +
       note(`&#128206; Your certificate is attached as a PDF. Contact <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a> for a duplicate or any change.`) +
       `<div style="font-size:12px;color:${BRAND.soft};line-height:1.6;margin-top:14px;">With warm regards,<br><strong style="color:${BRAND.ink};">Mr. Deepak Kumar</strong><br>Director, Psychologist &middot; ${BRAND.name} LLP</div>`,
   });
