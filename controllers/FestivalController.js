@@ -27,7 +27,7 @@ export const getFestivalOffer = expressAsyncHandler(async (req, res) => {
   return res.json({
     status: true,
     data: {
-      key: offer.key, title: offer.title, bookBy: offer.bookBy, blockedDates: offer.blockedDates, validDays: offer.validDays, formats: offer.formats,
+      key: offer.key, title: offer.title, bookBy: offer.bookBy, blockedDates: offer.blockedDates, validDays: offer.validDays, formats: offer.formats, dateFormats: offer.dateFormats,
       active: offer.active, ended: today > offer.bookBy,
       today, open: offer.active && offer.formats.length > 0 && today <= offer.bookBy, lastSessionDate: addDays(today, offer.validDays),
       prices: { "in-person": Number(p.individual_inperson) || 0, online: Number(p.individual_online) || 0, platformFee: Number(p.platformFee) || 0 },
@@ -40,7 +40,7 @@ const publicGift = (g, appt) => {
   const today = istToday();
   return {
     code: g.code, link: giftLink(g.code), offer: g.offer, offerTitle: offer?.title || "Festival offer",
-    blockedDates: offer?.blockedDates || [], formats: offer?.formats || ["in-person", "online"],
+    blockedDates: offer?.blockedDates || [], formats: offer?.formats || ["in-person", "online"], dateFormats: offer?.dateFormats || {},
     buyerFirst: String(g.buyerName || "").trim().split(" ")[0],
     purchasedOn: g.purchasedOn, validTill: g.validTill, today, expired: today > g.validTill,
     from: g.buyerName, forSelf: g.forSelf,
@@ -92,7 +92,7 @@ export const bookFestivalGift = expressAsyncHandler(async (req, res) => {
   if (!String(name || "").trim()) return res.status(400).json({ status: false, message: "Please enter the name of the person attending." });
   if (!/^\d{10}$/.test(String(phone || "").trim())) return res.status(400).json({ status: false, message: "Please enter a valid 10-digit phone number." });
   if (!EMAIL_RX.test(String(email || "").trim())) return res.status(400).json({ status: false, message: "Please enter an email — it's the login to see this booking." });
-  const fp = offer ? formatProblem(offer, format) : "Please choose in-person or online.";
+  const fp = offer ? formatProblem(offer, format, date) : "Please choose in-person or online.";
   if (fp) return res.status(400).json({ status: false, message: fp });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || "")) || !String(slot || "").trim()) return res.status(400).json({ status: false, message: "Please pick a date and time." });
   const dateProblem = date > g0.validTill
@@ -222,6 +222,15 @@ export const adminSaveFestivalOffer = expressAsyncHandler(async (req, res) => {
     const n = Number(b.validDays);
     if (!Number.isInteger(n) || n < 1 || n > 90) return res.status(400).json({ status: false, message: "Days must be between 1 and 90." });
     set.validDays = n;
+  }
+  if (b.dateFormats !== undefined) {
+    if (!b.dateFormats || typeof b.dateFormats !== "object" || Array.isArray(b.dateFormats)) return res.status(400).json({ status: false, message: "Bad day settings." });
+    const clean = {};
+    for (const [d, v] of Object.entries(b.dateFormats)) {
+      if (!DATE_RX.test(d) || !Array.isArray(v)) return res.status(400).json({ status: false, message: "Bad day settings." });
+      clean[d] = base.formats.filter((f) => v.includes(f));
+    }
+    set.dateFormats = clean;
   }
   set.updatedBy = String(req.user?.email || req.user?.name || "");
   await FestivalOfferSetting.updateOne({ key }, { $set: set }, { upsert: true });

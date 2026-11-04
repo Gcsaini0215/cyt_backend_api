@@ -10,6 +10,7 @@ const festivalOfferSettingSchema = new Schema({
   bookBy:       { type: String, default: "" },                   // last day to buy, "YYYY-MM-DD" (IST)
   blockedDates: { type: [String], default: undefined },          // no sessions on these days
   validDays:    { type: Number, default: null },                 // both sessions within this many days of buying
+  dateFormats:  { type: Schema.Types.Mixed, default: undefined },   // per day: { "YYYY-MM-DD": ["online"] } — modes on that day only
   updatedBy:    { type: String, default: "" },
 }, { timestamps: true });
 

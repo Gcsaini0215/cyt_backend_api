@@ -41,11 +41,23 @@ export const festivalOffer = (key) => {
     bookBy: o.bookBy || base.bookBy,
     blockedDates: Array.isArray(o.blockedDates) ? o.blockedDates : base.blockedDates,
     validDays: Number(o.validDays) > 0 ? Number(o.validDays) : base.validDays,
+    dateFormats: o.dateFormats && typeof o.dateFormats === "object" ? o.dateFormats : {},
   };
 };
+// Modes open on one day: the offer's modes, narrowed by that day's own switch (admin → Festival Offer → by date).
+export function formatsOn(offer, date) {
+  const day = date && offer.dateFormats?.[date];
+  return Array.isArray(day) ? offer.formats.filter((f) => day.includes(f)) : offer.formats;
+}
 // "Only online sessions are on right now." etc. — when the asked-for mode is switched off
-export function formatProblem(offer, format) {
-  if (offer.formats.includes(format)) return null;
+export function formatProblem(offer, format, date) {
+  if (offer.formats.includes(format)) {
+    if (!date) return null;
+    const on = formatsOn(offer, date);
+    if (on.includes(format)) return null;
+    if (!on.length) return "There are no sessions on this day — please pick another day.";
+    return on[0] === "online" ? "Only online sessions on this day — please choose Online or pick another day." : "Only in-person sessions on this day — please choose In-person or pick another day.";
+  }
   if (!offer.formats.length) return "Sessions under this offer are paused right now. Please WhatsApp us.";
   if (offer.formats.length === 1) return offer.formats[0] === "online" ? "Only online sessions are available right now." : "Only in-person sessions (Noida centre) are available right now.";
   return "Please choose in-person or online.";

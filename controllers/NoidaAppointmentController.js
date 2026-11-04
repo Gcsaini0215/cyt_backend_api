@@ -929,7 +929,7 @@ async function offerBookingProblem(offer, body) {
   const today = istDateStr(istNow());
   if (!offer.active) return "This offer is paused right now. Please check back soon or WhatsApp us.";
   if (today > offer.bookBy) return "This offer has ended.";
-  const fp = formatProblem(offer, body.format);
+  const fp = formatProblem(offer, body.format, body.date);
   if (fp) return fp;
   if (!body.name?.trim() || !/^\d{10}$/.test(body.phone || "") || !isValidDateStr(body.date) || !body.slot?.trim()) return "Please fill in your details and pick a time.";
   return offerDateProblem(offer, body.date, today);
