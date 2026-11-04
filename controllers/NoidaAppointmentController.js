@@ -24,6 +24,9 @@ import { leadNotificationEmail, noidaAppointmentConfirmationEmail } from "../ser
 import { getOrCreatePricing } from "./NoidaPricingController.js";
 import { getActiveCredit } from "./NoidaClientCreditController.js";
 import { claimReceptionSession, refundReceptionSession, refundNoidaCredit, reclaimNoidaCredit } from "../helper/receptionPackage.js";
+import { festivalOffer, offerDateProblem, giftLink } from "../helper/festivalOffer.js";
+import { createGiftForAppointment, releaseFestivalGift } from "../helper/festivalGift.js";
+import FestivalGift from "../models/FestivalGift.js";
 
 const getRazorpayInstance = () => new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
@@ -802,8 +805,22 @@ export const deleteNoidaClient = expressAsyncHandler(async (req, res, next) => {
 // chosen session mode/format/package and opens a Razorpay order for it.
 // The frontend never gets to say what the amount is.
 export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
-  const { sessionMode, format, packageId, customSessions, couponCode, therapistId, address, phone } = req.body;
-  const type = normalizeType(req.body.type);
+  let { sessionMode, packageId, customSessions, couponCode, therapistId } = req.body;
+  const { format, address, phone } = req.body;
+  let type = normalizeType(req.body.type);
+
+  // Festival offer: always one individual session with Deepak at the normal fee, no coupon,
+  // on a date inside the offer's window.
+  const offer = req.body.offer ? festivalOffer(req.body.offer) : null;
+  if (req.body.offer) {
+    const problem = !offer ? "This offer isn't available." : await offerBookingProblem(offer, req.body);
+    if (problem) {
+      res.status(400);
+      return next(new Error(problem));
+    }
+    sessionMode = "individual"; packageId = undefined; customSessions = undefined; couponCode = undefined; type = "new";
+    therapistId = (await noPreferenceTherapist()) || undefined;
+  }
 
   if (!VALID_SESSION_MODES.includes(sessionMode)) {
     res.status(400);
@@ -875,7 +892,11 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
             packageId: sessionMode === "package" ? asPackageId(packageId) : null,
             customSessions: sessionMode === "package" && !asPackageId(packageId) ? Number(customSessions) || 0 : 0,
             couponCode: appliedCoupon, discountAmount,
-            therapistId: therapistId && mongoose.Types.ObjectId.isValid(therapistId) ? therapistId : null,
+            therapistId: therapistId && mongoose.Types.ObjectId.isValid(String(therapistId)) ? therapistId : null,
+            ...(offer ? {
+              offer: offer.key, giftFor: ["self", "gift"].includes(req.body.giftFor) ? req.body.giftFor : "",
+              giftName: String(req.body.giftName || "").slice(0, 80), giftPhone: String(req.body.giftPhone || "").slice(0, 15), giftEmail: String(req.body.giftEmail || "").slice(0, 120),
+            } : {}),
           },
         });
       } catch (pendingErr) {
@@ -901,15 +922,28 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
   }
 });
 
+// Why this festival-offer booking can't go ahead (null = fine). Only the paid session is checked here;
+// the free one is checked against its gift (FestivalController.redeemFestivalGift).
+async function offerBookingProblem(offer, body) {
+  const today = istDateStr(istNow());
+  if (today > offer.bookBy) return "This offer has ended.";
+  if (!offer.formats.includes(body.format)) return "Please choose in-person or online.";
+  if (!body.name?.trim() || !/^\d{10}$/.test(body.phone || "") || !isValidDateStr(body.date) || !body.slot?.trim()) return "Please fill in your details and pick a time.";
+  return offerDateProblem(offer, body.date, today);
+}
+
 // Shared by both the public pay-first flow and the admin reception-booking
 // flow — caller has already verified payment (Razorpay signature) or
 // established there's an active credit before calling this. `paymentMethod`
 // is one of "razorpay" | "cash" | "qr" (ignored when credit is set).
-async function finalizeNoidaBooking({
+export async function finalizeNoidaBooking({
   name, phone, email, concern, date, slot, type, age,
   sessionMode, format, address, packageId, customSessions, couponCode, discountAmount: lockedDiscount, therapistId,
   credit, paymentMethod, razorpayOrderId, razorpayPaymentId, bookedByAdmin,
+  offer: offerKey, giftFor, giftName, giftPhone, giftEmail, gift,
 }) {
+  // festival offer: `gift` = the free session being booked with its link; otherwise the paid session
+  const offer = festivalOffer(gift ? gift.offer : offerKey);
   if ((await slotIsFull(date, slot)).full) {
     const err = new Error(SLOT_FULL_MESSAGE);
     err.status = 409;
@@ -930,7 +964,9 @@ async function finalizeNoidaBooking({
   let baseAmount = 0, platformFee = 0, totalAmount = 0, packageName = "", creditUsedId = null, sessionsCount = 0;
   let discountAmount = 0, appliedCoupon = "", receptionCreditClientId = "";
 
-  if (credit && credit.source === "reception") {
+  if (gift) {
+    packageName = `${offer?.title || "Festival"} free session`;
+  } else if (credit && credit.source === "reception") {
     // Same idea, but the session lives on a walk-in Reception client's package
     // (a separate collection with a free-form `id` string, not an ObjectId) — so this
     // booking and an in-clinic visit draw from the same pool and can't double-spend it.
@@ -969,8 +1005,9 @@ async function finalizeNoidaBooking({
     baseAmount = computed.baseAmount;
     platformFee = computed.platformFee;
     totalAmount = computed.totalAmount;
-    packageName = computed.packageName;
+    packageName = offer ? `${offer.title} offer` : computed.packageName;
   }
+  const free = !!(credit || gift);
 
   const clientCode = await ensureClientCode({ phone: phone.trim(), name: name.trim() });
   // The client's preferred therapist — looked up leniently: a booking that is already
@@ -998,8 +1035,10 @@ async function finalizeNoidaBooking({
     discountAmount,
     amount: totalAmount,
     platformFee,
-    paymentStatus: credit ? "package-credit" : "paid",
-    paymentMethod: credit ? "credit" : paymentMethod,
+    offer: offer ? offer.key : "",
+    festivalGift: gift ? gift._id : null,
+    paymentStatus: free ? "package-credit" : "paid",
+    paymentMethod: free ? "credit" : paymentMethod,
     razorpayOrderId: razorpayOrderId || "",
     razorpayPaymentId: razorpayPaymentId || "",
     creditUsed: creditUsedId,
@@ -1031,7 +1070,14 @@ async function finalizeNoidaBooking({
 
   const formatLabel = format === "home-visit" ? "Home Visit" : format === "online" ? "Online" : "In-person";
   const modeLabel = sessionMode === "package" ? `Package (${packageName})` : sessionMode === "couple" ? "Couple" : "Individual";
-  const paidLabel = credit ? `used 1 package session (${packageName})` : `₹${totalAmount} paid (${paymentMethod})`;
+  const paidLabel = gift ? `free session with a ${offer?.title || "festival"} gift link (${gift.code})`
+    : credit ? `used 1 package session (${packageName})` : `₹${totalAmount} paid (${paymentMethod})${offer ? ` — ${offer.title} offer, free session link sent` : ""}`;
+
+  // the paid session of a festival offer: make the free session's link and email it (never holds up the booking)
+  if (offer && !gift && !credit) {
+    await createGiftForAppointment(appointment, { giftFor, giftName, giftPhone, giftEmail })
+      .catch((e) => console.error("festival gift could not be made:", e.message));
+  }
 
   try {
     await sendMail(
@@ -1095,6 +1141,14 @@ async function finalizeNoidaBooking({
   return appointment;
 }
 
+// The booking as sent back to the client — with its free-session link when it was a festival offer.
+async function withGift(appointment) {
+  const out = appointment?.toObject ? appointment.toObject() : appointment;
+  if (!out?.offer || !out.festivalGift || out.paymentStatus !== "paid") return out;
+  const g = await FestivalGift.findById(out.festivalGift).select("code validTill forSelf recipientName").lean();
+  return g ? { ...out, gift: { code: g.code, link: giftLink(g.code), validTill: g.validTill, forSelf: g.forSelf, recipientName: g.recipientName } } : out;
+}
+
 // A slot this close to start (or already started today) needs staff to have
 // accepted a request first — regardless of payment method, since it's about
 // whether the center can take a walk-in this soon, not about payment risk.
@@ -1106,7 +1160,7 @@ function isLastMinuteSlot(date, slot) {
 // Why a public client can't book this slot right now, or null if they can.
 // Used both before taking payment (so nobody is charged for a taken slot) and
 // again after payment, since a slot can vanish while checkout is open.
-async function slotUnavailableReason({ date, slot, type, phone, therapistId }) {
+export async function slotUnavailableReason({ date, slot, type, phone, therapistId }) {
   const isOpen = await NoidaFollowupSlot.findOne({ date, slot, type });
   if (!isOpen) return { status: 400, message: "That slot isn't open for booking on the selected date." };
   if ((await slotIsFull(date, slot)).full) return { status: 409, message: SLOT_FULL_MESSAGE };
@@ -1344,6 +1398,11 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
   } else {
     // Order created before this flow existed, or its pending record couldn't be saved.
     const payload = { name, phone, email, concern, date, slot, type, age, sessionMode, format, address, packageId, customSessions, couponCode, therapistId };
+    // a festival-offer order whose pending record couldn't be saved: honour the offer if it still holds
+    const offer = req.body.offer ? festivalOffer(req.body.offer) : null;
+    if (offer && sessionMode === "individual" && !couponCode && !(await offerBookingProblem(offer, req.body))) {
+      Object.assign(payload, { offer: offer.key, giftFor: req.body.giftFor, giftName: req.body.giftName, giftPhone: req.body.giftPhone, giftEmail: req.body.giftEmail });
+    }
     try {
       const appointment = await completePaidBooking({ payload, orderId: razorpay_order_id, paymentId: razorpay_payment_id });
       outcome = { appointment };
@@ -1362,7 +1421,7 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     }
     if (pending?.status === "completed" && pending.appointment) {
       const appointment = await NoidaAppointment.findById(pending.appointment);
-      if (appointment) return res.status(201).json({ status: true, message: "Appointment booked successfully.", data: appointment });
+      if (appointment) return res.status(201).json({ status: true, message: "Appointment booked successfully.", data: await withGift(appointment) });
     }
     if (pending?.status === "refunded" || pending?.status === "refund_failed") {
       const failure = paidBookingFailureMessage({ refunded: pending.status === "refunded", reason: pending.failureReason, amount: pending.amount, paymentId: razorpay_payment_id });
@@ -1383,7 +1442,7 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     });
   }
 
-  return res.status(201).json({ status: true, message: "Appointment booked successfully.", data: outcome.appointment });
+  return res.status(201).json({ status: true, message: "Appointment booked successfully.", data: await withGift(outcome.appointment) });
 });
 
 // Once staff accepts, an unconsumed request would otherwise block the slot
@@ -1992,6 +2051,11 @@ export const updateNoidaAppointment = expressAsyncHandler(async (req, res, next)
         appointment.creditRefunded = true;
       }
     }
+    // A free festival session: cancelling gives the link back; bringing it back takes the link again (if still unused).
+    if (status && before && status !== before.status && appointment.festivalGift && appointment.paymentStatus === "package-credit") {
+      if (status === "cancelled") await releaseFestivalGift(appointment);
+      else await FestivalGift.updateOne({ _id: appointment.festivalGift, redeemedAppointment: null }, { $set: { redeemedAppointment: appointment._id, redeemedAt: new Date() } });
+    }
 
     // A booking cancelled by the admin closes its slot for good (reopen it from Manage
     // Slots); bringing the booking back reopens the slot so it shows up in the tables again.
@@ -2116,6 +2180,9 @@ export const deleteNoidaAppointment = expressAsyncHandler(async (req, res, next)
       } else {
         await refundNoidaCredit(appointment.creditUsed);
       }
+    }
+    if (appointment.festivalGift && appointment.paymentStatus === "package-credit" && !["arrived", "completed"].includes(appointment.attendance)) {
+      await releaseFestivalGift(appointment);
     }
     return res.status(200).json({ status: true, message: "Appointment deleted." });
   } catch (err) {

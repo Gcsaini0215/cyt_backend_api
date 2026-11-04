@@ -28,6 +28,12 @@ const noidaPendingBookingSchema = new Schema({
     therapistId:    { type: Schema.Types.ObjectId, ref: "Therapists", default: null },
     couponCode:     { type: String, default: "" },
     discountAmount: { type: Number, default: 0 }, // fixed when the order was created, so the price paid is the price honoured
+    // festival offer: the free session's recipient, if the buyer filled it in before paying
+    offer:     { type: String, default: "" },
+    giftFor:   { type: String, default: "" }, // "self" | "gift" | "" (decide later)
+    giftName:  { type: String, default: "" },
+    giftPhone: { type: String, default: "" },
+    giftEmail: { type: String, default: "" },
   },
 
   // pending → processing (someone is working on it) → completed | refunded | refund_failed

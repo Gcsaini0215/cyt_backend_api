@@ -601,7 +601,41 @@ export const noidaOfferCodeMail = ({ name, code, offer, personal = true }) =>
       note("Enter the code in the Coupon box before paying."),
   });
 
-export const therapistAvailabilityReminderMail = ({ name, hasHours, freeCount, sample = [], link, unsubscribe }) =>
+// festival "book 1, get 1" offer — the free session's link
+const giftDay = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const giftLinkBox = (link) =>
+  `<div style="margin:0 0 16px;padding:13px 14px;border:2px dashed #c9a24a;border-radius:12px;background:#fffaf0;text-align:center;">
+    <div style="font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#8f6a14;margin-bottom:6px;">Free session link</div>
+    <a href="${link}" style="font-size:13.5px;font-weight:700;color:#7a1426;text-decoration:none;word-break:break-all;">${esc(link)}</a>
+  </div>`;
+
+export const festivalGiftBuyerMail = ({ name, link, validTill, recipientName, offerTitle = "Diwali 1+1" }) =>
+  shell({
+    preheader: `Your free session link — use it before ${giftDay(validTill)}`,
+    body:
+      eyebrow(`${esc(offerTitle)} · Shubh Deepawali`, OK) +
+      heading(`Hi ${esc(first(name))}, your free session is ready 🪔`) +
+      para(`Thank you for booking with us. Your second session is <b>free</b> — ${recipientName ? `you chose to gift it to <b>${esc(recipientName)}</b>. Share this link with them (we've emailed them too, if you gave their email).` : "use it yourself, or gift it to someone you care about. Just share this link."}`) +
+      giftLinkBox(link) +
+      kvTable([["Use it by", esc(giftDay(validTill))], ["Mode", "In-person (Noida) or Online"], ["Not available", "8 Nov (Diwali)"]]) +
+      button("Book the free session", link) +
+      note("You'll also find this link in My Space on the website. It works once."),
+  });
+
+export const festivalGiftRecipientMail = ({ name, from, link, validTill, offerTitle = "Diwali 1+1" }) =>
+  shell({
+    preheader: `${from} gifted you a free therapy session`,
+    body:
+      eyebrow(`A gift for you · Shubh Deepawali`, OK) +
+      heading(`Hi ${esc(first(name))}, ${esc(from)} has gifted you a free session 🪔`) +
+      para(`A one-to-one session with <b>Deepak Kumar</b>, Counselling Psychologist at Choose Your Therapist — in person at our Noida centre or online, whichever suits you. It's completely free and private.`) +
+      giftLinkBox(link) +
+      kvTable([["Book by", esc(giftDay(validTill))], ["Cost", "Free"], ["Not available", "8 Nov (Diwali)"]]) +
+      button("Pick my time", link) +
+      note(`Part of our ${esc(offerTitle)} offer. The link works once.`),
+  });
+
+export const therapistAvailabilityReminderMail =({ name, hasHours, freeCount, sample = [], link, unsubscribe }) =>
   shell({
     preheader: hasHours ? `${freeCount} of your session slots are still open` : "Set your session timings so clients can book you",
     body:

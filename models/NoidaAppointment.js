@@ -34,6 +34,10 @@ const noidaAppointmentSchema = new Schema({
   packageId:   { type: Schema.Types.ObjectId, ref: "NoidaPackage", default: null },
   packageName: { type: String, default: "" }, // snapshotted at booking time — survives the package later being edited/deleted
 
+  // festival "book 1, get 1" offer (see helper/festivalOffer.js): set on both the paid session and the free one
+  offer:        { type: String, default: "" },
+  festivalGift: { type: Schema.Types.ObjectId, ref: "FestivalGift", default: null }, // paid: the gift it made; free: the gift it used
+
   couponCode:     { type: String, default: "" },   // discount code used, if any
   discountAmount: { type: Number, default: 0 },    // rupees taken off the session/package price
 
