@@ -8,7 +8,7 @@ export const FESTIVAL_OFFERS = {
   "diwali-2026": {
     key: "diwali-2026",
     title: "Diwali 1+1",
-    bookBy: "2026-11-07",          // last day to buy (IST)
+    bookBy: "2026-11-08",          // last day to buy (IST, till 11:59 PM)
     blockedDates: ["2026-11-08"],  // no sessions on Diwali
     validDays: 15,                 // both sessions within this many days of buying
     formats: ["in-person", "online"],
