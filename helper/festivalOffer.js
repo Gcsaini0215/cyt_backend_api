@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import FestivalOfferSetting from "../models/FestivalOfferSetting.js";
 
 /* Festival "book 1, get 1 free" offers (/festival-therapy on the site).
    The client pays the normal Noida single-session fee for one session; a second, free session comes as
@@ -14,7 +15,41 @@ export const FESTIVAL_OFFERS = {
   },
 };
 export const CURRENT_FESTIVAL_OFFER = "diwali-2026";
-export const festivalOffer = (key) => FESTIVAL_OFFERS[key] || null;
+
+// Admin can switch an offer on/off, turn each mode on/off and move its dates (admin → Festival Offer).
+// Those overrides live in FestivalOfferSetting and are cached here for a few seconds.
+let overrides = {};
+let loadedAt = 0;
+export async function refreshFestivalSettings(force = false) {
+  if (!force && Date.now() - loadedAt < 15000) return;
+  try {
+    const rows = await FestivalOfferSetting.find().lean();
+    overrides = Object.fromEntries(rows.map((r) => [r.key, r]));
+    loadedAt = Date.now();
+  } catch (e) { console.error("festival settings could not be loaded:", e.message); }
+}
+export const festivalDefaults = (key) => FESTIVAL_OFFERS[key] || null;
+// The offer as it runs now: defaults + admin's switches. Call refreshFestivalSettings() first in a request.
+export const festivalOffer = (key) => {
+  const base = FESTIVAL_OFFERS[key];
+  if (!base) return null;
+  const o = overrides[key] || {};
+  return {
+    ...base,
+    active: o.active !== false,
+    formats: Array.isArray(o.formats) ? base.formats.filter((f) => o.formats.includes(f)) : base.formats,
+    bookBy: o.bookBy || base.bookBy,
+    blockedDates: Array.isArray(o.blockedDates) ? o.blockedDates : base.blockedDates,
+    validDays: Number(o.validDays) > 0 ? Number(o.validDays) : base.validDays,
+  };
+};
+// "Only online sessions are on right now." etc. — when the asked-for mode is switched off
+export function formatProblem(offer, format) {
+  if (offer.formats.includes(format)) return null;
+  if (!offer.formats.length) return "Sessions under this offer are paused right now. Please WhatsApp us.";
+  if (offer.formats.length === 1) return offer.formats[0] === "online" ? "Only online sessions are available right now." : "Only in-person sessions (Noida centre) are available right now.";
+  return "Please choose in-person or online.";
+}
 
 const pad2 = (n) => String(n).padStart(2, "0");
 export function istToday() {
@@ -29,7 +64,7 @@ export function addDays(dateStr, n) {
 
 // Why this session date can't be used under the offer (null = fine). `from` is the purchase day.
 export function offerDateProblem(offer, date, from = istToday()) {
-  if (offer.blockedDates.includes(date)) return "No sessions on Diwali (8 Nov) — please pick another day.";
+  if (offer.blockedDates.includes(date)) return "No sessions on this day (festival holiday) — please pick another day.";
   if (date < from) return "Please pick a date from today onwards.";
   if (date > addDays(from, offer.validDays)) return `Under this offer, sessions are within ${offer.validDays} days — please pick an earlier date.`;
   return null;

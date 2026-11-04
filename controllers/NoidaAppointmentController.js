@@ -24,7 +24,7 @@ import { leadNotificationEmail, noidaAppointmentConfirmationEmail } from "../ser
 import { getOrCreatePricing } from "./NoidaPricingController.js";
 import { getActiveCredit } from "./NoidaClientCreditController.js";
 import { claimReceptionSession, refundReceptionSession, refundNoidaCredit, reclaimNoidaCredit } from "../helper/receptionPackage.js";
-import { festivalOffer, offerDateProblem, giftLink } from "../helper/festivalOffer.js";
+import { festivalOffer, offerDateProblem, giftLink, refreshFestivalSettings, formatProblem } from "../helper/festivalOffer.js";
 import { createGiftForAppointment, releaseFestivalGift } from "../helper/festivalGift.js";
 import FestivalGift from "../models/FestivalGift.js";
 
@@ -811,6 +811,7 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
 
   // Festival offer: always one individual session with Deepak at the normal fee, no coupon,
   // on a date inside the offer's window.
+  if (req.body.offer) await refreshFestivalSettings();
   const offer = req.body.offer ? festivalOffer(req.body.offer) : null;
   if (req.body.offer) {
     const problem = !offer ? "This offer isn't available." : await offerBookingProblem(offer, req.body);
@@ -926,8 +927,10 @@ export const createNoidaOrder = expressAsyncHandler(async (req, res, next) => {
 // the free one is checked against its gift (FestivalController.redeemFestivalGift).
 async function offerBookingProblem(offer, body) {
   const today = istDateStr(istNow());
+  if (!offer.active) return "This offer is paused right now. Please check back soon or WhatsApp us.";
   if (today > offer.bookBy) return "This offer has ended.";
-  if (!offer.formats.includes(body.format)) return "Please choose in-person or online.";
+  const fp = formatProblem(offer, body.format);
+  if (fp) return fp;
   if (!body.name?.trim() || !/^\d{10}$/.test(body.phone || "") || !isValidDateStr(body.date) || !body.slot?.trim()) return "Please fill in your details and pick a time.";
   return offerDateProblem(offer, body.date, today);
 }
@@ -1142,7 +1145,7 @@ export async function finalizeNoidaBooking({
 }
 
 // The booking as sent back to the client — with its free-session link when it was a festival offer.
-async function withGift(appointment) {
+export async function withGift(appointment) {
   const out = appointment?.toObject ? appointment.toObject() : appointment;
   if (!out?.offer || !out.festivalGift || out.paymentStatus !== "paid") return out;
   const g = await FestivalGift.findById(out.festivalGift).select("code validTill forSelf recipientName").lean();
@@ -1399,6 +1402,7 @@ export const createNoidaAppointment = expressAsyncHandler(async (req, res, next)
     // Order created before this flow existed, or its pending record couldn't be saved.
     const payload = { name, phone, email, concern, date, slot, type, age, sessionMode, format, address, packageId, customSessions, couponCode, therapistId };
     // a festival-offer order whose pending record couldn't be saved: honour the offer if it still holds
+    if (req.body.offer) await refreshFestivalSettings();
     const offer = req.body.offer ? festivalOffer(req.body.offer) : null;
     if (offer && sessionMode === "individual" && !couponCode && !(await offerBookingProblem(offer, req.body))) {
       Object.assign(payload, { offer: offer.key, giftFor: req.body.giftFor, giftName: req.body.giftName, giftPhone: req.body.giftPhone, giftEmail: req.body.giftEmail });

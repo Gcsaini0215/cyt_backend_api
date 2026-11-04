@@ -628,7 +628,7 @@ export const festivalGiftRecipientMail = ({ name, from, link, validTill, offerTi
     body:
       eyebrow(`A gift for you · Shubh Deepawali`, OK) +
       heading(`Hi ${esc(first(name))}, ${esc(from)} has gifted you a free session 🪔`) +
-      para(`A one-to-one session with <b>Deepak Kumar</b>, Counselling Psychologist at Choose Your Therapist — in person at our Noida centre or online, whichever suits you. It's completely free and private.`) +
+      para(`A one-to-one session with an experienced counselling psychologist at Choose Your Therapist — in person at our Noida centre or online, whichever suits you. It's completely free and private.`) +
       giftLinkBox(link) +
       kvTable([["Book by", esc(giftDay(validTill))], ["Cost", "Free"], ["Not available", "8 Nov (Diwali)"]]) +
       button("Pick my time", link) +
