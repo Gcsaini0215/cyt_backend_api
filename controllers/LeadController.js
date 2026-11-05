@@ -7,8 +7,9 @@ import LeadActivity from "../models/LeadActivity.js";
 import Admin from "../models/Admin.js";
 import { leadNotificationEmail } from "../services/mailTemplates.js";
 import { sendMail } from "../helper/mailer.js";
+import Razorpay from "razorpay";
+import { CONSULT_AMOUNT_RUPEES } from "../helper/consult.js";
 
-const CONSULT_AMOUNT_RUPEES = 99;
 export const saveLead = expressAsyncHandler(async (req, res, next) => {
   const validateSchema = Joi.object({
     name: Joi.string().min(2).required().messages({
@@ -170,6 +171,24 @@ export const verifyConsultPayment = expressAsyncHandler(async (req, res, next) =
     res.status(400);
     return next(new Error("Invalid payment signature"));
   }
+
+  // the order must be a consultation order for the full price (BookingController.createRazorpayOrder)
+  try {
+    const rz = new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
+    const order = await rz.orders.fetch(razorpay_order_id);
+    if (!order || !String(order.receipt || "").startsWith("rcpt_consult_") || Number(order.amount) !== CONSULT_AMOUNT_RUPEES * 100) {
+      console.error("Consult payment: order doesn't match", { razorpay_order_id, receipt: order?.receipt, amount: order?.amount });
+      res.status(400);
+      return next(new Error(`This payment couldn't be matched to a consultation. Please contact us with payment ID ${razorpay_payment_id}.`));
+    }
+  } catch (e) {
+    console.error("Consult payment: could not fetch the order:", e?.error?.description || e.message);
+    res.status(502);
+    return next(new Error(`We couldn't confirm your payment right now. Please contact us with payment ID ${razorpay_payment_id}.`));
+  }
+  // a retry with the same payment: don't make a second lead
+  const existingLead = await Lead.findOne({ "data.razorpay_payment_id": razorpay_payment_id }).lean();
+  if (existingLead) return res.status(200).json({ status: true, message: "Payment verified and consultation booked successfully.", data: { id: existingLead._id } });
 
   try {
     const finalSource = source && source !== "Not provided" ? source : "15-Min Paid Consultation";

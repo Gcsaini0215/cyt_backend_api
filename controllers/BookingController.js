@@ -50,7 +50,8 @@ import { notifyTherapists, therapistUserId } from "../services/therapistNotify.j
 import { attachBookingAssessments } from "./AssessmentRequestController.js";
 import { assessmentsActive } from "./TherapistAddonController.js";
 import { getPricing } from "../helper/assessmentPricing.js";
-import { findUsableCoupon } from "../helper/coupon.js";
+import { findUsableCoupon, discountOf } from "../helper/coupon.js";
+import { CONSULT_AMOUNT_RUPEES } from "../helper/consult.js";
 import SessionBundle from "../models/SessionBundle.js";
 import { feeFor, packPrice, isUsable, takeSession, returnSession, activatePackFor, getPackConfig } from "../helper/sessionBundle.js";
 import { stampTherapistPct } from "../helper/achievements.js";
@@ -317,6 +318,27 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
     }
     const wantCredit = Math.max(0, Number(req.body.credit_used) || 0);
     if (wantCredit && is_logged_in) credit_used = Math.min(wantCredit, Number(user.referral_credit) || 0);
+
+    // What this session really costs — the therapist's own fee, less the coupon / referral / credit checked
+    // above, plus assessments. The page's amount is only accepted if it isn't less than that (packs are
+    // priced above; a pack session is already paid for).
+    if (!pack && !useBundle) {
+      const fee = await feeFor(therapist, service, format);
+      let off = 0;
+      if (coupon_id) {
+        const c = (await findUsableCoupon(therapist, coupon_code)).coupon;
+        off = c ? discountOf(c.discount_type, c.discount_value, fee) : 0;
+      } else if (referral_discount) {
+        off = Math.min(fee || 0, referral_discount);
+      }
+      const expected = Math.max(0, (fee || 0) - off - credit_used) + assessmentFee;
+      if (!fee || Number(amount) + 1 < expected) {
+        console.error("[booking] amount check failed", { therapist, service, format, fee, off, credit_used, assessmentFee, sent: amount, expected });
+        await session.abortTransaction(); session.endSession();
+        res.status(400);
+        return next(new Error(!fee ? "This session type isn't available with this therapist. Please refresh and pick again." : "The price for this session has changed. Please refresh the page and book again."));
+      }
+    }
 
     // Prevent double-booking the same therapist slot. A slot is "taken" if a
     // paid booking exists for it, or someone else's pending one was started in the
@@ -653,20 +675,35 @@ export const createRazorpayOrder = expressAsyncHandler(async (req, res, next) =>
     return next(new Error("Amount and Booking ID are required"));
   }
 
+  // The amount is never taken from the page: a booking is charged what was saved on it (checked against the
+  // therapist's fee when it was made — bookTherapist), a 15-min consultation its fixed price.
   if (mongoose.Types.ObjectId.isValid(booking_id)) {
-    const b = await Booking.findById(booking_id).select("therapist client booking_date payment_status slot_released_at pack_size pack_total");
-    if (b?.payment_status === "Paid") {
+    const b = await Booking.findById(booking_id).select("therapist client booking_date payment_status slot_released_at pack_size pack_total amount");
+    if (!b) {
+      res.status(404);
+      return next(new Error("Booking not found. Please start the booking again."));
+    }
+    if (b.payment_status === "Paid") {
       res.status(409);
       return next(new Error("This booking is already paid."));
     }
-    if (b && (await slotTakenByOther(b))) {
+    if (await slotTakenByOther(b)) {
       res.status(409);
       return next(new Error("Sorry, this time slot has just been booked by someone else. Please pick another slot."));
     }
-    // a session pack is charged its server-side total, whatever the page sent
-    if (b?.pack_size > 0 && b.pack_total > 0) amount = b.pack_total;
+    // a session pack is charged its server-side total; any other booking the amount saved on it
+    amount = b.pack_size > 0 && b.pack_total > 0 ? b.pack_total : Number(b.amount?.toString() || 0);
+    if (!(amount > 0)) {
+      res.status(400);
+      return next(new Error("Nothing to pay for this booking."));
+    }
     // paying again → hold the slot again
-    if (b?.slot_released_at) await Booking.updateOne({ _id: b._id }, { $set: { slot_released_at: null } });
+    if (b.slot_released_at) await Booking.updateOne({ _id: b._id }, { $set: { slot_released_at: null } });
+  } else if (/^consult_\d+$/.test(String(booking_id))) {
+    amount = CONSULT_AMOUNT_RUPEES; // the 15-minute paid consultation (LeadController.verifyConsultPayment)
+  } else {
+    res.status(400);
+    return next(new Error("Invalid booking."));
   }
 
   try {
@@ -845,11 +882,38 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
 
   console.log("Verifying Razorpay Payment:", { razorpay_order_id, razorpay_payment_id });
 
+  if (!mongoose.Types.ObjectId.isValid(booking_id)) {
+    res.status(400);
+    return next(new Error("Booking not found with this id"));
+  }
+
   if (razorpay_signature !== expectedSign) {
     console.error("Payment verification failed. Signatures do not match.");
-    await Booking.findByIdAndUpdate(booking_id, { payment_status: "Payment Failed" });
+    // never touch a booking that is already paid (anyone can call this with any booking id)
+    await Booking.updateOne({ _id: booking_id, payment_status: { $ne: "Paid" } }, { payment_status: "Payment Failed" });
     res.status(400);
     return next(new Error("Invalid payment signature"));
+  }
+
+  // The signature only proves "this payment is for this order". Also make sure the order was made for THIS
+  // booking (createRazorpayOrder sets receipt rcpt_<booking_id> and the amount from the booking itself),
+  // and that one payment can't confirm two bookings.
+  try {
+    const order = await getRazorpayInstance().orders.fetch(razorpay_order_id);
+    if (!order || order.receipt !== `rcpt_${booking_id}`) {
+      console.error("Payment verification failed: order is not for this booking", { razorpay_order_id, booking_id, receipt: order?.receipt });
+      res.status(400);
+      return next(new Error("This payment doesn't belong to this booking. Please contact support with your payment ID."));
+    }
+  } catch (e) {
+    console.error("Payment verification: could not fetch the order:", e?.error?.description || e.message);
+    res.status(502);
+    return next(new Error(`We couldn't confirm your payment right now. Please contact support with payment ID ${razorpay_payment_id}.`));
+  }
+  const usedFor = await Transaction.findOne({ transaction_id: razorpay_payment_id }).select("booking").lean();
+  if (usedFor && String(usedFor.booking) !== String(booking_id)) {
+    res.status(409);
+    return next(new Error("This payment has already been used."));
   }
 
   try {
@@ -865,6 +929,18 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     if (!isBookingDetail) {
       res.status(400);
       return next(new Error("Booking not found with this id"));
+    }
+
+    // already confirmed (a retry after a dropped response): answer the same, don't record it twice
+    if (isBookingDetail.payment_status === "Paid") {
+      if (usedFor) {
+        return res.status(200).json({
+          status: true, message: "Payment verified and booking confirmed.", data: isBookingDetail,
+          token: generateToken(isBookingDetail.client._id, isBookingDetail.client.role),
+        });
+      }
+      res.status(409);
+      return next(new Error("This booking is already paid."));
     }
 
     const data = {
