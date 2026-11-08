@@ -528,7 +528,7 @@ export const getTherapist = expressAsyncHandler(async (req, res, next) => {
 
   try {
     const userExists = await Therapists.findOne({ user: user._id })
-      .select("-_id -resume -__v -is_mail_sent")
+      .select("-resume -__v -is_mail_sent") // keep _id: the portal builds profile / review links from it
       .populate("user", "name phone email bio profile age gender dob");
     res.status(201).json({
       message: "Fetched successfully",
