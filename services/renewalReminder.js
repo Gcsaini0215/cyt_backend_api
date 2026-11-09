@@ -40,6 +40,28 @@ export function renewalStage(expiresAt, now = Date.now()) {
   return { stage: "after", daysSince, key: `${id}|after|${istDate(now)}` };
 }
 
+// Subject lines with a hook: their name, their own profile numbers, and a different line each day after it ends
+// (so the daily email never looks like the same mail again). Honest: no promise of clients.
+const AFTER_SUBJECTS = [
+  (f) => `${f}, your profile just left the CYT home page`,
+  (f, v) => (v > 0 ? `${v} people viewed your profile last month - now they can't find you on the home page` : `Most clients start on the CYT home page, ${f}. You're not there right now`),
+  (f) => `Your spot on the CYT home page is still open, ${f}`,
+  () => "₹20 a day to be back on the CYT home page",
+  (f) => `Quick one, ${f}: renew in 60 seconds, be back on the home page today`,
+  (f) => `${f}, your profile is ready - it's just not on the home page`,
+  (f, v) => (v > 0 ? `Still ${v} profile views a month, ${f} - put yourself back where clients start` : `${f}, still thinking it over? Here's what your plan gets you`),
+];
+export function renewalSubject(due, { name, views = 0 } = {}) {
+  const f = String(name || "").trim().split(/\s+/)[0] || "Hi";
+  const v = Number(views) || 0;
+  if (due.stage === "d7") return v > 0 ? `${f}, ${v} people viewed your profile - 7 days left on your plan` : `${f}, 7 days left on your CYT home-page spot ⏳`;
+  if (due.stage === "d3") return `3 days left, ${f} - don't lose your spot on the CYT home page`;
+  if (due.stage === "d1") return `Last day tomorrow ⏰ ${f}, your CYT home-page spot ends`;
+  const d = Math.max(1, due.daysSince || 1);
+  // day 1 = "just left"; after that the other lines take turns
+  return AFTER_SUBJECTS[d === 1 ? 0 : 1 + ((d - 2) % (AFTER_SUBJECTS.length - 1))](f, v);
+}
+
 // the site draws the advert; if it can't, the email still goes without it (overridable in tests)
 export const imageSource = {
   async fetch(url) {
@@ -87,9 +109,7 @@ export async function runRenewalReminders(now = Date.now(), { ignoreHours = fals
       name: t.user.name, email, stage: due.stage, daysLeft: due.daysLeft, daysSince: due.daysSince, endsOn,
       planLabel: PLAN_LABEL[t.subscription_plan], stats, imageCid: attachments.length ? CID : "",
     });
-    const subject = due.stage === "after"
-      ? "Your CYT plan has ended - you're off the home page"
-      : due.daysLeft <= 1 ? "Your CYT plan ends tomorrow" : `Your CYT plan ends in ${due.daysLeft} days`;
+    const subject = renewalSubject(due, { name: t.user.name, views: stats?.views });
     const text = `${subject}. Your profile stays in the CYT directory, but only therapists with an active plan are shown on the home page. Renew: ${SITE}/therapist-registration?packages=1&email=${encodeURIComponent(email)}`;
     const ok = await mailSender.send(email, subject, text, html, "CYT Team", attachments);
     if (ok) {
