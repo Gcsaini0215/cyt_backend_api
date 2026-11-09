@@ -497,6 +497,38 @@ export const therapistSubscriptionReminderMail = ({ name, email, expired }) =>
       note(`Questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>.`),
   });
 
+// Automatic plan-ending / plan-ended email (services/renewalReminder.js). Paid plans only - free listings never get it.
+// stage: "d7" | "d3" | "d1" (before the end date) or "after" (sent every day once it has ended).
+export const therapistRenewalMail = ({ name, email, stage, daysLeft = 0, daysSince = 0, endsOn, planLabel, stats, imageCid }) => {
+  const ended = stage === "after";
+  const firstName = String(name || "").trim().split(/\s+/)[0] || "there";
+  const statRow = stats && (stats.views || stats.visitors || stats.book)
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 18px;border-collapse:separate;border-spacing:8px 0;"><tr>${
+        [["Profile views", stats.views], ["People who visited", stats.visitors], ["Book clicks", stats.book]].map(([k, v]) =>
+          `<td style="background:#f3f8f4;border-radius:12px;padding:12px 8px;text-align:center;width:33%;"><div style="font-size:22px;font-weight:800;color:${BRAND.green};">${Number(v || 0).toLocaleString("en-IN")}</div><div style="font-size:11.5px;color:${BRAND.soft};margin-top:2px;">${k}</div></td>`).join("")
+      }</tr></table><div style="font-size:11.5px;color:${BRAND.faint};text-align:center;margin:-8px 0 16px;">Your profile in the last 30 days</div>`
+    : "";
+  const when = daysLeft <= 1 ? "tomorrow" : `in ${daysLeft} days`;
+  return shell({
+    preheader: ended
+      ? "Your CYT plan has ended - you're no longer shown on the home page. Renew in a minute."
+      : `Your CYT listing plan ends ${when} - renew to stay on the home page.`,
+    body:
+      (imageCid ? `<a href="${paymentLink(email)}" style="display:block;margin:0 0 20px;"><img src="cid:${imageCid}" width="560" alt="${ended ? "Get back on the CYT home page - renew your plan" : "Stay on the CYT home page - renew your plan"}" style="display:block;width:100%;max-width:560px;height:auto;border-radius:14px;border:0;" /></a>` : "") +
+      eyebrow(ended ? `Plan ended${daysSince > 1 ? ` &middot; ${daysSince} days ago` : ""}` : `Plan ends ${when}`, ended ? STOP : WARN) +
+      heading(ended ? `${esc(firstName)}, you're off the CYT home page` : `${esc(firstName)}, keep your spot on the home page`) +
+      para(ended
+        ? `Your ${planLabel ? `<b>${esc(planLabel)}</b> ` : ""}listing plan ended on <b>${esc(endsOn)}</b>. Your profile is still in our therapist directory, but it's <b>no longer shown on the CYT home page</b> - where most visitors start. Renew and you're back on the home page straight away.`
+        : `Your ${planLabel ? `<b>${esc(planLabel)}</b> ` : ""}listing plan ends on <b>${esc(endsOn)}</b>. After that your profile stays in the directory, but it <b>won't be shown on the CYT home page</b>. Renew now and nothing changes for your clients.`) +
+      statRow +
+      kvTable([["Login email", esc(email || "-"), true], ...PLAN_ROWS]) +
+      button(ended ? "Renew &amp; get back on the home page" : "Renew my plan", paymentLink(email)) +
+      visibilityNote +
+      note(`Questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a> or call ${BRAND.phone}.`),
+    foot: `You're receiving this because your listing plan on ${BRAND.name} ${ended ? "has ended" : "is ending"}. These emails stop as soon as you renew.`,
+  });
+};
+
 const goLiveSteps = () => `
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin-bottom:16px;">
     ${[

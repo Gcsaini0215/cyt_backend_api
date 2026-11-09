@@ -152,6 +152,7 @@ const TherapistSchema = new Schema(
     subscription_terms_version: { type: String, default: null },
     subscription_reminded_at: { type: Date, default: null },
     subscription_reminders: { type: [{ _id: false, template: String, at: Date, by: String }], default: [] }, // which fun reminder went when
+    renewal_mails: { type: [{ _id: false, key: String, at: Date }], default: [] }, // automatic "plan ending / ended" emails already sent (services/renewalReminder.js)
     profile_live_mailed_at: { type: Date, default: null },    // "you're live — here's your public link" (sent once)    // last "please subscribe / renew" email from admin
 
     // "Please complete your profile" request: which items are missing, a one-time link (hash only), and re-check

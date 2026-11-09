@@ -12,6 +12,7 @@ import { startTopBadgeJob } from "./helper/therapistGrowth.js";
 import { startTherapistAreaJob } from "./helper/therapistArea.js";
 import { startRebookNudges } from "./services/rebookNudge.js";
 import { startAchievementJob } from "./services/achievementJob.js";
+import { startRenewalReminders } from "./services/renewalReminder.js";
 
 mongoose.set("strictQuery", true);
 mongoose.connect(process.env.MONGODB_URI).then(() => {
@@ -27,5 +28,6 @@ mongoose.connect(process.env.MONGODB_URI).then(() => {
     startTherapistAreaJob();
     startRebookNudges();
     startAchievementJob();
+    startRenewalReminders();
   });
 }).catch((err) => console.log(err));
