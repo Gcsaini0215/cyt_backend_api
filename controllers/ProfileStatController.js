@@ -1,4 +1,5 @@
 import expressAsyncHandler from "express-async-handler";
+import QRCode from "qrcode";
 import Therapists from "../models/Therapists.js";
 import Availbility from "../models/Availbility.js";
 import Review from "../models/Review.js";
@@ -29,6 +30,19 @@ export const postImpressions = expressAsyncHandler(async (req, res) => {
 });
 
 const hasTimes = (sched) => (Array.isArray(sched) ? sched : []).some((d) => Array.isArray(d?.times) && d.times.length > 0);
+
+/* GET /api/profile-link/qr?u=https://www.chooseyourtherapist.in/t/<name>?src=my-qr[&w=800] — public QR PNG.
+   Only our own /t/ booking links, so it can't be used to make QR codes for anything else. */
+const QR_LINK = /^https:\/\/www\.chooseyourtherapist\.in\/t\/[a-z0-9-]{2,90}(\?src=my-[a-z]{2,8})?$/;
+export const profileLinkQr = expressAsyncHandler(async (req, res) => {
+  const u = String(req.query.u || "");
+  if (!QR_LINK.test(u)) return res.status(400).json({ status: false, message: "Not a CYT booking link" });
+  const w = Math.min(1600, Math.max(200, Number(req.query.w) || 800));
+  const png = await QRCode.toBuffer(u, { type: "png", width: w, margin: 1, errorCorrectionLevel: "M", color: { dark: "#0b3f26", light: "#ffffff" } });
+  res.set("Content-Type", "image/png");
+  res.set("Cache-Control", "public, max-age=604800");
+  res.send(png);
+});
 
 /* GET /api/profile-stats/me — the signed-in therapist's insights, profile strength and plan state.
    Expired / not-yet-live therapists get only the headline numbers (locked: true). */

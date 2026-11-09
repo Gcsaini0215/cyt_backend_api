@@ -21,6 +21,8 @@ const ProfileStatSchema = new Schema(
       city: { type: Number, default: 0 },
       blog: { type: Number, default: 0 },
       social: { type: Number, default: 0 },
+      mylink: { type: Number, default: 0 }, // their own booking link (/t/<name>)
+      qr: { type: Number, default: 0 },     // their QR code / poster
       direct: { type: Number, default: 0 },
       other: { type: Number, default: 0 },
     },
