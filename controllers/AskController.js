@@ -29,8 +29,10 @@ const titleFrom = (body) => {
 const site = () => (process.env.SITE_URL || "https://www.chooseyourtherapist.in").replace(/\/+$/, "");
 
 async function therapistOf(userId) {
-  return Therapists.findOne({ user: userId }).select("_id user profile_type verification_status").lean();
+  return Therapists.findOne({ user: userId }).select("_id user profile_type verification_status show_to_page").lean();
 }
+// who may answer: every therapist who is live on the website, plus anyone verified by the team
+const canAnswer = (t) => !!t && (t.verification_status === "approved" || Number(t.show_to_page) === 1 || t.show_to_page === true);
 async function therapistCard(tid) {
   if (!tid) return null;
   const t = await Therapists.findById(tid).select("_id user profile_type").populate("user", "name profile").lean();
@@ -138,7 +140,7 @@ export const therapistList = expressAsyncHandler(async (req, res) => {
   const t = await therapistOf(req.user._id);
   if (!t) return res.status(403).json({ status: false, message: "Therapist profile not found." });
   const me = String(t._id);
-  const approved = t.verification_status === "approved";
+  const approved = canAnswer(t);
   if (req.query.tab === "mine") {
     const rows = await Question.find({ "answer.therapist": t._id }).sort({ "answer.at": -1 }).limit(100).lean();
     return res.json({ status: true, data: { approved, items: rows.map((q) => forTherapist(q, me)) } });
@@ -151,7 +153,7 @@ export const therapistList = expressAsyncHandler(async (req, res) => {
 // POST /ask/therapist/:id/claim — hold it while writing so two therapists don't answer the same one
 export const claimQuestion = expressAsyncHandler(async (req, res) => {
   const t = await therapistOf(req.user._id);
-  if (!t || t.verification_status !== "approved") return res.status(403).json({ status: false, message: "Only verified therapists can answer." });
+  if (!canAnswer(t)) return res.status(403).json({ status: false, message: "Only therapists who are live on Choose Your Therapist can answer." });
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ status: false, message: "Not found" });
   const q = await Question.findOneAndUpdate(
     { _id: req.params.id, status: "open", $or: [{ claimedBy: null }, { claimedAt: { $lt: new Date(Date.now() - CLAIM_MS) } }, { claimedBy: t._id }] },
@@ -165,7 +167,7 @@ export const claimQuestion = expressAsyncHandler(async (req, res) => {
 // POST /ask/therapist/:id/answer { text }
 export const answerQuestion = expressAsyncHandler(async (req, res) => {
   const t = await therapistOf(req.user._id);
-  if (!t || t.verification_status !== "approved") return res.status(403).json({ status: false, message: "Only verified therapists can answer." });
+  if (!canAnswer(t)) return res.status(403).json({ status: false, message: "Only therapists who are live on Choose Your Therapist can answer." });
   const text = clean(req.body?.text, 4000);
   if (text.length < 150) return res.status(400).json({ status: false, message: "Please write a fuller answer (at least 150 characters)." });
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ status: false, message: "Not found" });
