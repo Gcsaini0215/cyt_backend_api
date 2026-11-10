@@ -5,7 +5,8 @@ import ProfileVisitor from "../models/ProfileVisitor.js";
 import Therapists from "../models/Therapists.js";
 
 // mylink = the therapist's own booking link (/t/<name>, shared on Instagram / WhatsApp / cards); qr = their QR / poster scanned
-export const SOURCES = ["google", "directory", "home", "city", "blog", "social", "mylink", "qr", "direct", "other"];
+// gmaps = their own Google Business Profile (Maps listing) — booking link ?src=my-gbp
+export const SOURCES = ["google", "directory", "home", "city", "blog", "social", "mylink", "qr", "gmaps", "direct", "other"];
 export const ACTIONS = ["book", "contact", "share"];
 export const MAX_VIEWS_PER_VISITOR = 3;
 const BOT = /bot|crawl|spider|slurp|preview|headless|lighthouse|pagespeed|facebookexternalhit|whatsapp\/|curl|wget|python|axios|node-fetch/i;

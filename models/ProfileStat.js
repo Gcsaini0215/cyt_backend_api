@@ -23,6 +23,7 @@ const ProfileStatSchema = new Schema(
       social: { type: Number, default: 0 },
       mylink: { type: Number, default: 0 }, // their own booking link (/t/<name>)
       qr: { type: Number, default: 0 },     // their QR code / poster
+      gmaps: { type: Number, default: 0 },  // their Google Maps listing (?src=my-gbp)
       direct: { type: Number, default: 0 },
       other: { type: Number, default: 0 },
     },
