@@ -615,6 +615,31 @@ export const institutionLeadEmail = (data = {}, { assignedTo = "" } = {}) => {
 </html>`;
 };
 
+// "Ask a psychologist" — the client's question got an answer (AskController.answerQuestion)
+export const questionAnsweredMail = ({ name, therapistName, therapistRole, question, answer, link }) => {
+  const q = String(question || "");
+  const a = String(answer || "");
+  const qShort = q.length > 220 ? `${q.slice(0, 217).replace(/\s+\S*$/, "")}…` : q;
+  const aShort = a.length > 700 ? `${a.slice(0, 697).replace(/\s+\S*$/, "")}…` : a;
+  return shell({
+    preheader: `${therapistName || "A psychologist"} answered your question`,
+    body:
+      eyebrow("Your question has an answer", OK) +
+      heading(`${name ? esc(String(name).split(/\s+/)[0]) + ", a" : "A"} psychologist answered you`) +
+      `<div style="font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:${BRAND.faint};margin:4px 0 6px;">You asked</div>
+       <div style="font-size:13px;color:${BRAND.soft};line-height:1.6;font-style:italic;margin-bottom:16px;">&ldquo;${esc(qShort)}&rdquo;</div>
+       <div style="background:#f3f8f4;border-left:3px solid ${BRAND.green};border-radius:0 10px 10px 0;padding:12px 14px;margin-bottom:8px;">
+         <div style="font-size:12px;font-weight:700;color:${BRAND.green};margin-bottom:6px;">${esc(therapistName || "CYT psychologist")}${therapistRole ? ` &middot; <span style="font-weight:400;color:${BRAND.soft};">${esc(therapistRole)}</span>` : ""}</div>
+         <div style="font-size:13px;color:${BRAND.ink};line-height:1.65;white-space:pre-line;">${esc(aShort)}</div>
+       </div>
+       ${a.length > 700 ? `<div style="font-size:11.5px;color:${BRAND.faint};margin-bottom:12px;">Read the full answer in your account.</div>` : `<div style="height:10px;"></div>`}` +
+      button("Read the full answer", link) +
+      `<div style="height:14px;"></div>` +
+      note("Your name is never shown with your question. If you'd like to talk it through, you can book a session with this psychologist from your account.") +
+      note("If you are in danger or thinking of harming yourself, call <b>Tele-MANAS 14416</b> (free, 24x7) or <b>112</b> now."),
+  });
+};
+
 // ============================================================================
 // ONBOARDING & LIFECYCLE
 // ============================================================================
