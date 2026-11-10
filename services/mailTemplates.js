@@ -469,6 +469,153 @@ export const leadNotificationEmail = (data) => {
 };
 
 // ============================================================================
+// INSTITUTION LEADS — Schools & Colleges page / Corporate (EAP) page enquiries
+// ============================================================================
+
+// Pull every field an institution enquiry can carry. New leads send them as separate fields; older ones
+// only have the "Key: value" summary in `message`, so fall back to reading that.
+export const institutionLeadInfo = (data = {}) => {
+  const msg = String(data.message || "");
+  const line = (key) => {
+    const m = msg.match(new RegExp(`^${key}:\\s*(.+)$`, "im"));
+    const v = m ? m[1].trim() : "";
+    return v && v !== "Not specified" ? v : "";
+  };
+  const reqMatch = msg.match(/Requirements:\s*([\s\S]+)$/i);
+  const val = (v) => (v && v !== "Not provided" && v !== "Not specified" ? String(v).trim() : "");
+  const school = /school|college/i.test(String(data.source || "")) || /student wellbeing/i.test(String(data.concern || ""));
+  const services = Array.isArray(data.services) ? data.services.join(", ") : val(data.services) || line("Needs");
+  return {
+    kind: school ? "school" : "corporate",
+    org: val(data.company) || line("Institution") || line("Company"),
+    designation: val(data.designation) || line("Designation"),
+    type: val(data.industry) || line("Type") || line("Industry"),
+    size: val(data.teamSize) || line("Students") || line("Employees"),
+    city: val(data.location) || line("City") || line("City / Locations"),
+    board: val(data.board) || line("Board / affiliation"),
+    workModel: val(data.workModel) || line("Work model"),
+    timeline: val(data.timeline) || line("Start") || line("Start timeline"),
+    needs: services ? services.split(/\s*,\s*/).filter(Boolean) : [],
+    requirements: val(data.requirements) || (reqMatch ? reqMatch[1].trim() : ""),
+  };
+};
+
+export const isInstitutionLead = (data = {}) =>
+  Boolean(data.company) || /Schools & Colleges Page|Corporate Page/i.test(String(data.source || ""));
+
+export const institutionLeadSubject = (data = {}, { assigned = false } = {}) => {
+  const i = institutionLeadInfo(data);
+  const what = i.kind === "school" ? "School/College enquiry" : "Corporate EAP enquiry";
+  const size = i.size ? ` (${i.size} ${i.kind === "school" ? "students" : "employees"})` : "";
+  return `${assigned ? "Assigned to you — " : "New "}${what}: ${i.org || data.name || "Unknown"}${size}`;
+};
+
+// Full, readable email for the team (also used when a lead is assigned to someone).
+export const institutionLeadEmail = (data = {}, { assignedTo = "" } = {}) => {
+  const i = institutionLeadInfo(data);
+  const school = i.kind === "school";
+  const G = "#0f3d24", G2 = "#1e7a4c", GOLD = "#e0ab45", INK = "#111111", SOFT = "#5f645d", FAINT = "#8a8f88", LINE = "#ecece8";
+  const name = String(data.name || "").trim();
+  const first = name.split(/\s+/)[0] || "them";
+  let num = String(data.phone || "").replace(/\D/g, "");
+  if (num.length === 10) num = "91" + num;
+  const tel = num ? "+" + num : "";
+  const waText = school
+    ? `Hello ${first}, thank you for your enquiry about a student wellbeing program for ${i.org || "your institution"}. This is the Choose Your Therapist team — could we set up a 20-minute discovery call this week?`
+    : `Hello ${first}, thank you for your enquiry about an Employee Assistance Program for ${i.org || "your company"}. This is the Choose Your Therapist team — could we set up a 20-minute discovery call this week?`;
+  const wa = num ? `https://wa.me/${num}?text=${encodeURIComponent(waText)}` : "";
+  const mailSubject = school ? `Student wellbeing program for ${i.org || "your institution"} — Choose Your Therapist` : `Employee Assistance Program for ${i.org || "your company"} — Choose Your Therapist`;
+  const mailto = data.email ? `mailto:${esc(data.email)}?subject=${encodeURIComponent(mailSubject)}` : "";
+  const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+
+  const sectionTitle = (t) => `<div style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:${G2};margin:26px 0 10px;">${t}</div>`;
+  const row = (k, v) => (v ? `<tr>
+      <td style="padding:10px 14px 10px 0;border-bottom:1px solid ${LINE};font-size:12.5px;color:${FAINT};width:38%;vertical-align:top;">${k}</td>
+      <td style="padding:10px 0;border-bottom:1px solid ${LINE};font-size:14px;color:${INK};font-weight:600;vertical-align:top;">${v}</td>
+    </tr>` : "");
+  const table = (rows) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${rows.join("")}</table>`;
+  const tile = (label, value) => `<td width="33%" style="padding:0 5px;vertical-align:top;">
+      <div style="background:#f3f8f4;border:1px solid #dcebe1;border-radius:12px;padding:14px 10px;text-align:center;">
+        <div style="font-size:15px;font-weight:800;color:${G};line-height:1.3;">${value ? esc(value) : "&mdash;"}</div>
+        <div style="font-size:10.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:${FAINT};margin-top:5px;">${label}</div>
+      </div></td>`;
+  const chips = i.needs.length
+    ? i.needs.map((n) => `<span style="display:inline-block;margin:0 6px 8px 0;padding:7px 13px;border-radius:999px;background:#eef7f1;border:1px solid #cfe3d6;color:${G};font-size:13px;font-weight:600;">&#10003;&nbsp;${esc(n)}</span>`).join("")
+    : `<span style="font-size:13.5px;color:${FAINT};">Not specified</span>`;
+  const btn = (label, href, solid) => `<td style="padding:0 8px 8px 0;"><a href="${href}" style="display:inline-block;padding:12px 20px;border-radius:10px;font-size:13.5px;font-weight:700;text-decoration:none;font-family:Arial,sans-serif;${solid ? `background:${G};color:#ffffff;` : `background:#ffffff;color:${G};border:1.5px solid #cfe3d6;`}">${label}</a></td>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>${BRAND.name} — ${school ? "school & college" : "corporate"} enquiry</title></head>
+<body style="margin:0;padding:0;background:#eef1ec;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(i.org || name)} · ${esc(i.size || "")} ${school ? "students" : "employees"} · ${esc(name)}${i.designation ? `, ${esc(i.designation)}` : ""}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef1ec;padding:20px 10px;">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:18px;overflow:hidden;font-family:'Helvetica Neue',Arial,sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.06),0 16px 34px rgba(0,0,0,.06);">
+        <tr><td style="background:${G};background-image:linear-gradient(135deg,#1f7a4a 0%,#0f3d24 70%);padding:26px 28px 24px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td style="font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#f6d58a;">${school ? "&#127979; School &amp; College enquiry" : "&#127970; Corporate EAP enquiry"}</td>
+            <td align="right" style="font-size:11px;color:#cfe3d6;">${esc(now)} IST</td>
+          </tr></table>
+          ${assignedTo ? `<div style="display:inline-block;margin-top:14px;padding:5px 12px;border-radius:999px;background:${GOLD};color:#1f2a14;font-size:12px;font-weight:800;">Assigned to ${esc(assignedTo)}</div>` : ""}
+          <div style="font-size:26px;font-weight:800;color:#ffffff;line-height:1.25;margin-top:12px;">${esc(i.org || "Institution not given")}</div>
+          <div style="font-size:14.5px;color:#d9eadf;margin-top:6px;">${esc(name || "—")}${i.designation ? ` &middot; ${esc(i.designation)}` : ""}${i.city ? ` &middot; ${esc(i.city)}` : ""}</div>
+        </td></tr>
+
+        <tr><td style="padding:22px 23px 0;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            ${tile(school ? "Students" : "Employees", i.size)}
+            ${tile(school ? "Type" : "Industry", i.type)}
+            ${tile("Wants to start", i.timeline)}
+          </tr></table>
+        </td></tr>
+
+        <tr><td style="padding:0 28px;">
+          ${sectionTitle("Contact person")}
+          ${table([
+            row("Name", esc(name || "—")),
+            row("Designation", esc(i.designation)),
+            row("Phone", tel ? `<a href="tel:${tel}" style="color:${G2};text-decoration:none;">${esc(data.phone)}</a>` : esc(data.phone || "—")),
+            row("Email", data.email ? `<a href="mailto:${esc(data.email)}" style="color:${G2};text-decoration:none;">${esc(data.email)}</a>` : "—"),
+          ])}
+
+          ${sectionTitle(school ? "Institution" : "Company")}
+          ${table([
+            row(school ? "Institution" : "Company", esc(i.org)),
+            row(school ? "Type" : "Industry", esc(i.type)),
+            row(school ? "Students" : "Employees", esc(i.size)),
+            row(school ? "Board / affiliation" : "Work model", esc(school ? i.board : i.workModel)),
+            row(school ? "City" : "City / locations", esc(i.city)),
+            row("Wants to start", esc(i.timeline)),
+          ])}
+
+          ${sectionTitle("What they need")}
+          <div>${chips}</div>
+
+          ${i.requirements ? `${sectionTitle("In their words")}
+          <div style="background:#fbf8f0;border-left:4px solid ${GOLD};border-radius:0 12px 12px 0;padding:14px 16px;font-size:14.5px;line-height:1.7;color:#33332e;white-space:pre-line;">${esc(i.requirements)}</div>` : ""}
+
+          ${sectionTitle("Reply")}
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+            ${tel ? btn(`Call ${esc(first)}`, `tel:${tel}`, true) : ""}
+            ${wa ? btn("WhatsApp", wa, false) : ""}
+            ${mailto ? btn("Email", mailto, false) : ""}
+          </tr></table>
+          <div style="font-size:12.5px;color:${SOFT};line-height:1.6;margin:8px 0 0;">The page promises a reply <b>within one working day</b>, then a 20-minute discovery call and a proposal sized to the ${school ? "institution" : "company"}.</div>
+        </td></tr>
+
+        <tr><td style="padding:24px 28px 0;"></td></tr>
+        <tr><td style="background:#fafaf8;border-top:1px solid ${LINE};padding:14px 28px;font-size:11px;color:#9a9f97;line-height:1.6;">
+          From the ${school ? "Schools &amp; Colleges" : "Corporate (EAP)"} page on chooseyourtherapist.in &middot; also saved in Admin &rarr; Leads
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+};
+
+// ============================================================================
 // ONBOARDING & LIFECYCLE
 // ============================================================================
 

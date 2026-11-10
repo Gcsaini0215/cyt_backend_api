@@ -5,7 +5,7 @@ import crypto from "crypto";
 import Lead from "../models/Lead.js";
 import LeadActivity from "../models/LeadActivity.js";
 import Admin from "../models/Admin.js";
-import { leadNotificationEmail } from "../services/mailTemplates.js";
+import { leadNotificationEmail, institutionLeadEmail, institutionLeadSubject, isInstitutionLead } from "../services/mailTemplates.js";
 import { sendMail } from "../helper/mailer.js";
 import Razorpay from "razorpay";
 import { CONSULT_AMOUNT_RUPEES } from "../helper/consult.js";
@@ -65,7 +65,9 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
     });
 
     const sendMailid = "chooseyourtherapist@gmail.com"
-    const subject = `New Lead: ${name} - Consultation Request`;
+    // Schools & Colleges / Corporate (EAP) enquiries get their own full email (institution, size, needs, timeline…)
+    const institution = isInstitutionLead(req.body);
+    const subject = institution ? institutionLeadSubject(req.body) : `New Lead: ${name} - Consultation Request`;
     const text = `A new lead has been submitted: ${name}. Phone: ${phone}. Source: ${finalSource}`;
     
     const leadData = {
@@ -79,7 +81,7 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
 
     console.log("Final leadData being passed to template:", leadData);
 
-    const html = leadNotificationEmail(leadData);
+    const html = institution ? institutionLeadEmail(leadData) : leadNotificationEmail(leadData);
     
     try {
       console.log("Lead Email HTML generated successfully. Length:", html.length);
@@ -315,17 +317,15 @@ export const assignLead = expressAsyncHandler(async (req, res, next) => {
 
     if (admin?.email) {
       try {
+        const full = { ...(lead.data || {}), name: lead.name, phone: lead.phone, email: lead.email, concern: lead.concern, source: lead.source, location: lead.location, message: lead.message };
+        const institution = isInstitutionLead(full);
         await sendMail(
           admin.email,
-          `🔔 Lead Assigned to You: ${lead.name}`,
+          institution ? institutionLeadSubject(full, { assigned: true }) : `🔔 Lead Assigned to You: ${lead.name}`,
           `A lead has been assigned to you: ${lead.name}, ${lead.phone}.`,
-          leadNotificationEmail({
-            name: lead.name,
-            phone: lead.phone,
-            email: lead.email,
-            concern: lead.concern,
-            source: "Assigned to you",
-          })
+          institution
+            ? institutionLeadEmail(full, { assignedTo: admin.name || "you" })
+            : leadNotificationEmail({ ...full, source: "Assigned to you" })
         );
       } catch (mailErr) {
         console.error("Lead assignment email failed (non-fatal):", mailErr.message);
