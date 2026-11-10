@@ -14,6 +14,7 @@ import { PLAN_MONTHS, PLAN_AMOUNTS, activateTherapistSubscription, razorpayClien
 import TherapistSubscriptionOrder from "../models/TherapistSubscriptionOrder.js";
 import { emitStaff } from "../services/staffEvents.js";
 import { sendMail } from "../helper/mailer.js";
+import { sendWhatsappOtp } from "../helper/whatsapp.js";
 import { getTimeDifferenceInSeconds } from "../helper/time.js";
 import { generate6DigitOTP, generateProfileCode } from "../helper/generate.js";
 import { loginOtpEmail, otpVerificationEmail, registrationOtpEmail, therapistVerificationEmail, therapistApprovedMail, welcomeCredentialsMail, passwordResetMail, therapistSubscriptionMail, adminSubscriptionMail } from "../services/mailTemplates.js";
@@ -953,12 +954,16 @@ export const login = expressAsyncHandler(async (req, res, next) => {
     const text = `CYT Login – Your OTP for Secure Access`;
     const html = loginOtpEmail(user.name, otp);
 
-    await sendMail(email, subject, text, html);
+    // same code on WhatsApp too (site accounts with a phone on file); admins have no phone, email only
+    const [, onWhatsapp] = await Promise.all([
+      sendMail(email, subject, text, html),
+      sendWhatsappOtp(user.phone, otp, user.name),
+    ]);
 
     return res.status(201).json({
-      message: "OTP has been sent to your email",
+      message: onWhatsapp ? "OTP has been sent to your email and WhatsApp" : "OTP has been sent to your email",
       status: true,
-      data: {},
+      data: { whatsapp: onWhatsapp },
     });
   } catch (err) {
     return next(err);
