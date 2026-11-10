@@ -193,8 +193,9 @@ export const answerQuestion = expressAsyncHandler(async (req, res) => {
 
 // GET /ask/admin?tab=waiting|review|published|hidden|urgent
 export const adminList = expressAsyncHandler(async (req, res) => {
-  const tab = String(req.query.tab || "review");
+  const tab = String(req.query.tab || "all");
   const f = {
+    all: {},
     waiting: { status: "open", hidden: { $ne: true } },
     review: { status: "answered", allowPublish: true, published: false, hidden: { $ne: true }, urgent: { $ne: true } },
     published: { published: true, hidden: { $ne: true } },
@@ -202,11 +203,12 @@ export const adminList = expressAsyncHandler(async (req, res) => {
     urgent: { urgent: true },
     answered: { status: "answered", hidden: { $ne: true } },
   }[tab] || {};
-  const rows = await Question.find(f).sort({ createdAt: -1 }).limit(200).lean();
+  const rows = await Question.find(f).sort({ createdAt: -1 }).limit(200).populate("user", "name email phone").lean();
   const cards = {};
   for (const r of rows) { const k = String(r.answer?.therapist || ""); if (k && !cards[k]) cards[k] = await therapistCard(k); }
   const counts = {};
   await Promise.all(Object.entries({
+    all: {},
     waiting: { status: "open", hidden: { $ne: true } },
     review: { status: "answered", allowPublish: true, published: false, hidden: { $ne: true }, urgent: { $ne: true } },
     published: { published: true, hidden: { $ne: true } },
@@ -214,6 +216,7 @@ export const adminList = expressAsyncHandler(async (req, res) => {
   }).map(async ([k, v]) => { counts[k] = await Question.countDocuments(v); }));
   res.json({ status: true, data: { counts, items: rows.map((q) => ({
     _id: String(q._id), category: q.category, body: q.body, context: q.context, urgent: q.urgent, allowPublish: q.allowPublish,
+    asker: q.user ? { name: q.user.name || "", email: q.user.email || "", phone: q.user.phone || "" } : null, // admin only — never public
     status: q.status, createdAt: q.createdAt, answer: q.answer?.text ? { text: q.answer.text, at: q.answer.at } : null,
     therapist: cards[String(q.answer?.therapist || "")] || null,
     published: q.published, publishedAt: q.publishedAt, slug: q.slug || null, hidden: q.hidden,
