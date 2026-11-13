@@ -29,24 +29,33 @@ const testShort = (k) => TEST_BY_KEY[k]?.short || k;
 const istDay = (d) => new Date(new Date(d).getTime() + 5.5 * 3600e3).toISOString().slice(0, 10);
 const oidAt = (id) => { try { return new mongoose.Types.ObjectId(String(id)).getTimestamp(); } catch (e) { return null; } };
 
-/* GET /api/admin/therapist-360?q=&page=&limit=&filter=all|live|verified|pending|paid|top */
+/* GET /api/admin/therapist-360?q=&page=&limit=&filter=active|hidden|rejected|pending|live|paid|top|all
+   active (default) = shown on the website · hidden = approved but not shown · rejected · pending = waiting for verification */
+const SHOWN = { show_to_page: { $gt: 0 } };
+const STATUS_FILTER = {
+  active: SHOWN,
+  hidden: { show_to_page: { $not: { $gt: 0 } }, verification_status: "approved" },
+  rejected: { verification_status: "rejected" },
+  pending: { show_to_page: { $not: { $gt: 0 } }, verification_status: { $in: ["pending", "reupload", null] } },
+};
 export const listTherapists = expressAsyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(50, Math.max(5, parseInt(req.query.limit, 10) || 20));
   const q = String(req.query.q || "").trim().slice(0, 80);
-  const which = String(req.query.filter || "all");
-  const filter = {};
+  const which = String(req.query.filter || "active");
+  const filter = { ...(STATUS_FILTER[which] || {}) };
   if (q) {
     const rx = new RegExp(esc(q), "i");
     const us = await User.find({ role: 1, $or: [{ name: rx }, { email: rx }, { phone: rx }] }, { _id: 1 }).limit(500).lean();
     filter.$or = [{ user: { $in: us.map((u) => u._id) } }, { profile_code: rx }, { state: rx }, { profile_type: rx }];
   }
   if (which === "live") filter.user = { $in: [...onlineIdsByRole(1)].filter((x) => mongoose.Types.ObjectId.isValid(x)).map((x) => new mongoose.Types.ObjectId(x)) };
-  else if (which === "verified") filter.verification_status = "approved";
-  else if (which === "pending") filter.verification_status = { $in: ["pending", "reupload"] };
   else if (which === "paid") filter.subscription_expires_at = { $gt: new Date() };
   else if (which === "top") filter.top_therapist = true;
 
+  // how many in each status (for the tabs), with the search applied
+  const base = filter.$or ? { $or: filter.$or } : {};
+  const counts = Object.fromEntries(await Promise.all(Object.entries(STATUS_FILTER).map(async ([k, f]) => [k, await Therapists.countDocuments({ ...base, ...f })])));
   const [total, rows] = await Promise.all([
     Therapists.countDocuments(filter),
     Therapists.find(filter, { user: 1, profile_type: 1, profile_code: 1, state: 1, verification_status: 1, show_to_page: 1, top_therapist: 1, subscription_plan: 1, subscription_expires_at: 1, createdAt: 1 })
@@ -86,7 +95,7 @@ export const listTherapists = expressAsyncHandler(async (req, res) => {
       lastVisit: u.last_visit || null, online: !!onlineInfo(u._id),
     };
   });
-  res.json({ status: true, data, total, page, pages: Math.max(1, Math.ceil(total / limit)) });
+  res.json({ status: true, data, total, page, pages: Math.max(1, Math.ceil(total / limit)), counts });
 });
 
 /* GET /api/admin/therapist-360/:id (Therapists _id) — the whole picture for one therapist */
