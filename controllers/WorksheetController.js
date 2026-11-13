@@ -92,8 +92,10 @@ const textOf = (d) => JSON.stringify(d || {});
 /* Plan rules (owner, 2026-11-14): every therapist can use the first two worksheets for THEMSELVES for free.
    The yearly plan unlocks the rest for themselves AND Share link / Send to a client. */
 const FREE_SELF = new Set(["abcd", "activity"]);
-const yearlyOf = (t) => !!(t && t.subscription_plan === "annual" && t.subscription_expires_at && new Date(t.subscription_expires_at) > new Date());
-const accessOf = (t) => ({ yearly: yearlyOf(t), planEnds: t?.subscription_expires_at || null, freeSelf: [...FREE_SELF] });
+// the yearly plan, or the free plan CYT gives (admin → Subscriptions) — both unlock the Toolkit while active
+const planActive = (t) => !!(t && t.subscription_plan && t.subscription_expires_at && new Date(t.subscription_expires_at) > new Date());
+const yearlyOf = (t) => planActive(t) && ["annual", "free"].includes(t.subscription_plan);
+const accessOf = (t) => ({ yearly: yearlyOf(t), plan: planActive(t) ? t.subscription_plan : "", free: planActive(t) && t.subscription_plan === "free", planEnds: t?.subscription_expires_at || null, freeSelf: [...FREE_SELF] });
 const YEARLY_MSG = "Sharing worksheets and sending them to clients comes with the yearly plan";
 
 async function myTherapist(req) {
