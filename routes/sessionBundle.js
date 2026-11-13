@@ -1,6 +1,7 @@
 import express from "express";
 import { myBundles, packOptions, adminBundles, extendBundle, adminPackPricing, savePackPricing } from "../controllers/SessionBundleController.js";
 import { myMoods, saveMood } from "../controllers/MoodController.js";
+import { myCycle, saveCycleProfile, saveCycleLog, deleteMyCycle } from "../controllers/CycleController.js";
 import { getMyNote, saveMyNote } from "../controllers/SessionNoteController.js";
 import { isAuth, hasPermission, isSuperAdmin } from "../middlewares/authMiddleware.js";
 
@@ -15,6 +16,11 @@ router.put("/admin/pack-pricing", isSuperAdmin, savePackPricing);
 // My Space mood check-in
 router.get("/my-moods", isAuth, myMoods);
 router.post("/my-moods", isAuth, saveMood);
+// Cycle & Mood Care (private period + mood tracker)
+router.get("/my-cycle", isAuth, myCycle);
+router.put("/my-cycle/profile", isAuth, saveCycleProfile);
+router.put("/my-cycle/log", isAuth, saveCycleLog);
+router.delete("/my-cycle", isAuth, deleteMyCycle);
 // the client's private notes for a session
 router.get("/my-session-notes/:bookingId", isAuth, getMyNote);
 router.put("/my-session-notes/:bookingId", isAuth, saveMyNote);
