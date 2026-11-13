@@ -33,6 +33,7 @@ import probonoRouter from "./routes/probono.js";
 import traineeRouter from "./routes/trainee.js";
 import traineePortalRouter from "./routes/traineePortal.js";
 import clientInsightRouter from "./routes/clientInsight.js";
+import worksheetRouter from "./routes/worksheet.js";
 import overviewRouter from "./routes/overview.js";
 import sessionBundleRouter from "./routes/sessionBundle.js";
 import receptionRouter from "./routes/reception.js";
@@ -150,6 +151,7 @@ app.use("/api", probonoRouter);
 app.use("/api", traineeRouter);
 app.use("/api", traineePortalRouter);
 app.use("/api", clientInsightRouter);
+app.use("/api", worksheetRouter); // Therapist Toolkit worksheets
 app.use("/api", overviewRouter);
 app.use("/api", sessionBundleRouter);
 app.use("/api", receptionRouter);
