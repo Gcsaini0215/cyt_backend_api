@@ -14,7 +14,10 @@ import { notifyTherapists } from "../services/therapistNotify.js";
    Client: starts it from the link (after signing in), fills it in My Space, sends it to the therapist.
    Answers are private: the therapist sees them only after "Send to my therapist"; admin routes never read them. */
 
-export const TOOLS = { abcd: "ABCD Thought Log" };
+export const TOOLS = { abcd: "ABCD Thought Log", activity: "Activity Diary" };
+// Activity Diary: 7 days × these 2-hour blocks (start hour)
+const SLOTS = ["6", "8", "10", "12", "14", "16", "18", "20", "22"];
+const n10 = (v) => (v === null || v === undefined || v === "" ? null : Math.max(0, Math.min(10, Math.round(Number(v) || 0))));
 const TRAPS = new Set(["all-or-nothing", "mind-reading", "fortune-telling", "catastrophising", "should", "labelling", "personalising", "overgeneralising", "filtering", "emotional-reasoning"]);
 const CRISIS = /suicid|kill (my ?self|me)|end (my|this) life|want to die|wanna die|self[- ]?harm|hurt myself|cut myself|no reason to live|marna (chahta|chahti|hai)|khud ko (khatam|maar)|jeena nahi|zindagi khatam/i;
 const isId = (x) => mongoose.Types.ObjectId.isValid(String(x || ""));
@@ -23,6 +26,23 @@ const pct = (v) => (v === null || v === undefined || v === "" ? null : Math.max(
 const newCode = () => crypto.randomBytes(6).toString("base64url").replace(/[-_]/g, "").slice(0, 7) || crypto.randomBytes(4).toString("hex");
 
 /* keep only known fields, with sane lengths */
+function cleanActivity(d = {}) {
+  const days = (Array.isArray(d.days) ? d.days : []).slice(0, 7).map((day) => {
+    const out = {};
+    for (const s of SLOTS) {
+      const c = day?.[s];
+      if (!c) continue;
+      const cell = { did: str(c.did, 200), mood: str(c.mood, 30), mp: pct(c.mp), a: n10(c.a), c: n10(c.c), e: n10(c.e) };
+      if (cell.did || cell.mood) out[s] = cell;
+    }
+    return out;
+  });
+  while (days.length < 7) days.push({});
+  return { start: /^\d{4}-\d{2}-\d{2}$/.test(String(d.start || "")) ? d.start : "", days };
+}
+const cleanFor = (tool, d) => (tool === "activity" ? cleanActivity(d) : cleanData(d));
+const filledCells = (d) => (d?.days || []).reduce((n, day) => n + Object.keys(day || {}).length, 0);
+const previewOf = (e, n = 90) => (e.tool === "activity" ? (filledCells(e.data) ? `${filledCells(e.data)} entries` : "") : str(e.data?.a?.what, n));
 function cleanData(d = {}) {
   const a = d.a || {}, b = d.b || {}, c = d.c || {}, x = d.d || {};
   return {
@@ -50,7 +70,7 @@ const publicTherapist = (t) => (t ? {
 const entryRow = (e, withData) => ({
   _id: String(e._id), tool: e.tool, title: TOOLS[e.tool] || e.tool, status: e.status, step: e.step || 0, note: e.note || "",
   submittedAt: e.submittedAt, reviewedAt: e.reviewedAt, feedback: e.feedback || "", flag: !!e.flag, updatedAt: e.updatedAt, createdAt: e.createdAt,
-  ...(withData ? { data: e.data || {} } : { preview: str(e.data?.a?.what, 90) }),
+  ...(withData ? { data: e.data || {} } : { preview: previewOf(e) }),
 });
 
 /* ── therapist ── */
@@ -71,7 +91,7 @@ export const therapistWorksheets = expressAsyncHandler(async (req, res) => {
       therapist: publicTherapist(t),
       links: links.map((l) => ({ _id: String(l._id), code: l.code, tool: l.tool, note: l.note, forClient: l.forClient ? { id: String(l.forClient._id), name: l.forClient.name } : null, opens: l.opens, starts: l.starts, bookClicks: l.bookClicks, createdAt: l.createdAt })),
       // a client's answers show only after they send it; until then the therapist sees that it was started
-      entries: entries.map((e) => ({ ...entryRow(e, false), preview: ["submitted", "reviewed"].includes(e.status) ? str(e.data?.a?.what, 90) : "", client: { id: String(e.user?._id || ""), name: e.user?.name || "Client", photo: e.user?.profile || "" } })),
+      entries: entries.map((e) => ({ ...entryRow(e, false), preview: ["submitted", "reviewed"].includes(e.status) ? previewOf(e) : "", client: { id: String(e.user?._id || ""), name: e.user?.name || "Client", photo: e.user?.profile || "" } })),
       clients: clients.map((c) => ({ id: String(c._id), name: c.name, photo: c.profile || "" })),
     },
   });
@@ -178,20 +198,20 @@ export const saveMyWorksheet = expressAsyncHandler(async (req, res) => {
   if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid worksheet" });
   const e = await WorksheetEntry.findOne({ _id: req.params.id, user: req.user._id });
   if (!e) return res.status(404).json({ status: false, message: "Worksheet not found" });
-  if (req.body?.data) { e.data = cleanData(req.body.data); e.markModified("data"); }
+  if (req.body?.data) { e.data = cleanFor(e.tool, req.body.data); e.markModified("data"); }
   if (req.body?.step != null) e.step = Math.max(0, Math.min(5, Number(req.body.step) || 0));
   if (e.status === "assigned") e.status = "draft";
   const flag = CRISIS.test(textOf(e.data));
   let alerted = false;
   if (req.body?.submit && e.therapistUser) {
-    if (!String(e.data?.a?.what || "").trim()) return res.status(400).json({ status: false, message: "Write what happened (step A) first" });
+    if (e.tool === "activity" ? !filledCells(e.data) : !String(e.data?.a?.what || "").trim()) return res.status(400).json({ status: false, message: e.tool === "activity" ? "Fill at least one time slot first" : "Write what happened (step A) first" });
     e.status = "submitted"; e.submittedAt = new Date();
     e.flag = flag;
     const who = req.user.name || "A client";
     await notifyTherapists([e.therapistUser], {
       type: flag ? "action" : "notice",
       title: flag ? `⚠ ${who}'s worksheet mentions self-harm — please reach out` : `${who} sent you a worksheet`,
-      body: `${TOOLS[e.tool] || "Worksheet"}: “${str(e.data?.a?.what, 120)}”`,
+      body: `${TOOLS[e.tool] || "Worksheet"}${previewOf(e, 120) ? `: “${previewOf(e, 120)}”` : ""}`,
       link: `/therapists/toolkit?entry=${e._id}`, ref: `worksheet-sent:${e._id}:${e.submittedAt.getTime()}`,
     });
     alerted = true;
