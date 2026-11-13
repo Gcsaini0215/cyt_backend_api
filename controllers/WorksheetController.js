@@ -89,6 +89,13 @@ function cleanLog(d = {}) {
 }
 const textOf = (d) => JSON.stringify(d || {});
 
+/* Plan rules (owner, 2026-11-14): every therapist can use the first two worksheets for THEMSELVES for free.
+   The yearly plan unlocks the rest for themselves AND Share link / Send to a client. */
+const FREE_SELF = new Set(["abcd", "activity"]);
+const yearlyOf = (t) => !!(t && t.subscription_plan === "annual" && t.subscription_expires_at && new Date(t.subscription_expires_at) > new Date());
+const accessOf = (t) => ({ yearly: yearlyOf(t), planEnds: t?.subscription_expires_at || null, freeSelf: [...FREE_SELF] });
+const YEARLY_MSG = "Sharing worksheets and sending them to clients comes with the yearly plan";
+
 async function myTherapist(req) {
   return Therapists.findOne({ user: req.user._id }).populate({ path: "user", select: "name profile" }).lean();
 }
@@ -108,16 +115,19 @@ const entryRow = (e, withData) => ({
 export const therapistWorksheets = expressAsyncHandler(async (req, res) => {
   const t = await myTherapist(req);
   if (!t) return res.status(404).json({ status: false, message: "Therapist profile not found" });
-  const [links, entries, clientIds] = await Promise.all([
+  const [links, entries, clientIds, mine] = await Promise.all([
     WorksheetLink.find({ therapistUser: req.user._id }).populate({ path: "forClient", select: "name" }).sort({ createdAt: -1 }).limit(100).lean(),
     WorksheetEntry.find({ therapistUser: req.user._id }).populate({ path: "user", select: "name profile" }).sort({ updatedAt: -1 }).limit(200).lean(),
     Booking.distinct("client", { therapist: t._id, $or: [{ payment_status: "Paid" }, { source: "noida" }] }),
+    WorksheetEntry.find({ user: req.user._id, therapistUser: null }).sort({ updatedAt: -1 }).limit(100).lean(),
   ]);
   const clients = await User.find({ _id: { $in: clientIds.filter(Boolean) }, role: 0 }, { name: 1, profile: 1 }).sort({ name: 1 }).limit(300).lean();
   res.json({
     status: true,
     data: {
       therapist: publicTherapist(t),
+      access: accessOf(t),
+      mine: mine.map((e) => entryRow(e, false)),
       links: links.map((l) => ({ _id: String(l._id), code: l.code, tool: l.tool, note: l.note, forClient: l.forClient ? { id: String(l.forClient._id), name: l.forClient.name } : null, opens: l.opens, starts: l.starts, bookClicks: l.bookClicks, createdAt: l.createdAt })),
       // a client's answers show only after they send it; until then the therapist sees that it was started
       entries: entries.map((e) => ({ ...entryRow(e, false), preview: ["submitted", "reviewed"].includes(e.status) ? previewOf(e) : "", client: { id: String(e.user?._id || ""), name: e.user?.name || "Client", photo: e.user?.profile || "" } })),
@@ -131,6 +141,7 @@ export const createWorksheetLink = expressAsyncHandler(async (req, res) => {
   const tool = TOOLS[req.body?.tool] ? req.body.tool : "abcd";
   const t = await myTherapist(req);
   if (!t) return res.status(404).json({ status: false, message: "Therapist profile not found" });
+  if (!yearlyOf(t)) return res.status(402).json({ status: false, locked: true, message: YEARLY_MSG });
   let client = null;
   if (req.body?.client) {
     if (!isId(req.body.client)) return res.status(400).json({ status: false, message: "Choose a client" });
@@ -150,6 +161,16 @@ export const createWorksheetLink = expressAsyncHandler(async (req, res) => {
     await notifyClient(client._id, { type: "worksheet", title: `${t.user?.name || "Your therapist"} sent you a worksheet`, body: `${TOOLS[tool]}${link.note ? ` — “${link.note}”` : ""}`, link: "/client/worksheets", ref: `worksheet:${link._id}` });
   }
   res.json({ status: true, data: { code: link.code, path: `/worksheet/${link.code}`, client: client ? { id: String(client._id), name: client.name } : null } });
+});
+
+// POST /api/therapist/worksheets/self { tool } — a worksheet for the therapist's own use (saved, private, never sent)
+export const startSelf = expressAsyncHandler(async (req, res) => {
+  const tool = TOOLS[req.body?.tool] ? req.body.tool : "abcd";
+  const t = await myTherapist(req);
+  if (!t) return res.status(404).json({ status: false, message: "Therapist profile not found" });
+  if (!FREE_SELF.has(tool) && !yearlyOf(t)) return res.status(402).json({ status: false, locked: true, message: `${TOOLS[tool]} comes with the yearly plan` });
+  const e = await WorksheetEntry.create({ user: req.user._id, tool, therapistUser: null, therapist: null, status: "draft" });
+  res.json({ status: true, data: { id: String(e._id) } });
 });
 
 // GET /api/therapist/worksheets/entries/:id — a client's worksheet (answers only once sent)
@@ -256,7 +277,7 @@ export const saveMyWorksheet = expressAsyncHandler(async (req, res) => {
       type: flag ? "action" : "notice",
       title: flag ? `⚠ ${who}'s worksheet mentions self-harm — please reach out` : `${who} sent you a worksheet`,
       body: `${TOOLS[e.tool] || "Worksheet"}${previewOf(e, 120) ? `: “${previewOf(e, 120)}”` : ""}`,
-      link: `/therapists/toolkit?entry=${e._id}`, ref: `worksheet-sent:${e._id}:${e.submittedAt.getTime()}`,
+      link: `/therapists/toolkit/${e._id}?review=1`, ref: `worksheet-sent:${e._id}:${e.submittedAt.getTime()}`,
     });
     alerted = true;
   }

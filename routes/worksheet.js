@@ -1,7 +1,7 @@
 import express from "express";
 import { isAuthCommon, isTherapist } from "../middlewares/authMiddleware.js";
 import {
-  therapistWorksheets, createWorksheetLink, therapistEntry, reviewEntry,
+  therapistWorksheets, createWorksheetLink, therapistEntry, reviewEntry, startSelf,
   publicLink, linkBookClick,
   startFromLink, myWorksheets, myWorksheet, saveMyWorksheet, deleteMyWorksheet,
 } from "../controllers/WorksheetController.js";
@@ -10,6 +10,7 @@ import {
 const router = express.Router();
 router.get("/therapist/worksheets", isTherapist, therapistWorksheets);
 router.post("/therapist/worksheets/link", isTherapist, createWorksheetLink);
+router.post("/therapist/worksheets/self", isTherapist, startSelf);
 router.get("/therapist/worksheets/entries/:id", isTherapist, therapistEntry);
 router.put("/therapist/worksheets/entries/:id/review", isTherapist, reviewEntry);
 
