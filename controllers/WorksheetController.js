@@ -263,6 +263,14 @@ export const saveMyWorksheet = expressAsyncHandler(async (req, res) => {
   if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid worksheet" });
   const e = await WorksheetEntry.findOne({ _id: req.params.id, user: req.user._id });
   if (!e) return res.status(404).json({ status: false, message: "Worksheet not found" });
+  // reset (the client confirmed it): empty answers, back to the start; the therapist sees it as being filled again
+  if (req.body?.reset) {
+    e.data = cleanFor(e.tool, {}); e.markModified("data");
+    e.step = 0; e.flag = false;
+    if (e.status === "submitted" || e.status === "reviewed") { e.status = "draft"; e.submittedAt = null; }
+    await e.save();
+    return res.json({ status: true, message: "Worksheet cleared", data: { status: e.status, flag: false, updatedAt: e.updatedAt } });
+  }
   if (req.body?.data) {
     let max = MAX_LOGS;
     if (e.tool === "abcd" && e.therapist) {
