@@ -14,7 +14,7 @@ import { notifyTherapists } from "../services/therapistNotify.js";
    Client: starts it from the link (after signing in), fills it in My Space, sends it to the therapist.
    Answers are private: the therapist sees them only after "Send to my therapist"; admin routes never read them. */
 
-export const TOOLS = { abcd: "ABCD Thought Log", activity: "Activity Diary" };
+export const TOOLS = { abcd: "ABCD Thought Log", activity: "Activity Diary", whatif: "What-If Flip" };
 // Activity Diary: 7 days × these 2-hour blocks (start hour)
 const SLOTS = ["6", "8", "10", "12", "14", "16", "18", "20", "22"];
 const n10 = (v) => (v === null || v === undefined || v === "" ? null : Math.max(0, Math.min(10, Math.round(Number(v) || 0))));
@@ -40,10 +40,15 @@ function cleanActivity(d = {}) {
   while (days.length < 7) days.push({});
   return { start: /^\d{4}-\d{2}-\d{2}$/.test(String(d.start || "")) ? d.start : "", days };
 }
-const cleanFor = (tool, d, max) => (tool === "activity" ? cleanActivity(d) : cleanData(d, max));
+function cleanWhatIf(d = {}) {
+  const pairs = (Array.isArray(d.pairs) ? d.pairs : []).slice(0, 8).map((p) => ({ bad: str(p?.bad, 500), good: str(p?.good, 500), likely: str(p?.likely, 500) }));
+  return { worry: str(d.worry, 500), before: pct(d.before), pairs: pairs.length ? pairs : [{ bad: "", good: "", likely: "" }], cope: str(d.cope, 800), after: pct(d.after) };
+}
+const cleanFor = (tool, d, max) => (tool === "activity" ? cleanActivity(d) : tool === "whatif" ? cleanWhatIf(d) : cleanData(d, max));
 const filledCells = (d) => (d?.days || []).reduce((n, day) => n + Object.keys(day || {}).length, 0);
 const previewOf = (e, n = 90) => {
   if (e.tool === "activity") return filledCells(e.data) ? `${filledCells(e.data)} entries` : "";
+  if (e.tool === "whatif") return str(e.data?.worry, n) ? `What if ${str(e.data.worry, n)}` : "";
   const logs = logsOf(e.data).filter((l) => String(l?.a?.what || "").trim());
   return logs.length ? `${logs.length > 1 ? `${logs.length} situations · ` : ""}${str(logs[logs.length - 1].a.what, n)}` : "";
 };
@@ -242,7 +247,8 @@ export const saveMyWorksheet = expressAsyncHandler(async (req, res) => {
   const flag = CRISIS.test(textOf(e.data));
   let alerted = false;
   if (req.body?.submit && e.therapistUser) {
-    if (e.tool === "activity" ? !filledCells(e.data) : !logsOf(e.data).some((l) => String(l?.a?.what || "").trim())) return res.status(400).json({ status: false, message: e.tool === "activity" ? "Fill at least one time slot first" : "Write what happened (step A) first" });
+    const empty = e.tool === "activity" ? !filledCells(e.data) : e.tool === "whatif" ? !String(e.data?.worry || "").trim() : !logsOf(e.data).some((l) => String(l?.a?.what || "").trim());
+    if (empty) return res.status(400).json({ status: false, message: e.tool === "activity" ? "Fill at least one time slot first" : e.tool === "whatif" ? "Write your what-if first" : "Write what happened (step A) first" });
     e.status = "submitted"; e.submittedAt = new Date();
     e.flag = flag;
     const who = req.user.name || "A client";
