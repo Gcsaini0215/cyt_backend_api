@@ -36,6 +36,7 @@ const worksheetEntrySchema = new Schema(
     submittedAt: { type: Date, default: null },
     feedback: { type: String, default: "", maxlength: 2000 },
     reviewedAt: { type: Date, default: null },
+    hiddenForTherapist: { type: Boolean, default: false }, // the therapist removed it from their Toolkit list (the client keeps it)
     flag: { type: Boolean, default: false }, // words about self-harm — the therapist is alerted, the client sees Tele-MANAS
   },
   { timestamps: true }

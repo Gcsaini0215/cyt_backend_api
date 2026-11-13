@@ -117,7 +117,7 @@ export const therapistWorksheets = expressAsyncHandler(async (req, res) => {
   if (!t) return res.status(404).json({ status: false, message: "Therapist profile not found" });
   const [links, entries, clientIds, mine] = await Promise.all([
     WorksheetLink.find({ therapistUser: req.user._id }).populate({ path: "forClient", select: "name" }).sort({ createdAt: -1 }).limit(100).lean(),
-    WorksheetEntry.find({ therapistUser: req.user._id }).populate({ path: "user", select: "name profile" }).sort({ updatedAt: -1 }).limit(200).lean(),
+    WorksheetEntry.find({ therapistUser: req.user._id, hiddenForTherapist: { $ne: true } }).populate({ path: "user", select: "name profile" }).sort({ updatedAt: -1 }).limit(200).lean(),
     Booking.distinct("client", { therapist: t._id, $or: [{ payment_status: "Paid" }, { source: "noida" }] }),
     WorksheetEntry.find({ user: req.user._id, therapistUser: null }).sort({ updatedAt: -1 }).limit(100).lean(),
   ]);
@@ -180,6 +180,14 @@ export const therapistEntry = expressAsyncHandler(async (req, res) => {
   if (!e) return res.status(404).json({ status: false, message: "Worksheet not found" });
   const shared = ["submitted", "reviewed"].includes(e.status);
   res.json({ status: true, data: { ...entryRow(e, shared), shared, client: { id: String(e.user?._id || ""), name: e.user?.name || "Client", photo: e.user?.profile || "" } } });
+});
+
+// DELETE /api/therapist/worksheets/entries/:id — remove a client's worksheet from my list (it stays in the client's dashboard)
+export const hideEntry = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid worksheet" });
+  const r = await WorksheetEntry.updateOne({ _id: req.params.id, therapistUser: req.user._id }, { $set: { hiddenForTherapist: true } });
+  if (!r.matchedCount) return res.status(404).json({ status: false, message: "Worksheet not found" });
+  res.json({ status: true, message: "Removed from your list" });
 });
 
 // PUT /api/therapist/worksheets/entries/:id/review { feedback }
@@ -270,7 +278,7 @@ export const saveMyWorksheet = expressAsyncHandler(async (req, res) => {
   if (req.body?.submit && e.therapistUser) {
     const empty = e.tool === "activity" ? !filledCells(e.data) : e.tool === "whatif" ? !String(e.data?.worry || "").trim() : !logsOf(e.data).some((l) => String(l?.a?.what || "").trim());
     if (empty) return res.status(400).json({ status: false, message: e.tool === "activity" ? "Fill at least one time slot first" : e.tool === "whatif" ? "Write your what-if first" : "Write what happened (step A) first" });
-    e.status = "submitted"; e.submittedAt = new Date();
+    e.status = "submitted"; e.submittedAt = new Date(); e.hiddenForTherapist = false;
     e.flag = flag;
     const who = req.user.name || "A client";
     await notifyTherapists([e.therapistUser], {

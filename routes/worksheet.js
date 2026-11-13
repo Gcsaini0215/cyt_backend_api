@@ -1,7 +1,7 @@
 import express from "express";
 import { isAuthCommon, isTherapist } from "../middlewares/authMiddleware.js";
 import {
-  therapistWorksheets, createWorksheetLink, therapistEntry, reviewEntry, startSelf,
+  therapistWorksheets, createWorksheetLink, therapistEntry, reviewEntry, startSelf, hideEntry,
   publicLink, linkBookClick,
   startFromLink, myWorksheets, myWorksheet, saveMyWorksheet, deleteMyWorksheet,
 } from "../controllers/WorksheetController.js";
@@ -13,6 +13,7 @@ router.post("/therapist/worksheets/link", isTherapist, createWorksheetLink);
 router.post("/therapist/worksheets/self", isTherapist, startSelf);
 router.get("/therapist/worksheets/entries/:id", isTherapist, therapistEntry);
 router.put("/therapist/worksheets/entries/:id/review", isTherapist, reviewEntry);
+router.delete("/therapist/worksheets/entries/:id", isTherapist, hideEntry);
 
 router.get("/worksheet-link/:code", publicLink);
 router.post("/worksheet-link/:code/book", linkBookClick);
