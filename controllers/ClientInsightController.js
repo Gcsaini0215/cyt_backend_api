@@ -62,9 +62,10 @@ export const listClients = expressAsyncHandler(async (req, res) => {
       { $match: { client: { $in: ids }, source: { $ne: "noida" } } }, // Noida mirrors are counted with the Noida visits below
       { $group: {
         _id: "$client",
-        sessions: { $sum: 1 },
+        sessions: { $sum: { $cond: [{ $or: [{ $eq: ["$payment_status", "Paid"] }, { $eq: ["$status", "Completed"] }] }, 1, 0] } },
+        pending: { $sum: { $cond: [{ $and: [{ $ne: ["$payment_status", "Paid"] }, { $ne: ["$status", "Completed"] }, { $ne: ["$status", "Cancelled"] }] }, 1, 0] } },
         completed: { $sum: { $cond: [{ $eq: ["$status", "Completed"] }, 1, 0] } },
-        upcoming: { $sum: { $cond: [{ $and: [{ $gt: ["$booking_date", now] }, { $ne: ["$status", "Cancelled"] }] }, 1, 0] } },
+        upcoming: { $sum: { $cond: [{ $and: [{ $gt: ["$booking_date", now] }, { $ne: ["$status", "Cancelled"] }, { $eq: ["$payment_status", "Paid"] }] }, 1, 0] } },
         spent: { $sum: { $cond: [{ $eq: ["$payment_status", "Paid"] }, { $toDouble: { $ifNull: ["$amount", 0] } }, 0] } },
         last: { $max: "$booking_date" },
       } },
@@ -95,7 +96,7 @@ export const listClients = expressAsyncHandler(async (req, res) => {
     const last = [b.last, a.last, u.last_visit, nd.last].filter(Boolean).map((d) => new Date(d)).sort((x, y) => y - x)[0] || null;
     return {
       _id: id, name: u.name, email: u.email, phone: u.phone, photo: u.profile || "", joined: u.createdAt, verified: !!u.is_verified,
-      sessions: b.sessions || 0, completed: b.completed || 0, upcoming: b.upcoming || 0, assessments: a.n || 0, workshops: w.n || 0,
+      sessions: b.sessions || 0, pending: b.pending || 0, completed: b.completed || 0, upcoming: b.upcoming || 0, assessments: a.n || 0, workshops: w.n || 0,
       noida: nd.n || 0, spent: Math.round((b.spent || 0) + (o.spent || 0) + (w.spent || 0) + (nd.spent || 0)), lastActivity: last,
       lastVisit: u.last_visit || null, online: !!onlineInfo(id), cycle: CY.get(id) || "",
     };
@@ -150,6 +151,14 @@ export const clientDetail = expressAsyncHandler(async (req, res) => {
       noida: b.source === "noida", noidaAmount: b.noida_amount || 0, noidaPaidVia: b.noida_paid_via || "",
     };
   });
+  /* a booking whose payment didn't go through is an unpaid attempt, not a session. When the client tried
+     again and paid (same therapist, same time), the unpaid one is only a retry — shown, never counted twice. */
+  const paidKey = new Set(sessions.filter((s) => s.payment === "Paid").map((s) => `${s.therapist?.id}|${s.date ? new Date(s.date).getTime() : ""}`));
+  for (const s of sessions) {
+    s.unpaid = !s.noida && s.payment !== "Paid" && s.state !== "completed";
+    s.retry = s.unpaid && paidKey.has(`${s.therapist?.id}|${s.date ? new Date(s.date).getTime() : ""}`);
+    if (s.unpaid && s.state === "upcoming") s.state = "pending";
+  }
   // every therapist change on this client's sessions, newest first (Client 360 history)
   const therapistChanges = sessions
     .flatMap((x) => x.reassignments.map((r) => ({ ...r, sessionId: x._id, sessionDate: x.date, service: x.service })))
@@ -167,7 +176,7 @@ export const clientDetail = expressAsyncHandler(async (req, res) => {
   // every payment in one list
   const payments = [];
   for (const s of sessions) {
-    if (s.noida) continue; // paid at the Noida booking — that payment is listed once, under "Noida centre"
+    if (s.noida || s.retry) continue; // Noida: listed once under "Noida centre" · retry: the paid booking is listed
     if (s.payment || s.amount) payments.push({ kind: "Session", title: `Session with ${s.therapist?.name || "therapist"}`, date: s.date, amount: s.amount, status: s.payment === "Paid" ? "paid" : s.payment === "Payment Failed" ? "failed" : "pending", ref: s.paymentId, method: s.paymentMethod, invoice: s.payment === "Paid" ? { type: "session", id: s._id } : null });
   }
   for (const o of orders) {
@@ -199,7 +208,7 @@ export const clientDetail = expressAsyncHandler(async (req, res) => {
   const add = (at, kind, text, sub = "") => { if (at) ev.push({ at: new Date(at), kind, text, sub }); };
   add(user.createdAt, "account", "Created an account");
   for (const s of sessions) {
-    if (!s.noida) add(oidAt(s._id), "session", `Booked a session with ${s.therapist?.name || "a therapist"}`, `for ${s.date ? new Date(s.date).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "—"}${s.payment ? ` · ${s.payment}` : ""}`);
+    if (!s.noida && !s.retry) add(oidAt(s._id), s.unpaid ? "cancel" : "session", s.unpaid ? `Started booking with ${s.therapist?.name || "a therapist"} — payment ${s.payment === "Payment Failed" ? "failed" : "pending"}` : `Booked a session with ${s.therapist?.name || "a therapist"}`, `for ${s.date ? new Date(s.date).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "—"}${s.payment ? ` · ${s.payment}` : ""}`);
     if (s.completedAt) add(s.completedAt, "session", `Completed a session with ${s.therapist?.name || "therapist"}`);
     if (s.state === "cancelled") add(s.date, "cancel", `Session with ${s.therapist?.name || "therapist"} cancelled`);
   }
@@ -239,7 +248,10 @@ export const clientDetail = expressAsyncHandler(async (req, res) => {
         online: live ? { since: new Date(live.since), path: live.path, device: live.device, app: live.app } : null, referralCode: user.referral_code || "", referralCredit: user.referral_credit || 0,
       },
       totals: {
-        sessions: sessions.length, completed: sessions.filter((s) => s.state === "completed").length, upcoming: sessions.filter((s) => s.state === "upcoming").length,
+        sessions: sessions.filter((s) => !s.unpaid).length, completed: sessions.filter((s) => s.state === "completed").length, upcoming: sessions.filter((s) => s.state === "upcoming").length,
+        pending: sessions.filter((s) => s.unpaid && !s.retry).length,
+        pendingAmount: Math.round(payments.filter((p) => p.status === "pending").reduce((x, p) => x + (p.amount || 0), 0)),
+        failed: payments.filter((p) => p.status === "failed").length,
         cancelled: sessions.filter((s) => s.state === "cancelled").length, assessments: assessments.length + freeTools.length, workshops: workshops.length,
         noida: noida.length, paid: Math.round(paidTotal), therapists: new Set(sessions.map((s) => s.therapist?.id).filter(Boolean)).size,
       },
