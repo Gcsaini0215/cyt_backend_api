@@ -40,10 +40,34 @@ function cleanActivity(d = {}) {
   while (days.length < 7) days.push({});
   return { start: /^\d{4}-\d{2}-\d{2}$/.test(String(d.start || "")) ? d.start : "", days };
 }
-const cleanFor = (tool, d) => (tool === "activity" ? cleanActivity(d) : cleanData(d));
+const cleanFor = (tool, d, max) => (tool === "activity" ? cleanActivity(d) : cleanData(d, max));
 const filledCells = (d) => (d?.days || []).reduce((n, day) => n + Object.keys(day || {}).length, 0);
-const previewOf = (e, n = 90) => (e.tool === "activity" ? (filledCells(e.data) ? `${filledCells(e.data)} entries` : "") : str(e.data?.a?.what, n));
-function cleanData(d = {}) {
+const previewOf = (e, n = 90) => {
+  if (e.tool === "activity") return filledCells(e.data) ? `${filledCells(e.data)} entries` : "";
+  const logs = logsOf(e.data).filter((l) => String(l?.a?.what || "").trim());
+  return logs.length ? `${logs.length > 1 ? `${logs.length} situations · ` : ""}${str(logs[logs.length - 1].a.what, n)}` : "";
+};
+
+/* Who can log many situations / start again: an ongoing client of that therapist (a paid session in the last
+   120 days or one coming up, or the therapist sent it to them). Anyone else who came from a shared link gets
+   ONE situation (one diary week) — more unlocks once they book. */
+const ONGOING_DAYS = 120;
+async function isOngoing(userId, therapistId, link) {
+  if (link?.forClient && String(link.forClient) === String(userId)) return true;
+  if (!therapistId) return false;
+  return !!(await Booking.exists({
+    client: userId, therapist: therapistId, status: { $ne: "Cancelled" },
+    $or: [{ payment_status: "Paid" }, { source: "noida" }],
+    booking_date: { $gte: new Date(Date.now() - ONGOING_DAYS * 864e5) },
+  }));
+}
+const MAX_LOGS = 30;
+const logsOf = (d) => (Array.isArray(d?.logs) ? d.logs : d?.a ? [d] : []);
+function cleanData(d = {}, max = MAX_LOGS) {
+  const logs = logsOf(d).slice(0, max).map(cleanLog);
+  return { logs: logs.length ? logs : [cleanLog({})] };
+}
+function cleanLog(d = {}) {
   const a = d.a || {}, b = d.b || {}, c = d.c || {}, x = d.d || {};
   return {
     a: { what: str(a.what), when: str(a.when, 80) },
@@ -169,6 +193,11 @@ export const startFromLink = expressAsyncHandler(async (req, res) => {
   if (!l) return res.status(404).json({ status: false, message: "This worksheet link isn't valid any more" });
   if (String(l.therapistUser) === String(req.user._id)) return res.status(400).json({ status: false, message: "This is your own worksheet link — share it with a client" });
   let e = await WorksheetEntry.findOne({ user: req.user._id, link: l._id, status: { $in: ["assigned", "draft"] } });
+  if (!e && !(await isOngoing(req.user._id, l.therapist, l))) {
+    // free use is once per therapist and worksheet — the same one opens again
+    const used = await WorksheetEntry.findOne({ user: req.user._id, therapistUser: l.therapistUser, tool: l.tool }).sort({ updatedAt: -1 });
+    if (used) return res.json({ status: true, data: { id: String(used._id), limited: true } });
+  }
   if (!e) {
     e = await WorksheetEntry.create({ user: req.user._id, tool: l.tool, link: l._id, therapist: l.therapist, therapistUser: l.therapistUser, note: l.note, status: "draft" });
     await WorksheetLink.updateOne({ _id: l._id }, { $inc: { starts: 1 } });
@@ -190,7 +219,9 @@ export const myWorksheet = expressAsyncHandler(async (req, res) => {
   const e = await WorksheetEntry.findOne({ _id: req.params.id, user: req.user._id })
     .populate({ path: "therapist", select: "user profile_type state show_to_page", populate: { path: "user", select: "name profile" } }).lean();
   if (!e) return res.status(404).json({ status: false, message: "Worksheet not found" });
-  res.json({ status: true, data: { ...entryRow(e, true), therapist: publicTherapist(e.therapist) } });
+  const link = e.link ? await WorksheetLink.findById(e.link, { forClient: 1 }).lean() : null;
+  const ongoing = await isOngoing(req.user._id, e.therapist?._id, link);
+  res.json({ status: true, data: { ...entryRow(e, true), therapist: publicTherapist(e.therapist), ongoing, maxLogs: ongoing ? MAX_LOGS : 1 } });
 });
 
 // PUT /api/my-worksheets/:id { data, step, submit }
@@ -198,13 +229,20 @@ export const saveMyWorksheet = expressAsyncHandler(async (req, res) => {
   if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid worksheet" });
   const e = await WorksheetEntry.findOne({ _id: req.params.id, user: req.user._id });
   if (!e) return res.status(404).json({ status: false, message: "Worksheet not found" });
-  if (req.body?.data) { e.data = cleanFor(e.tool, req.body.data); e.markModified("data"); }
+  if (req.body?.data) {
+    let max = MAX_LOGS;
+    if (e.tool === "abcd" && e.therapist) {
+      const link = e.link ? await WorksheetLink.findById(e.link, { forClient: 1 }).lean() : null;
+      if (!(await isOngoing(req.user._id, e.therapist, link))) max = 1;
+    }
+    e.data = cleanFor(e.tool, req.body.data, max); e.markModified("data");
+  }
   if (req.body?.step != null) e.step = Math.max(0, Math.min(5, Number(req.body.step) || 0));
   if (e.status === "assigned") e.status = "draft";
   const flag = CRISIS.test(textOf(e.data));
   let alerted = false;
   if (req.body?.submit && e.therapistUser) {
-    if (e.tool === "activity" ? !filledCells(e.data) : !String(e.data?.a?.what || "").trim()) return res.status(400).json({ status: false, message: e.tool === "activity" ? "Fill at least one time slot first" : "Write what happened (step A) first" });
+    if (e.tool === "activity" ? !filledCells(e.data) : !logsOf(e.data).some((l) => String(l?.a?.what || "").trim())) return res.status(400).json({ status: false, message: e.tool === "activity" ? "Fill at least one time slot first" : "Write what happened (step A) first" });
     e.status = "submitted"; e.submittedAt = new Date();
     e.flag = flag;
     const who = req.user.name || "A client";
