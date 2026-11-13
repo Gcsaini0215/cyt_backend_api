@@ -3,7 +3,7 @@ import { myBundles, packOptions, adminBundles, extendBundle, adminPackPricing, s
 import { myMoods, saveMood } from "../controllers/MoodController.js";
 import { myCycle, saveCycleProfile, saveCycleLog, deleteMyCycle } from "../controllers/CycleController.js";
 import { getMyNote, saveMyNote } from "../controllers/SessionNoteController.js";
-import { isAuth, hasPermission, isSuperAdmin } from "../middlewares/authMiddleware.js";
+import { isAuth, isAuthCommon, hasPermission, isSuperAdmin } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 // session packs (helper/sessionBundle.js)
@@ -14,13 +14,13 @@ router.post("/admin/session-packs/:id/extend", hasPermission("bookings"), extend
 router.get("/admin/pack-pricing", hasPermission(["bookings", "clients"]), adminPackPricing);
 router.put("/admin/pack-pricing", isSuperAdmin, savePackPricing);
 // My Space mood check-in
-router.get("/my-moods", isAuth, myMoods);
-router.post("/my-moods", isAuth, saveMood);
+router.get("/my-moods", isAuthCommon, myMoods);
+router.post("/my-moods", isAuthCommon, saveMood);
 // Cycle & Mood Care (private period + mood tracker)
-router.get("/my-cycle", isAuth, myCycle);
-router.put("/my-cycle/profile", isAuth, saveCycleProfile);
-router.put("/my-cycle/log", isAuth, saveCycleLog);
-router.delete("/my-cycle", isAuth, deleteMyCycle);
+router.get("/my-cycle", isAuthCommon, myCycle);
+router.put("/my-cycle/profile", isAuthCommon, saveCycleProfile);
+router.put("/my-cycle/log", isAuthCommon, saveCycleLog);
+router.delete("/my-cycle", isAuthCommon, deleteMyCycle);
 // the client's private notes for a session
 router.get("/my-session-notes/:bookingId", isAuth, getMyNote);
 router.put("/my-session-notes/:bookingId", isAuth, saveMyNote);
