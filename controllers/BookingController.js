@@ -919,76 +919,83 @@ export const verifyRazorpayPayment = expressAsyncHandler(async (req, res, next) 
     res.status(502);
     return next(new Error(`We couldn't confirm your payment right now. Please contact support with payment ID ${razorpay_payment_id}.`));
   }
-  const usedFor = await Transaction.findOne({ transaction_id: razorpay_payment_id }).select("booking").lean();
-  if (usedFor && String(usedFor.booking) !== String(booking_id)) {
-    res.status(409);
-    return next(new Error("This payment has already been used."));
-  }
-
   try {
-    const isBookingDetail = await Booking.findById(booking_id).populate("client", "_id name email age role").populate({
-      path: "therapist",
-      select: "_id user profile_code",
-      populate: {
-        path: "user",
-        select: "name profile email"
-      }
-    });
-
-    if (!isBookingDetail) {
-      res.status(400);
-      return next(new Error("Booking not found with this id"));
+    const r = await markBookingPaid(booking_id, razorpay_payment_id);
+    if (r.status) {
+      res.status(r.status);
+      return next(new Error(r.message));
     }
-
-    // already confirmed (a retry after a dropped response): answer the same, don't record it twice
-    if (isBookingDetail.payment_status === "Paid") {
-      if (usedFor) {
-        return res.status(200).json({
-          status: true, message: "Payment verified and booking confirmed.", data: isBookingDetail,
-          token: generateToken(isBookingDetail.client._id, isBookingDetail.client.role),
-        });
-      }
-      res.status(409);
-      return next(new Error("This booking is already paid."));
-    }
-
-    const data = {
-      booking: isBookingDetail._id,
-      bookingModel: "Booking",
-      user: isBookingDetail.client._id,
-      amount: isBookingDetail.amount,
-      payment_method: "Razorpay",
-      status: PAYMENT_STATUS.SUCCESS,
-      is_payment_success: true,
-      transaction_id: razorpay_payment_id,
-    };
-
-    const savedTransaction = await Transaction.create(data);
-    if (!savedTransaction) {
-      res.status(400);
-      return next(new Error("Failed to save transaction."));
-    }
-
-    isBookingDetail.transaction = savedTransaction._id;
-    isBookingDetail.payment_status = "Paid";
-    await isBookingDetail.save();
-    // a pack bought with this booking: this is its first session
-    if (isBookingDetail.pack_size && !isBookingDetail.bundle) {
-      try { await activatePackFor(isBookingDetail, razorpay_payment_id); } catch (e) { console.error("[pack] activate failed:", e.message); }
-    }
-    await confirmPaidBooking(isBookingDetail, razorpay_payment_id);
-
-    res.status(200).json({
+    return res.status(200).json({
       status: true,
       message: "Payment verified and booking confirmed.",
-      data: isBookingDetail,
-      token: generateToken(isBookingDetail.client._id, isBookingDetail.client.role)
+      data: r.booking,
+      token: generateToken(r.booking.client._id, r.booking.client.role),
     });
-
   } catch (err) {
     return next(new Error(err.message));
   }
 });
+
+const loadPaidBooking = (bookingId) => Booking.findById(bookingId).populate("client", "_id name email age role").populate({
+  path: "therapist",
+  select: "_id user profile_code",
+  populate: { path: "user", select: "name profile email" },
+});
+
+// Mark a booking paid for a CAPTURED Razorpay payment, record the transaction and send every confirmation.
+// Used by the browser's /verify-razorpay-payment AND by the Razorpay webhook — on UPI the browser step is
+// often lost (the customer switches to the UPI app and the page never comes back), so the webhook is the
+// safety net (2026-11-15: a paid ₹500 booking stayed "Pending Payment" and got "complete your payment" mails).
+// Atomic: whichever caller flips the booking to Paid first does the work; the other gets { already: true }.
+export async function markBookingPaid(bookingId, paymentId) {
+  const usedFor = await Transaction.findOne({ transaction_id: paymentId }).select("booking").lean();
+  if (usedFor && String(usedFor.booking) !== String(bookingId)) {
+    return { status: 409, message: "This payment has already been used." };
+  }
+  const claimed = await Booking.findOneAndUpdate(
+    { _id: bookingId, payment_status: { $ne: "Paid" } },
+    { $set: { payment_status: "Paid" } },
+    { new: true }
+  );
+  if (!claimed) {
+    const b = await loadPaidBooking(bookingId);
+    if (!b) return { status: 400, message: "Booking not found with this id" };
+    // already confirmed — by this same payment (a retry, or the webhook got there first) → same answer
+    for (let i = 0; i < 4; i++) {
+      if (await Transaction.exists({ booking: b._id, transaction_id: paymentId })) return { already: true, booking: b };
+      await new Promise((r) => setTimeout(r, 750)); // the other caller may still be writing the transaction
+    }
+    return { status: 409, message: "This booking is already paid." };
+  }
+
+  const isBookingDetail = await loadPaidBooking(bookingId);
+  const savedTransaction = await Transaction.create({
+    booking: isBookingDetail._id,
+    bookingModel: "Booking",
+    user: isBookingDetail.client._id,
+    amount: isBookingDetail.amount,
+    payment_method: "Razorpay",
+    status: PAYMENT_STATUS.SUCCESS,
+    is_payment_success: true,
+    transaction_id: paymentId,
+  });
+  isBookingDetail.transaction = savedTransaction._id;
+  isBookingDetail.payment_status = "Paid";
+  await isBookingDetail.save();
+  // a pack bought with this booking: this is its first session
+  if (isBookingDetail.pack_size && !isBookingDetail.bundle) {
+    try { await activatePackFor(isBookingDetail, paymentId); } catch (e) { console.error("[pack] activate failed:", e.message); }
+  }
+  await confirmPaidBooking(isBookingDetail, paymentId);
+  return { booking: isBookingDetail };
+}
+
+// For the webhook: is this Razorpay order one of our online-session bookings? (createRazorpayOrder sets rcpt_<id>)
+export async function bookingIdForOrder(orderId) {
+  const order = await getRazorpayInstance().orders.fetch(orderId);
+  const m = /^rcpt_([a-f0-9]{24})$/.exec(order?.receipt || "");
+  return m ? m[1] : null;
+}
 
 export const getBookings = expressAsyncHandler(async (req, res, next) => {
   try {

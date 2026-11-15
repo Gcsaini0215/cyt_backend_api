@@ -5,6 +5,7 @@ import { processPaidOrder } from "./NoidaAppointmentController.js";
 import TherapistSubscriptionOrder from "../models/TherapistSubscriptionOrder.js";
 import { activateFromRazorpayPayment } from "../helper/therapistSubscription.js";
 import { applyRazorpayxPayout } from "./TherapistCommsController.js";
+import { markBookingPaid, bookingIdForOrder } from "./BookingController.js";
 
 // Razorpay -> us: "this payment was captured". For Noida bookings that's the
 // safety net behind the browser callback — if the client paid but closed the
@@ -62,6 +63,14 @@ export const razorpayWebhook = expressAsyncHandler(async (req, res) => {
   // Not every Razorpay payment on this account is a Noida booking.
   const isNoida = await NoidaPendingBooking.exists({ orderId: payment.order_id });
   if (!isNoida) {
+    // an online-session booking (/book → /therapist-checkout): confirm it here too, in case the browser never
+    // came back from the UPI app to call /verify-razorpay-payment. Thrown errors → 500 → Razorpay retries.
+    const bookingId = await bookingIdForOrder(payment.order_id);
+    if (bookingId) {
+      const r = await markBookingPaid(bookingId, payment.id);
+      if (r.status) console.error("[webhook] booking", bookingId, "not confirmed:", r.message);
+      return res.status(200).json({ status: true });
+    }
     return res.status(200).json({ status: true, ignored: true });
   }
 
