@@ -10,14 +10,12 @@ import {
   joinSession,
   rescheduleSession,
   adminRescheduleSession,
-  generatePaymentQR,
   getBookedSlots,
   releaseBookingSlot,
   getBookingPayInfo,
   getMyPendingBookings,
   getBookings,
   getBookingsForAdmin,
-  saveTransactionId,
   startSession,
   sendSessionStartCode,
   verifyRazorpayPayment,
@@ -32,7 +30,7 @@ router.post("/send-guest-email-otp", sendGuestEmailOtp);
 
 router.post("/verify-guest-email-otp", verifyGuestEmailOtp);
 
-router.get("/get-payment/:id", generatePaymentQR);
+// manual UPI (QR + typed transaction ID) removed 2026-11-15: therapy payments go through Razorpay only (audit P0-2)
 
 router.get("/booked-slots/:therapistId", getBookedSlots);
 
@@ -46,7 +44,6 @@ router.get("/my-pending-bookings", isAuthCommon, getMyPendingBookings);
 
 router.get("/get-booking-admin", hasPermission(["bookings","bdm"]), getBookingsForAdmin);
 
-router.post("/save-payment", saveTransactionId);
 
 router.post("/create-razorpay-order", createRazorpayOrder);
 

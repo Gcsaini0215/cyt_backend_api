@@ -4,13 +4,11 @@ import {
   CreateWorkshop,
   DeleteWorkshop,
   DisableWorkshop,
-  generatePaymentQR,
   GetMyBookings,
   GetWorkshop,
   GetWorkshops,
   GetWorkshopsWeb,
   GetWorkshopWeb,
-  savePaymentDetails,
   UpdateWorkshop,
 } from "../controllers/WorkshopController.js";
 import { isAuth, isTherapist } from "../middlewares/authMiddleware.js";
@@ -54,9 +52,8 @@ router.post("/book-workshop", BookWorkshop);
 
 router.get("/get-booking-workshop", BookWorkshop);
 
-router.get("/get-payment-qr/:id", generatePaymentQR);
+// manual UPI (QR + typed transaction ID) removed 2026-11-15; it needed no login and handed out login tokens (audit P0-1)
 
-router.post("/save-workshop-payment", savePaymentDetails);
 
 router.get("/get-my-workshop-bookings",isAuth, GetMyBookings);
 
