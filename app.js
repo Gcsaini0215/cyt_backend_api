@@ -72,6 +72,7 @@ app.use((req, res, next) => {
 });
 
 app.set('trust proxy', 1);
+app.disable('x-powered-by'); // don't advertise "Express" in every response (audit P2-1)
 
 app.use(cors({
   origin: [
@@ -83,12 +84,8 @@ app.use(cors({
     "https://www.chooseyourtherapist.in",
     "https://www.cyt.chooseyourtherapist.in",
     "https://api.chooseyourtherapist.in",
-    "http://api.chooseyourtherapist.in",
-    "http://195.35.21.126:3000",
-    "http://195.35.21.126:4000",
-    "http://195.35.21.126",
-    "http://192.168.1.1:3000",
-    "http://192.168.1.1:4000"
+    // 2026-11-15 audit: removed plain-http origins (http://api…, the raw VPS IP and a LAN IP) —
+    // every real page is served over https on the domains above
   ],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
