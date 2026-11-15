@@ -4,6 +4,7 @@ import "../models/Users.js";
 import "../models/Therapists.js";
 import { sendMail } from "../helper/mailer.js";
 import { bookingRequestReceivedMail } from "../services/mailTemplates.js";
+import { capturedPaymentFor, markBookingPaid } from "../controllers/BookingController.js";
 
 /* "We've got your request — complete payment" email, sent only when a booking is STILL unpaid
    10 minutes after it was created (the client may still be on the Razorpay screen before that).
@@ -27,6 +28,20 @@ export async function runPendingPaymentMails() {
 
   let sent = 0;
   for (const { _id } of due) {
+    // Already paid on Razorpay (the browser never came back from the UPI app, and the webhook missed it)?
+    // Confirm the booking instead of mailing "complete your payment". If Razorpay can't be reached, hold the
+    // mail and try again on the next run (2 min) rather than risk telling a paying client they haven't paid.
+    try {
+      const payId = await capturedPaymentFor(String(_id));
+      if (payId) {
+        const r = await markBookingPaid(String(_id), payId);
+        console.log("[pending-payment-mail] booking", String(_id), "was paid on Razorpay —", r.status ? r.message : "confirmed");
+        continue;
+      }
+    } catch (e) {
+      console.error("[pending-payment-mail] Razorpay check failed, holding the mail for", String(_id), "-", e?.error?.description || e.message);
+      continue;
+    }
     // claim it first so two runs (or two servers) never send twice
     const b = await Booking.findOneAndUpdate(
       { _id, payment_status: "Pending Payment", pending_mail_sent_at: null },

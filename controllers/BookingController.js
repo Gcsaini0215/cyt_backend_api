@@ -990,6 +990,20 @@ export async function markBookingPaid(bookingId, paymentId) {
   return { booking: isBookingDetail };
 }
 
+// Safety net for the "complete your payment" mail: has Razorpay already captured a payment for this booking
+// (any of its orders, receipt rcpt_<id>)? Returns the payment id, or null. Throws if Razorpay can't be reached.
+export async function capturedPaymentFor(bookingId) {
+  const rz = getRazorpayInstance();
+  const list = await rz.orders.all({ receipt: `rcpt_${bookingId}` });
+  for (const o of list?.items || []) {
+    if (o.status !== "paid" && !(o.amount_paid > 0)) continue;
+    const pays = await rz.orders.fetchPayments(o.id);
+    const p = (pays?.items || []).find((x) => x.status === "captured");
+    if (p) return p.id;
+  }
+  return null;
+}
+
 // For the webhook: is this Razorpay order one of our online-session bookings? (createRazorpayOrder sets rcpt_<id>)
 export async function bookingIdForOrder(orderId) {
   const order = await getRazorpayInstance().orders.fetch(orderId);

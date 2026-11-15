@@ -46,6 +46,21 @@ export const razorpayWebhook = expressAsyncHandler(async (req, res) => {
     return res.status(200).json({ status: true });
   }
 
+  // "order.paid" (if the dashboard sends it): only used for online-session bookings below — Noida bookings and
+  // therapist plans keep using "payment.captured" exactly as before, so nothing there runs twice.
+  if (event.event === "order.paid") {
+    const payment = event?.payload?.payment?.entity;
+    const orderId = payment?.order_id || event?.payload?.order?.entity?.id;
+    if (payment?.id && orderId && payment.status === "captured") {
+      const bookingId = await bookingIdForOrder(orderId);
+      if (bookingId) {
+        const r = await markBookingPaid(bookingId, payment.id);
+        if (r.status) console.error("[webhook order.paid] booking", bookingId, "not confirmed:", r.message);
+      }
+    }
+    return res.status(200).json({ status: true });
+  }
+
   if (event.event !== "payment.captured") {
     return res.status(200).json({ status: true, ignored: true });
   }
