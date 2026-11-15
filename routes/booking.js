@@ -22,13 +22,14 @@ import {
 } from "../controllers/BookingController.js";
 import { isAuthCommon, isTherapist, hasPermission } from "../middlewares/authMiddleware.js";
 import { sendGuestEmailOtp, verifyGuestEmailOtp } from "../controllers/GuestOtpController.js";
+import { loginOtpRequestRateLimit, otpVerifyRateLimit } from "../middlewares/rateLimitMiddleware.js";
 const router = Router();
 
 router.post("/book-therapist", bookTherapist);
 
-router.post("/send-guest-email-otp", sendGuestEmailOtp);
+router.post("/send-guest-email-otp", loginOtpRequestRateLimit, sendGuestEmailOtp);
 
-router.post("/verify-guest-email-otp", verifyGuestEmailOtp);
+router.post("/verify-guest-email-otp", otpVerifyRateLimit, verifyGuestEmailOtp);
 
 // manual UPI (QR + typed transaction ID) removed 2026-11-15: therapy payments go through Razorpay only (audit P0-2)
 

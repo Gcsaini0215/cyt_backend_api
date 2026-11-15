@@ -56,6 +56,7 @@ import SessionBundle from "../models/SessionBundle.js";
 import { feeFor, packPrice, isUsable, takeSession, returnSession, activatePackFor, getPackConfig } from "../helper/sessionBundle.js";
 import { stampTherapistPct } from "../helper/achievements.js";
 import Jwt from "jsonwebtoken";
+import { checkGuestEmailProof } from "./GuestOtpController.js";
 
 // the signed-in user behind this request (Bearer token), or "" — /book-therapist has no auth middleware
 const tokenUserId = (req) => {
@@ -219,7 +220,7 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
       therapist,
       user_id,
       is_logged_in,
-      guest_email_verified,
+      guest_email_proof,
       booking_date,
       session_type,
     } = req.body;
@@ -268,7 +269,8 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         res.status(400);
         return next(new Error("Email is required to book a session."));
       }
-      if (!guest_email_verified) {
+      // the server checks the proof itself — a client-sent "verified: true" is never trusted (2026-11-15 audit)
+      if (!checkGuestEmailProof(email, guest_email_proof)) {
         res.status(400);
         return next(new Error("Please verify your email before booking."));
       }
@@ -378,7 +380,7 @@ export const bookTherapist = expressAsyncHandler(async (req, res, next) => {
         amount: pack ? pack.per_session : useBundle ? useBundle.per_session : amount,
         ...(pack ? { pack_size: pack.size, pack_fee: pack.fee, pack_total: pack.total, pack_pct: pack.pct, pack_days: pack.days } : {}),
         otp: generatedOtp,
-        guest_email_verified: !is_logged_in && !!guest_email_verified,
+        guest_email_verified: !is_logged_in, // guests only get here with a valid email proof
         payment_status: "Pending Payment",
         referral_code,
         referral_discount,
