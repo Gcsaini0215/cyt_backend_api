@@ -135,3 +135,12 @@ export const aiVisitRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Booking-funnel step pings from /book and /therapist-checkout (routes/funnel.js) — a real visitor sends ~10
+export const funnelRateLimit = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 60,
+  message: { status: false },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
