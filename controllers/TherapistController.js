@@ -20,6 +20,11 @@ import UserInfo from "../models/UserInfo.js";
 import ChatMessage from "../models/ChatMessage.js";
 import { deleteMeetEvent } from "../helper/googleMeet.js";
 import { notifyTherapists, therapistUserId } from "../services/therapistNotify.js";
+
+// Fields GET /get-profile/:userId (public, no login) may return. Same set the page used before,
+// minus private documents (id_card, qualification_certificate), re-upload tokens and mail/renewal internals.
+const PUBLIC_PROFILE_FIELDS = "user serve_type profile_type mode profile_code office_city office_state office_location_confirmed_at office_is_clinic dashboard_since verification_status verified_at top_therapist top_therapist_since subscription_plan subscription_started_at subscription_expires_at license_number state year_of_exp qualification language_spoken session_formats services experties fees availabilities priority show_to_page createdAt updatedAt office_area.lat office_area.lng office_area.label office_area.exact office_area.clinic office_area.address office_area.at";
+
 export const updateprofile = expressAsyncHandler(async (req, res, next) => {
   const {
     phone,
@@ -376,7 +381,12 @@ export const getFilteredTherapists = expressAsyncHandler(
               // privacy: the practice address is often a home — only office_area (≈1 km, "City, State") is public;
               // and what a therapist paid for their plan is nobody else's business
               office_address: 0, office_location: 0, office_pincode: 0, "office_area.key": 0,
-              subscription_transaction_id: 0, subscription_amount: 0
+              subscription_transaction_id: 0, subscription_amount: 0,
+              // 2026-11-15 audit: private documents, re-upload token and mail/renewal internals were public here
+              id_card: 0, id_card_type: 0, qualification_certificate: 0, reupload_token_hash: 0, reupload_expires: 0,
+              subscription_reminded_at: 0, subscription_reminders: 0, renewal_mails: 0, profile_live_mailed_at: 0,
+              subscription_terms_accepted_at: 0, subscription_terms_version: 0, plan_terms_accepted_at: 0, preferred_plan: 0,
+              "user.referral_code": 0, "user.referral_code_old": 0, "user.referral_credit": 0, "user.rebook_nudge_off": 0
             }
           }
         ]),
@@ -404,7 +414,9 @@ export const getProfile = expressAsyncHandler(async (req, res, next) => {
       return next(new Error("Invalid user ID format"));
     }
    let therapist = await Therapists.findById(userId)
-      .select("-resume -__v -is_mail_sent -completion_token_hash -completion_items -completion_note -completion_expires -completion_requested_at -completion_submitted_at -verification_checklist -verification_note -verified_by -profile_recheck -reupload_docs -availability_reminder_last_at -availability_reminders_off -monthly_goal -office_address -office_location -office_pincode -office_area.key -subscription_transaction_id -subscription_amount")
+      // ALLOW-list (2026-11-15 audit): a new field on Therapists stays private unless added here.
+      // The old deny-list leaked id_card / qualification_certificate / reupload_token_hash on the public profile.
+      .select(PUBLIC_PROFILE_FIELDS)
       .populate("user", "name bio profile gender").lean(); // public profile: no phone / email / date of birth
     
     if (!therapist) {
