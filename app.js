@@ -59,6 +59,8 @@ import { notFound, errorHandler } from "./middlewares/errorMiddleware.js";
 import path, { dirname } from "path";
 import { fileURLToPath } from "url";
 import cors from "cors";
+import { guardDocuments, grantDocAccess } from "./helper/docAccess.js";
+import { hasPermission } from "./middlewares/authMiddleware.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -102,6 +104,10 @@ app.post("/api/razorpay/webhook", express.raw({ type: "*/*", limit: "1mb" }), ra
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Private documents (ID cards, certificates, CVs): admin panel cookie only — see helper/docAccess.js
+app.post("/api/admin/doc-access", hasPermission(["therapists", "probono"]), grantDocAccess);
+app.use("/uploads", guardDocuments);
 
 // Serve uploads, but never let the browser execute anything from this origin.
 // Raster images and PDFs still render inline; svg/html/js/xml are forced to
