@@ -66,7 +66,8 @@ const __dirname = dirname(__filename);
 const app = express();
 
 app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url}`);
+  // path only — query strings can carry login tokens (e.g. /api/staff/stream?token=) — audit P1-1
+  console.log(`${req.method} ${req.path}`);
   next();
 });
 
