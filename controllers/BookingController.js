@@ -520,6 +520,12 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       res.status(400);
       return next(new Error("booking not found with this id"));
     }
+    // this route needs no login, so never re-run it on a booking that is already paid
+    // (it would re-send the emails and hand out the client's login token again) — audit P0-2
+    if (isBookingDetail.payment_status === "Paid") {
+      res.status(409);
+      return next(new Error("This booking is already paid."));
+    }
 
     const data = {
       booking: isBookingDetail._id,
@@ -655,7 +661,8 @@ export const saveTransactionId = expressAsyncHandler(async (req, res, next) => {
       status: true,
       message: "Payment Success.",
       data: isBookingDetail,
-      token: generateToken(isBookingDetail.client._id, isBookingDetail.client.role)
+      // auto-login only for client accounts (guest checkout); never a therapist/admin token — audit P0-2
+      ...(isBookingDetail.client.role === 0 ? { token: generateToken(isBookingDetail.client._id, isBookingDetail.client.role) } : {}),
     });
   } catch (err) {
 

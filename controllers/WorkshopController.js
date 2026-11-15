@@ -891,7 +891,8 @@ export const savePaymentDetails = expressAsyncHandler(async (req, res, next) => 
       status: true,
       message: "Payment Success.",
       data: isBookingDetail,
-      token: generateToken(isBookingDetail.user._id, isBookingDetail.user.role)
+      // auto-login only for client accounts (guest checkout); never a therapist/admin token — audit P0-1
+      ...(isBookingDetail.user?.role === 0 ? { token: generateToken(isBookingDetail.user._id, isBookingDetail.user.role) } : {}),
     });
   } catch (err) {
     return next(new Error(err.message));
