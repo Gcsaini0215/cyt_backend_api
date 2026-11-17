@@ -3,8 +3,8 @@ import Booking from "../models/Booking.js";
 import "../models/Users.js";
 import "../models/Therapists.js";
 import { sendMail } from "../helper/mailer.js";
-import { bookingRequestReceivedMail } from "../services/mailTemplates.js";
-import { capturedPaymentFor, markBookingPaid } from "../controllers/BookingController.js";
+import { bookingRequestReceivedMail, bookingStillOpenMail } from "../services/mailTemplates.js";
+import { capturedPaymentFor, markBookingPaid, slotTakenByOther } from "../controllers/BookingController.js";
 
 /* "We've got your request — complete payment" email, sent only when a booking is STILL unpaid
    10 minutes after it was created (the client may still be on the Razorpay screen before that).
@@ -64,9 +64,58 @@ export async function runPendingPaymentMails() {
   return sent;
 }
 
+/* Second and last reminder (2026-11-16): a booking still unpaid 22–72 hours after it was made gets one gentler
+   "your slot is still open" email — only if the session is still 2+ hours away, the slot hasn't gone to someone
+   else, the client hasn't since booked and paid with the same therapist, and Razorpay has no payment for it. */
+const SECOND_AFTER_H = 22, SECOND_UNTIL_H = 72, SECOND_EVERY_MS = 15 * 60000;
+let lastSecondRun = 0;
+
+export async function runSecondReminders() {
+  const now = Date.now();
+  const due = await Booking.find({
+    _id: { $gte: idAt(now - SECOND_UNTIL_H * 3600e3), $lte: idAt(now - SECOND_AFTER_H * 3600e3) },
+    payment_status: "Pending Payment",
+    status: { $ne: "Cancelled" },
+    pending_mail2_sent_at: null,
+    booking_date: { $gt: new Date(now + 2 * 3600e3) },
+    source: { $ne: "noida" },
+  }).select("_id client therapist booking_date").limit(50).lean();
+
+  let sent = 0;
+  for (const d of due) {
+    try {
+      if (await capturedPaymentFor(String(d._id))) continue; // paid after all — the first pass / webhook confirms it
+    } catch (e) { continue; } // Razorpay unreachable: try again next run rather than risk mailing a paying client
+    if (await slotTakenByOther(d)) continue;
+    if (d.client && await Booking.exists({ _id: { $gt: d._id }, client: d.client, therapist: d.therapist, payment_status: "Paid" })) continue;
+    const b = await Booking.findOneAndUpdate(
+      { _id: d._id, payment_status: "Pending Payment", pending_mail2_sent_at: null },
+      { $set: { pending_mail2_sent_at: new Date() } },
+      { new: true }
+    ).populate("client", "name email").populate({ path: "therapist", select: "user", populate: { path: "user", select: "name" } });
+    if (!b?.client?.email) continue;
+    const therapistName = b.therapist?.user?.name || "your therapist";
+    const html = bookingStillOpenMail({
+      clientName: b.client.name || b.client.email, therapistName,
+      service: b.service, sessionDateTime: slotText(b.booking_date), sessionMode: b.session_type, bookingId: String(b._id),
+    });
+    const ok = await sendMail(b.client.email, `Your slot with ${therapistName} is still open — Choose Your Therapist`,
+      `Hi ${b.client.name || "there"}, your session for ${slotText(b.booking_date)} isn't booked yet. Complete it here: https://www.chooseyourtherapist.in/complete-payment/${b._id}`, html);
+    if (ok) sent++;
+  }
+  if (sent) console.log(`[pending-payment-mail] second reminders sent ${sent}`);
+  return sent;
+}
+
 export function startPendingPaymentMails() {
   if (timer) return;
-  const tick = async () => { try { await runPendingPaymentMails(); } catch (e) { console.error("[pending-payment-mail] failed:", e.message); } };
+  const tick = async () => {
+    try { await runPendingPaymentMails(); } catch (e) { console.error("[pending-payment-mail] failed:", e.message); }
+    if (Date.now() - lastSecondRun >= SECOND_EVERY_MS) {
+      lastSecondRun = Date.now();
+      try { await runSecondReminders(); } catch (e) { console.error("[pending-payment-mail] second reminder failed:", e.message); }
+    }
+  };
   setTimeout(tick, 90000);
   timer = setInterval(tick, EVERY_MS);
 }

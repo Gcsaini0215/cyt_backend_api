@@ -103,6 +103,7 @@ const bookingSchema = new Schema({
   auto_completed: { type: Boolean, default: false }, // closed by the system because End wasn't tapped
   reminder_1h_sent_at: { type: Date, default: null }, // "your session starts in an hour" email to the client (sent once)
   pending_mail_sent_at: { type: Date, default: null }, // "complete your payment" reminder (sent once, if still unpaid)
+  pending_mail2_sent_at: { type: Date, default: null }, // the second, last reminder ~a day later (if still unpaid and the slot is free)
   slot_released_at: { type: Date, default: null }, // client closed Razorpay without paying → the slot is free again
   // session packs (helper/sessionBundle.js): bought with this booking (size, the fee it was priced on, the
   // pack total charged), or this booking used one of the pack's sessions (bundle). amount = one session's share.

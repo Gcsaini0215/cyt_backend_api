@@ -217,6 +217,25 @@ export const bookingRequestReceivedMail = ({
       button("Complete payment", bookingId ? `${BRAND.site}/complete-payment/${bookingId}` : BRAND.site),
   });
 
+// Second, gentler reminder ~a day later for a booking that is still unpaid (services/pendingPaymentMail.js).
+// The slot is not held any more, so it says "still open" — /complete-payment checks it before taking payment.
+export const bookingStillOpenMail = ({ clientName, therapistName, service, sessionDateTime, sessionMode, bookingId }) =>
+  shell({
+    preheader: `Your slot with ${therapistName || "your therapist"} is still open`,
+    body:
+      eyebrow("Still interested?", WARN) +
+      heading("Your session isn't booked yet") +
+      para(`Dear ${esc(clientName || "there")}, you started booking a session with ${esc(therapistName || "your therapist")} but the payment wasn't completed. The time you picked is still open — you can finish booking it in a minute.`) +
+      kvTable([
+        ["Therapist", esc(therapistName || "—")],
+        ["Service", esc(service || "Counselling")],
+        sessionMode && ["Mode", esc(sessionMode)],
+        ["Slot", esc(sessionDateTime || "To be confirmed")],
+      ]) +
+      button("Complete my booking", bookingId ? `${BRAND.site}/complete-payment/${bookingId}` : BRAND.site) +
+      note("Not the right time any more? You can pick another slot on the same page. If you don't want this session, just ignore this email — this is the last reminder."),
+  });
+
 export const bookingConfirmationMail = ({
   clientName, therapistName, clientAge, transactionId, service, format, sessionDateTime, sessionMode, whom, cname, relation_with_client, notes, meetLink,
 }) =>

@@ -993,6 +993,8 @@ export async function markBookingPaid(bookingId, paymentId) {
 // Safety net for the "complete your payment" mail: has Razorpay already captured a payment for this booking
 // (any of its orders, receipt rcpt_<id>)? Returns the payment id, or null. Throws if Razorpay can't be reached.
 export async function capturedPaymentFor(bookingId) {
+  // no Razorpay account configured (local test setups): there can't be a Razorpay payment
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) return null;
   const rz = getRazorpayInstance();
   const list = await rz.orders.all({ receipt: `rcpt_${bookingId}` });
   for (const o of list?.items || []) {
@@ -1166,7 +1168,7 @@ export const getMyPendingBookings = expressAsyncHandler(async (req, res) => {
 });
 
 // Is this booking's slot taken by somebody else — a paid booking, or another person's live checkout?
-async function slotTakenByOther(b) {
+export async function slotTakenByOther(b) {
   const pendingCutoff = mongoose.Types.ObjectId.createFromTime(Math.floor((Date.now() - 20 * 60 * 1000) / 1000));
   return !!(await Booking.exists({
     _id: { $ne: b._id },
