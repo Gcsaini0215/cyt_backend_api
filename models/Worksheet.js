@@ -38,6 +38,9 @@ const worksheetEntrySchema = new Schema(
     reviewedAt: { type: Date, default: null },
     hiddenForTherapist: { type: Boolean, default: false }, // the therapist removed it from their Toolkit list (the client keeps it)
     flag: { type: Boolean, default: false }, // words about self-harm — the therapist is alerted, the client sees Tele-MANAS
+    // progress over time (2026-11-19): one snapshot per IST day it was saved — { day, at, metrics, data, sent, closed }.
+    // The client sees all of them; the therapist only the ones the client sent.
+    history: { type: Array, default: [] },
   },
   { timestamps: true }
 );

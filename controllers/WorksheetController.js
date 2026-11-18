@@ -72,6 +72,55 @@ function cleanPack(d = {}) {
 }
 const packFilled = (d) => Object.values(d || {}).some((v) => (Array.isArray(v) ? v.length > 0 : typeof v === "string" ? v.trim() !== "" : v !== null && v !== undefined));
 const packPreview = (d, n) => { const t = Object.values(d || {}).find((v) => typeof v === "string" && v.trim().length > 2); return t ? str(t, n) : ""; };
+/* ── history: one snapshot per IST day ── */
+const HISTORY_MAX = 60;
+const istDay = (d = new Date()) => new Date(d.getTime() + 5.5 * 36e5).toISOString().slice(0, 10);
+const numOf = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+// a few numbers per worksheet that show change over time
+function metricsOf(tool, d = {}) {
+  const m = [];
+  const add = (k, label, v, max = null) => { if (v !== null && v !== undefined) m.push(max ? { k, label, v, max } : { k, label, v }); };
+  if (isPack(tool)) {
+    add("filled", "Answers", Object.values(d || {}).filter((v) => (Array.isArray(v) ? v.length : typeof v === "string" ? v.trim() : v !== null && v !== undefined)).length);
+    if (tool === "rp_quiz") {
+      let answered = 0, right = 0;
+      for (let i = 0; i < 10; i++) { const v = d[`q-${i}`]; if (typeof v === "boolean") { answered++; if (v === false) right++; } } // every statement is a myth
+      if (answered) add("score", "Quiz score", right, 10);
+    }
+    if (tool === "rp_review") add("motivation", "Motivation", numOf(d.motivation), 10);
+    if (tool === "beliefs") { add("before", "Belief before", numOf(d.before), 10); add("after", "Belief after", numOf(d.after), 10); }
+    if (tool === "rp_brain") { if (Array.isArray(d.signs)) add("signs", "Signs noticed", d.signs.length); if (Array.isArray(d.helps)) add("helps", "Things to try", d.helps.length); }
+    if (tool === "rp_leisure" && Array.isArray(d.act)) add("act", "Activities ticked", d.act.length);
+    return m;
+  }
+  if (tool === "whatif") { add("before", "Worry before", numOf(d.before), 100); add("after", "Worry after", numOf(d.after), 100); return m; }
+  if (tool === "activity") {
+    add("filled", "Entries", filledCells(d));
+    const mps = (d.days || []).flatMap((day) => Object.values(day || {}).map((c) => numOf(c?.mp))).filter((x) => x !== null);
+    if (mps.length) add("mood", "Average mood strength", Math.round(mps.reduce((a, b) => a + b, 0) / mps.length), 100);
+    return m;
+  }
+  const logs = logsOf(d).filter((l) => String(l?.a?.what || "").trim());
+  add("filled", "Situations", logs.length);
+  const last = logs[logs.length - 1];
+  if (last) { add("before", "Thought belief before", numOf(last.b?.strength), 100); add("after", "Thought belief after", numOf(last.d?.strengthAfter), 100); }
+  return m;
+}
+// record today's state; a sent snapshot is never overwritten by later (unsent) edits
+function snapshot(e, sent = false) {
+  const h = Array.isArray(e.history) ? [...e.history] : [];
+  const json = JSON.stringify(e.data || {});
+  const snap = { day: istDay(), at: new Date(), metrics: metricsOf(e.tool, e.data || {}), data: json.length <= 60000 ? JSON.parse(json) : null, sent: !!sent };
+  const last = h[h.length - 1];
+  if (last && last.day === snap.day && !last.closed && !last.sent) h[h.length - 1] = snap;
+  else h.push(snap);
+  while (h.length > HISTORY_MAX) h.shift();
+  e.history = h; e.markModified("history");
+}
+const historyFor = (e, sentOnly) => (Array.isArray(e.history) ? e.history : [])
+  .filter((h) => !sentOnly || h.sent)
+  .map((h) => ({ day: h.day, at: h.at, metrics: h.metrics || [], data: h.data || null, sent: !!h.sent }));
+
 const cleanFor = (tool, d, max) => (isPack(tool) ? cleanPack(d) : tool === "activity" ? cleanActivity(d) : tool === "whatif" ? cleanWhatIf(d) : cleanData(d, max));
 const filledCells = (d) => (d?.days || []).reduce((n, day) => n + Object.keys(day || {}).length, 0);
 const previewOf = (e, n = 90) => {
@@ -228,7 +277,7 @@ export const therapistEntry = expressAsyncHandler(async (req, res) => {
   const e = await WorksheetEntry.findOne({ _id: req.params.id, therapistUser: req.user._id }).populate({ path: "user", select: "name profile" }).lean();
   if (!e) return res.status(404).json({ status: false, message: "Worksheet not found" });
   const shared = ["submitted", "reviewed"].includes(e.status);
-  res.json({ status: true, data: { ...entryRow(e, shared), shared, client: { id: String(e.user?._id || ""), name: e.user?.name || "Client", photo: e.user?.profile || "" } } });
+  res.json({ status: true, data: { ...entryRow(e, shared), shared, history: shared ? historyFor(e, true) : [], client: { id: String(e.user?._id || ""), name: e.user?.name || "Client", photo: e.user?.profile || "" } } });
 });
 
 // DELETE /api/therapist/worksheets/entries/:id — remove a client's worksheet from my list (it stays in the client's dashboard)
@@ -304,7 +353,7 @@ export const myWorksheet = expressAsyncHandler(async (req, res) => {
   if (!e) return res.status(404).json({ status: false, message: "Worksheet not found" });
   const link = e.link ? await WorksheetLink.findById(e.link, { forClient: 1 }).lean() : null;
   const ongoing = await isOngoing(req.user._id, e.therapist?._id, link);
-  res.json({ status: true, data: { ...entryRow(e, true), therapist: publicTherapist(e.therapist), ongoing, maxLogs: ongoing ? MAX_LOGS : 1 } });
+  res.json({ status: true, data: { ...entryRow(e, true), therapist: publicTherapist(e.therapist), ongoing, maxLogs: ongoing ? MAX_LOGS : 1, history: historyFor(e, false) } });
 });
 
 // PUT /api/my-worksheets/:id { data, step, submit }
@@ -314,6 +363,7 @@ export const saveMyWorksheet = expressAsyncHandler(async (req, res) => {
   if (!e) return res.status(404).json({ status: false, message: "Worksheet not found" });
   // reset (the client confirmed it): empty answers, back to the start; the therapist sees it as being filled again
   if (req.body?.reset) {
+    { const h = Array.isArray(e.history) ? [...e.history] : []; if (h.length) { h[h.length - 1] = { ...h[h.length - 1], closed: true }; e.history = h; e.markModified("history"); } }
     e.data = cleanFor(e.tool, {}); e.markModified("data");
     e.step = 0; e.flag = false;
     if (e.status === "submitted" || e.status === "reviewed") { e.status = "draft"; e.submittedAt = null; }
@@ -326,7 +376,9 @@ export const saveMyWorksheet = expressAsyncHandler(async (req, res) => {
       const link = e.link ? await WorksheetLink.findById(e.link, { forClient: 1 }).lean() : null;
       if (!(await isOngoing(req.user._id, e.therapist, link))) max = 1;
     }
+    const was = JSON.stringify(e.data || {});
     e.data = cleanFor(e.tool, req.body.data, max); e.markModified("data");
+    if (JSON.stringify(e.data) !== was && !(req.body?.submit && e.therapistUser)) snapshot(e, false);
   }
   if (req.body?.step != null) e.step = Math.max(0, Math.min(5, Number(req.body.step) || 0));
   if (e.status === "assigned") e.status = "draft";
@@ -336,6 +388,7 @@ export const saveMyWorksheet = expressAsyncHandler(async (req, res) => {
     const empty = isPack(e.tool) ? !packFilled(e.data) : e.tool === "activity" ? !filledCells(e.data) : e.tool === "whatif" ? !String(e.data?.worry || "").trim() : !logsOf(e.data).some((l) => String(l?.a?.what || "").trim());
     if (empty) return res.status(400).json({ status: false, message: isPack(e.tool) ? "Answer at least one question first" : e.tool === "activity" ? "Fill at least one time slot first" : e.tool === "whatif" ? "Write your what-if first" : "Write what happened (step A) first" });
     e.status = "submitted"; e.submittedAt = new Date(); e.hiddenForTherapist = false;
+    snapshot(e, true); // what the therapist can see in the history
     e.flag = flag;
     const who = req.user.name || "A client";
     await notifyTherapists([e.therapistUser], {
@@ -347,7 +400,7 @@ export const saveMyWorksheet = expressAsyncHandler(async (req, res) => {
     alerted = true;
   }
   await e.save();
-  res.json({ status: true, message: alerted ? "Sent to your therapist" : "Saved", data: { status: e.status, flag, updatedAt: e.updatedAt } });
+  res.json({ status: true, message: alerted ? "Sent to your therapist" : "Saved", data: { status: e.status, flag, updatedAt: e.updatedAt, history: historyFor(e, false) } });
 });
 
 // DELETE /api/my-worksheets/:id
