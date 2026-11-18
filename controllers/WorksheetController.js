@@ -14,7 +14,16 @@ import { notifyTherapists } from "../services/therapistNotify.js";
    Client: starts it from the link (after signing in), fills it in My Space, sends it to the therapist.
    Answers are private: the therapist sees them only after "Send to my therapist"; admin routes never read them. */
 
-export const TOOLS = { abcd: "ABCD Thought Log", activity: "Activity Diary", whatif: "What-If Flip" };
+// Relapse Prevention pack (2026-11-19) — the frontend's components/toolkit/rp-pack.js has the questions; keep keys in sync
+const RP_TOOLS = {
+  rp_quiz: "Relapse Myths Quiz", rp_check: "Relapse Prevention Check-in", rp_stages: "Stages of Recovery", rp_review: "Looking Back at a Relapse",
+  rp_treatment: "My View of Treatment", rp_patterns: "Recovery Behaviours", rp_risk: "My High-Risk Situations", rp_dilemma: "My Recovery Dilemmas",
+  rp_cravings: "My Craving Triggers", rp_brain: "After Withdrawal: Brain Recovery", rp_slip: "If I Slip: My Slip Plan", rp_decisions: "Small Decisions, Big Risks",
+  rp_attitudes: "My Relapse Attitudes", rp_thinking: "Thinking My Way Out", rp_balance: "Balanced Lifestyle Check", rp_leisure: "New Things to Enjoy",
+  rp_social: "Social Survival Plan", rp_contacts: "Safe & Risky Contacts",
+};
+const isPack = (tool) => Object.prototype.hasOwnProperty.call(RP_TOOLS, tool);
+export const TOOLS = { abcd: "ABCD Thought Log", activity: "Activity Diary", whatif: "What-If Flip", ...RP_TOOLS };
 // Activity Diary: 7 days × these 2-hour blocks (start hour)
 const SLOTS = ["6", "8", "10", "12", "14", "16", "18", "20", "22"];
 const n10 = (v) => (v === null || v === undefined || v === "" ? null : Math.max(0, Math.min(10, Math.round(Number(v) || 0))));
@@ -44,9 +53,27 @@ function cleanWhatIf(d = {}) {
   const pairs = (Array.isArray(d.pairs) ? d.pairs : []).slice(0, 8).map((p) => ({ bad: str(p?.bad, 500), good: str(p?.good, 500), likely: str(p?.likely, 500) }));
   return { worry: str(d.worry, 500), before: pct(d.before), pairs: pairs.length ? pairs : [{ bad: "", good: "", likely: "" }], cope: str(d.cope, 800), after: pct(d.after) };
 }
-const cleanFor = (tool, d, max) => (tool === "activity" ? cleanActivity(d) : tool === "whatif" ? cleanWhatIf(d) : cleanData(d, max));
+/* pack worksheets: one flat object of answers — short text, numbers, true/false and short lists only */
+const PACK_KEY = /^[a-z0-9_-]{1,60}$/;
+function cleanPack(d = {}) {
+  const out = {};
+  if (!d || typeof d !== "object" || Array.isArray(d)) return out;
+  for (const [k, v] of Object.entries(d)) {
+    if (Object.keys(out).length >= 200) break;
+    if (!PACK_KEY.test(k) || k === "__proto__" || k === "constructor" || k === "prototype") continue;
+    if (typeof v === "string") { if (v.trim()) out[k] = v.slice(0, 1500); }
+    else if (typeof v === "number") { if (Number.isFinite(v)) out[k] = Math.max(-1000, Math.min(1000, v)); }
+    else if (typeof v === "boolean") out[k] = v;
+    else if (Array.isArray(v)) { const a = v.filter((x) => typeof x === "string" && x.trim()).slice(0, 100).map((x) => x.slice(0, 100)); if (a.length) out[k] = a; }
+  }
+  return out;
+}
+const packFilled = (d) => Object.values(d || {}).some((v) => (Array.isArray(v) ? v.length > 0 : typeof v === "string" ? v.trim() !== "" : v !== null && v !== undefined));
+const packPreview = (d, n) => { const t = Object.values(d || {}).find((v) => typeof v === "string" && v.trim().length > 2); return t ? str(t, n) : ""; };
+const cleanFor = (tool, d, max) => (isPack(tool) ? cleanPack(d) : tool === "activity" ? cleanActivity(d) : tool === "whatif" ? cleanWhatIf(d) : cleanData(d, max));
 const filledCells = (d) => (d?.days || []).reduce((n, day) => n + Object.keys(day || {}).length, 0);
 const previewOf = (e, n = 90) => {
+  if (isPack(e.tool)) return packPreview(e.data, n) || (packFilled(e.data) ? "Answers filled in" : "");
   if (e.tool === "activity") return filledCells(e.data) ? `${filledCells(e.data)} entries` : "";
   if (e.tool === "whatif") return str(e.data?.worry, n) ? `What if ${str(e.data.worry, n)}` : "";
   const logs = logsOf(e.data).filter((l) => String(l?.a?.what || "").trim());
@@ -91,7 +118,8 @@ const textOf = (d) => JSON.stringify(d || {});
 
 /* Plan rules (owner, 2026-11-14): every therapist can use the first two worksheets for THEMSELVES for free.
    The yearly plan unlocks the rest for themselves AND Share link / Send to a client. */
-const FREE_SELF = new Set(["abcd", "activity"]);
+// …and the Relapse Prevention pack (owner, 2026-11-19: free like ABCD and the Activity Diary)
+const FREE_SELF = new Set(["abcd", "activity", ...Object.keys(RP_TOOLS)]);
 // the yearly plan, or the free plan CYT gives (admin → Subscriptions) — both unlock the Toolkit while active
 const planActive = (t) => !!(t && t.subscription_plan && t.subscription_expires_at && new Date(t.subscription_expires_at) > new Date());
 const yearlyOf = (t) => planActive(t) && ["annual", "free"].includes(t.subscription_plan);
@@ -303,8 +331,8 @@ export const saveMyWorksheet = expressAsyncHandler(async (req, res) => {
   const flag = CRISIS.test(textOf(e.data));
   let alerted = false;
   if (req.body?.submit && e.therapistUser) {
-    const empty = e.tool === "activity" ? !filledCells(e.data) : e.tool === "whatif" ? !String(e.data?.worry || "").trim() : !logsOf(e.data).some((l) => String(l?.a?.what || "").trim());
-    if (empty) return res.status(400).json({ status: false, message: e.tool === "activity" ? "Fill at least one time slot first" : e.tool === "whatif" ? "Write your what-if first" : "Write what happened (step A) first" });
+    const empty = isPack(e.tool) ? !packFilled(e.data) : e.tool === "activity" ? !filledCells(e.data) : e.tool === "whatif" ? !String(e.data?.worry || "").trim() : !logsOf(e.data).some((l) => String(l?.a?.what || "").trim());
+    if (empty) return res.status(400).json({ status: false, message: isPack(e.tool) ? "Answer at least one question first" : e.tool === "activity" ? "Fill at least one time slot first" : e.tool === "whatif" ? "Write your what-if first" : "Write what happened (step A) first" });
     e.status = "submitted"; e.submittedAt = new Date(); e.hiddenForTherapist = false;
     e.flag = flag;
     const who = req.user.name || "A client";
