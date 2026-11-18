@@ -22,8 +22,10 @@ const RP_TOOLS = {
   rp_attitudes: "My Relapse Attitudes", rp_thinking: "Thinking My Way Out", rp_balance: "Balanced Lifestyle Check", rp_leisure: "New Things to Enjoy",
   rp_social: "Social Survival Plan", rp_contacts: "Safe & Risky Contacts",
 };
-const isPack = (tool) => Object.prototype.hasOwnProperty.call(RP_TOOLS, tool);
-export const TOOLS = { abcd: "ABCD Thought Log", activity: "Activity Diary", whatif: "What-If Flip", ...RP_TOOLS };
+// worksheets kept as one flat object of answers (drawn by the frontend PackForm): the pack + Core Beliefs
+const PACK_TOOLS = { ...RP_TOOLS, beliefs: "Core Beliefs: Examining the Evidence" };
+const isPack = (tool) => Object.prototype.hasOwnProperty.call(PACK_TOOLS, tool);
+export const TOOLS = { abcd: "ABCD Thought Log", activity: "Activity Diary", whatif: "What-If Flip", ...PACK_TOOLS };
 // Activity Diary: 7 days × these 2-hour blocks (start hour)
 const SLOTS = ["6", "8", "10", "12", "14", "16", "18", "20", "22"];
 const n10 = (v) => (v === null || v === undefined || v === "" ? null : Math.max(0, Math.min(10, Math.round(Number(v) || 0))));
