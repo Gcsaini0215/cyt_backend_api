@@ -16,11 +16,11 @@ import { notifyTherapists } from "../services/therapistNotify.js";
 
 // Relapse Prevention pack (2026-11-19) — the frontend's components/toolkit/rp-pack.js has the questions; keep keys in sync
 const RP_TOOLS = {
-  rp_quiz: "Relapse Myths Quiz", rp_check: "Relapse Prevention Check-in", rp_stages: "Stages of Recovery", rp_review: "Looking Back at a Relapse",
-  rp_treatment: "My View of Treatment", rp_patterns: "Recovery Behaviours", rp_risk: "My High-Risk Situations", rp_dilemma: "My Recovery Dilemmas",
-  rp_cravings: "My Craving Triggers", rp_brain: "After Withdrawal: Brain Recovery", rp_slip: "If I Slip: My Slip Plan", rp_decisions: "Small Decisions, Big Risks",
-  rp_attitudes: "My Relapse Attitudes", rp_thinking: "Thinking My Way Out", rp_balance: "Balanced Lifestyle Check", rp_leisure: "New Things to Enjoy",
-  rp_social: "Social Survival Plan", rp_contacts: "Safe & Risky Contacts",
+  rp_quiz: "Preventing Relapse Quiz", rp_check: "How Well Are You Preventing Relapse?", rp_stages: "Stages of Recovery", rp_review: "Relapse Prevention Self-Assessment",
+  rp_treatment: "Treatment Attitudes Questionnaire", rp_patterns: "Recovery Behaviours Form", rp_risk: "My High-Risk Situations", rp_dilemma: "My Recovery Dilemmas",
+  rp_cravings: "My Craving Triggers", rp_brain: "Protracted Withdrawal", rp_slip: "Abstinence Violation Effect", rp_decisions: "Seemingly Irrelevant Decisions",
+  rp_attitudes: "My Relapse Attitudes", rp_thinking: "Managing My Relapse Thinking", rp_balance: "Assessing Your Lifestyle", rp_leisure: "Leisure Activity Exercise",
+  rp_social: "Social Survival Manual", rp_contacts: "Safe and Dangerous Contacts",
 };
 // worksheets kept as one flat object of answers (drawn by the frontend PackForm): the pack + Core Beliefs
 const PACK_TOOLS = { ...RP_TOOLS, beliefs: "Core Beliefs: Examining the Evidence" };
