@@ -98,6 +98,14 @@ const yearlyOf = (t) => planActive(t) && ["annual", "free"].includes(t.subscript
 const accessOf = (t) => ({ yearly: yearlyOf(t), plan: planActive(t) ? t.subscription_plan : "", free: planActive(t) && t.subscription_plan === "free", planEnds: t?.subscription_expires_at || null, freeSelf: [...FREE_SELF] });
 const YEARLY_MSG = "Sharing worksheets and sending them to clients comes with the yearly plan";
 
+/* The owner's own therapist account can also send worksheets to people who just signed up (owner's request,
+   2026-11-18). Every other therapist still sees and can send only to their own paid clients. */
+const SIGNUP_ACCOUNTS = String(process.env.WORKSHEET_SIGNUP_ACCOUNTS || "dpk7697@gmail.com").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+async function seesSignups(req) {
+  const u = await User.findById(req.user._id, { email: 1 }).lean();
+  return SIGNUP_ACCOUNTS.includes(String(u?.email || "").toLowerCase());
+}
+
 async function myTherapist(req) {
   return Therapists.findOne({ user: req.user._id }).populate({ path: "user", select: "name profile" }).lean();
 }
@@ -124,6 +132,11 @@ export const therapistWorksheets = expressAsyncHandler(async (req, res) => {
     WorksheetEntry.find({ user: req.user._id, therapistUser: null }).sort({ updatedAt: -1 }).limit(100).lean(),
   ]);
   const clients = await User.find({ _id: { $in: clientIds.filter(Boolean) }, role: 0 }, { name: 1, profile: 1 }).sort({ name: 1 }).limit(300).lean();
+  let signups = [];
+  if (await seesSignups(req)) {
+    const known = new Set(clients.map((c) => String(c._id)));
+    signups = (await User.find({ role: 0 }, { name: 1, profile: 1 }).sort({ _id: -1 }).limit(60).lean()).filter((u) => !known.has(String(u._id)));
+  }
   res.json({
     status: true,
     data: {
@@ -133,7 +146,10 @@ export const therapistWorksheets = expressAsyncHandler(async (req, res) => {
       links: links.map((l) => ({ _id: String(l._id), code: l.code, tool: l.tool, note: l.note, forClient: l.forClient ? { id: String(l.forClient._id), name: l.forClient.name } : null, opens: l.opens, starts: l.starts, bookClicks: l.bookClicks, createdAt: l.createdAt })),
       // a client's answers show only after they send it; until then the therapist sees that it was started
       entries: entries.map((e) => ({ ...entryRow(e, false), preview: ["submitted", "reviewed"].includes(e.status) ? previewOf(e) : "", client: { id: String(e.user?._id || ""), name: e.user?.name || "Client", photo: e.user?.profile || "" } })),
-      clients: clients.map((c) => ({ id: String(c._id), name: c.name, photo: c.profile || "" })),
+      clients: [
+        ...clients.map((c) => ({ id: String(c._id), name: c.name, photo: c.profile || "" })),
+        ...signups.map((c) => ({ id: String(c._id), name: c.name || "New client", photo: c.profile || "", signup: true, joinedAt: c._id.getTimestamp() })),
+      ],
     },
   });
 });
@@ -147,7 +163,8 @@ export const createWorksheetLink = expressAsyncHandler(async (req, res) => {
   let client = null;
   if (req.body?.client) {
     if (!isId(req.body.client)) return res.status(400).json({ status: false, message: "Choose a client" });
-    const ok = await Booking.exists({ therapist: t._id, client: req.body.client });
+    const ok = (await Booking.exists({ therapist: t._id, client: req.body.client }))
+      || ((await seesSignups(req)) && (await User.exists({ _id: req.body.client, role: 0 })));
     if (!ok) return res.status(403).json({ status: false, message: "You can send worksheets only to your own clients" });
     client = await User.findById(req.body.client, { name: 1 }).lean();
   }
