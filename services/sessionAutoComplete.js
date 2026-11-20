@@ -3,6 +3,7 @@ import { stampTherapistPct } from "../helper/achievements.js";
 import { SESSION_MINUTES, JOIN_AFTER_END_MIN, deleteMeetEvent } from "../helper/googleMeet.js";
 import { notifyTherapists, therapistUserId } from "./therapistNotify.js";
 import { notifyClient } from "./clientNotify.js";
+import { remindCalm } from "../controllers/CalmPassController.js";
 
 /* Every 5 minutes: sessions still "Started" after their join window (scheduled end + 30 min)
    are marked Completed (the therapist forgot to tap End), and calendar events of sessions whose
@@ -27,6 +28,7 @@ async function remindSoon() {
 
 export async function runSessionAutoComplete() {
   await remindSoon().catch((e) => console.error("[client-remind] failed:", e.message));
+  await remindCalm().catch((e) => console.error("[calm-remind] failed:", e.message)); // Calm corner trial / month ending
   const cutoff = new Date(Date.now() - (SESSION_MINUTES + JOIN_AFTER_END_MIN) * 60000);
   const stale = await Booking.find({ status: "Started", booking_date: { $lte: cutoff } }).select("_id booking_date therapist calendar_event_id client").populate("client", "name").limit(200);
   for (const b of stale) {

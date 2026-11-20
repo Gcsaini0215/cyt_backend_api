@@ -90,3 +90,25 @@ export const verifyCalmPayment = expressAsyncHandler(async (req, res) => {
   }
   res.json({ status: true, message: "Calm corner unlocked.", data: out(p ? p.toObject() : null) });
 });
+
+/* Reminders (run from the 5-minute session loop): the free week ends within a day, or a paid month ends within
+   3 days → one notification each time (remindedFor = the end date it was sent for). */
+export async function remindCalm() {
+  const now = Date.now();
+  const soonTrial = await CalmPass.find({
+    paidUntil: null, remindedFor: null,
+    trialStartedAt: { $lte: new Date(now - (CALM_TRIAL_DAYS - 1) * DAY), $gt: new Date(now - CALM_TRIAL_DAYS * DAY) },
+  }).limit(200).lean();
+  for (const p of soonTrial) {
+    const end = trialEnd(p);
+    const r = await CalmPass.updateOne({ _id: p._id, remindedFor: null }, { $set: { remindedFor: end } });
+    if (r.modifiedCount) notifyClient(p.user, { type: "notice", title: "Your free Calm corner week ends tomorrow", body: `Keep the breathing exercises, scenes and sounds for ₹${CALM_PRICE} a month.`, link: "/client/calm", ref: `calm-trial:${p._id}` });
+  }
+  const soonPaid = await CalmPass.find({ paidUntil: { $gt: new Date(now), $lte: new Date(now + 3 * DAY) } }).limit(200).lean();
+  for (const p of soonPaid) {
+    if (p.remindedFor && new Date(p.remindedFor).getTime() === new Date(p.paidUntil).getTime()) continue;
+    const r = await CalmPass.updateOne({ _id: p._id, paidUntil: p.paidUntil }, { $set: { remindedFor: p.paidUntil } });
+    const when = new Date(p.paidUntil).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" });
+    if (r.modifiedCount) notifyClient(p.user, { type: "notice", title: `Your Calm corner ends on ${when}`, body: `Renew for ₹${CALM_PRICE} to keep it open for another ${CALM_DAYS} days.`, link: "/client/calm", ref: `calm-renew:${p._id}:${new Date(p.paidUntil).getTime()}` });
+  }
+}
