@@ -4,6 +4,9 @@ import SessionBundle from "../models/SessionBundle.js";
 import "../models/Therapists.js";
 import "../models/Users.js";
 import PackPricing from "../models/PackPricing.js";
+import Booking from "../models/Booking.js";
+import User from "../models/Users.js";
+import NoidaClientCredit from "../models/NoidaClientCredit.js";
 import { bundleRow, remainingOf, getPackConfig, clearPackCache } from "../helper/sessionBundle.js";
 
 const DAY = 86400000;
@@ -17,6 +20,48 @@ export const myBundles = expressAsyncHandler(async (req, res) => {
     status: true,
     data: rows.filter((b) => remainingOf(b) > 0).map((b) => ({ ...bundleRow(b), therapist: b.therapist })),
   });
+});
+
+/* GET /my-wallet — the client's prepaid money (2026-11-20). Nothing new is stored: a pack's balance is what was paid
+   minus one session's share for every pack session that has been completed. Booked-but-not-done sessions are
+   shown as "reserved" (still in the balance). Expired packs: the unused part isn't counted (packs aren't refunded).
+   CYT Noida clinic packages are counted in sessions (they have no rupee value per session on record). */
+export const myWallet = expressAsyncHandler(async (req, res) => {
+  const now = Date.now();
+  const bundles = await SessionBundle.find({ client: req.user._id, status: "active", paid_at: { $ne: null } }).populate(therapistPop).sort({ paid_at: -1 }).lean();
+  const ids = bundles.map((b) => b._id);
+  const pb = ids.length ? await Booking.find({ bundle: { $in: ids } }).select("bundle status booking_date session_completed_at").lean() : [];
+  const r2 = (x) => Math.round(x);
+  let balance = 0, reserved = 0;
+  const history = [];
+  const packs = bundles.map((b) => {
+    const mine = pb.filter((x) => String(x.bundle) === String(b._id));
+    const done = mine.filter((x) => x.status === "Completed");
+    const booked = mine.filter((x) => x.status === "New" || x.status === "Started").length;
+    const per = Number(b.per_session) || 0, total = Number(b.total) || 0;
+    const left = done.length >= b.size ? 0 : Math.max(0, total - per * done.length);
+    const expired = new Date(b.expires_at).getTime() <= now;
+    if (!expired) { balance += left; reserved += Math.min(left, per * booked); }
+    const tName = b.therapist?.user?.name || "your therapist";
+    history.push({ at: b.paid_at, kind: "credit", amount: total, label: `${b.size}-session pack with ${tName}`, sub: b.discount_pct ? `${b.discount_pct}% off` : "" });
+    done.forEach((x, i) => history.push({ at: x.session_completed_at || x.booking_date, kind: "debit", amount: i === b.size - 1 ? r2(total - per * (b.size - 1)) : r2(per), label: `Session with ${tName}`, sub: `${i + 1} of ${b.size}` }));
+    if (expired && left > 0) history.push({ at: b.expires_at, kind: "expired", amount: r2(left), label: `Pack with ${tName} expired`, sub: `${b.size - done.length - booked} session(s) unused` });
+    return {
+      _id: String(b._id), size: b.size, completed: done.length, booked, unbooked: remainingOf(b), total, per_session: per,
+      balance: r2(left), expires_at: b.expires_at, expired, discount_pct: b.discount_pct, service: b.service, format: b.format,
+      therapist: { _id: String(b.therapist?._id || ""), name: tName, photo: b.therapist?.user?.profile || "", profile_type: b.therapist?.profile_type || "", state: b.therapist?.state || "" },
+    };
+  });
+  // CYT Noida clinic packages (kept by phone number)
+  let clinic = [];
+  const u = await User.findById(req.user._id, { phone: 1 }).lean();
+  const p10 = String(u?.phone || "").replace(/\D/g, "").slice(-10);
+  if (p10.length === 10) {
+    const cr = await NoidaClientCredit.find({ phone: { $regex: `${p10}$` }, active: true }).sort({ createdAt: -1 }).lean();
+    clinic = cr.map((c) => ({ _id: String(c._id), name: c.packageName || "Clinic package", total: c.totalSessions, used: c.sessionsUsed, left: Math.max(0, c.totalSessions - c.sessionsUsed) }));
+  }
+  history.sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
+  res.json({ status: true, data: { balance: r2(balance), reserved: r2(reserved), packs, clinic, history: history.slice(0, 60) } });
 });
 
 // GET /session-packs — the packs on sale and their discounts (the booking page shows them)

@@ -1,5 +1,5 @@
 import express from "express";
-import { myBundles, packOptions, adminBundles, extendBundle, adminPackPricing, savePackPricing } from "../controllers/SessionBundleController.js";
+import { myBundles, myWallet, packOptions, adminBundles, extendBundle, adminPackPricing, savePackPricing } from "../controllers/SessionBundleController.js";
 import { myMoods, saveMood } from "../controllers/MoodController.js";
 import { myCycle, saveCycleProfile, saveCycleLog, deleteMyCycle } from "../controllers/CycleController.js";
 import { getMyNote, saveMyNote } from "../controllers/SessionNoteController.js";
@@ -9,6 +9,7 @@ const router = express.Router();
 // session packs (helper/sessionBundle.js)
 router.get("/session-packs", packOptions);
 router.get("/my-bundles", isAuth, myBundles);
+router.get("/my-wallet", isAuth, myWallet);
 router.get("/admin/session-packs", hasPermission(["bookings", "clients"]), adminBundles);
 router.post("/admin/session-packs/:id/extend", hasPermission("bookings"), extendBundle);
 router.get("/admin/pack-pricing", hasPermission(["bookings", "clients"]), adminPackPricing);

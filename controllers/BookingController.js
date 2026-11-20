@@ -46,7 +46,7 @@ const formatSessionMode = (t) =>
 import { createMeetWithTimeout, isOnlineFormat, sessionWindow, deleteMeetEvent, moveMeetEvent, JOIN_EARLY_MIN } from "../helper/googleMeet.js";
 import { sessionStartOtpMail, adminText, bookingCancelledMail, bookingConfirmationMail, bookingRequestReceivedMail, sessionRescheduledMail, clientText, newSessionAdminMail, otpVerificationEmail, therapistSessionMail, therapistText } from "../services/mailTemplates.js";
 import { pushToUsers } from "./PushController.js";
-import { notifyTherapists, therapistUserId } from "../services/therapistNotify.js";
+import { notifyTherapists, therapistUserId, therapistBookingsChanged } from "../services/therapistNotify.js";
 import { attachBookingAssessments } from "./AssessmentRequestController.js";
 import { assessmentsActive } from "./TherapistAddonController.js";
 import { getPricing } from "../helper/assessmentPricing.js";
@@ -1476,7 +1476,13 @@ export const EndSession = expressAsyncHandler(async (req, res, next) => {
       res.status(404);
       throw new Error("Session cancelled");
     }
+    // a session that was never started can be marked completed once its time has come (2026-11-20)
+    if (result.status !== SESSION_STATUS.STARTED && result.booking_date && new Date(result.booking_date).getTime() > Date.now()) {
+      res.status(400);
+      throw new Error("You can mark this session completed once its time has come.");
+    }
 
+    if (!result.session_started_at) result.session_started_at = result.booking_date || new Date();
     result.session_completed_at = new Date();
     result.status = SESSION_STATUS.COMPLETED;
     await result.save();
@@ -1489,6 +1495,8 @@ export const EndSession = expressAsyncHandler(async (req, res, next) => {
       body: "How did it go? Leave a quick review and book your next session.", link: "/my-dashboard", ref: `completed:${result._id}`,
     });
     deleteMeetEvent(result); // lock the Meet link (in the background)
+    clientBookingsChanged(result.client); // the client's sessions + wallet refresh
+    therapistBookingsChanged(req.user._id);
 
     res.status(200).json({
       status: true,
