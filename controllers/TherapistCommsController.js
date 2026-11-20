@@ -186,7 +186,7 @@ export const sendFeedback = expressAsyncHandler(async (req, res) => {
   if (message.length < 5) return res.status(400).json({ status: false, message: "Please write a few words about it" });
   const recent = await TherapistFeedback.countDocuments({ user: req.user._id, createdAt: { $gte: new Date(Date.now() - 3600000) } });
   if (recent >= 10) return res.status(429).json({ status: false, message: "Too many messages — please try again in a while" });
-  const kind = ["problem", "feature", "question", "other"].includes(req.body?.kind) ? req.body.kind : "problem";
+  const kind = ["problem", "feature", "question", "other", "subscription"].includes(req.body?.kind) ? req.body.kind : "problem";
   const doc = await TherapistFeedback.create({ user: req.user._id, kind, message, page: str(req.body?.page, 300) });
   res.json({ status: true, data: doc, message: "Sent — the team will get back to you" });
 });
