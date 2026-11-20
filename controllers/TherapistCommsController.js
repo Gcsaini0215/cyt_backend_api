@@ -651,3 +651,36 @@ export const adminDeleteSessionBooking = expressAsyncHandler(async (req, res) =>
   therapistBookingsChanged(b.therapist?.user);
   res.json({ status: true, data: removed, message: "Session deleted everywhere" });
 });
+
+/* ── Supervision & training interest (2026-11-20) ──
+   A therapist says they'd like supervision with CYT's founder & psychologist and picks topics; kept as one
+   open "supervision" message per therapist (admin → Therapist comms → Help), updated if they send again. */
+export const SUPERVISION_TOPICS = [
+  "Basic communication skills", "CBT (Cognitive Behavioural Therapy)", "Mindfulness", "Narrative therapy",
+  "Existential therapy approaches", "Family therapy", "Couple sessions", "Business of private practice",
+  "Planning to open an in-person centre",
+];
+const supMsg = (topics, note) => `Interested in supervision / training.\nTopics: ${topics.join(", ")}${note ? `\nNote: ${note}` : ""}`;
+
+// GET /therapist-comms/supervision — my interest (if any) + the topic list
+export const mySupervision = expressAsyncHandler(async (req, res) => {
+  const doc = await TherapistFeedback.findOne({ user: req.user._id, kind: "supervision" }).sort({ createdAt: -1 }).lean();
+  let topics = [], note = "";
+  if (doc) {
+    const m = /Topics: (.*)/.exec(doc.message || ""); topics = m ? m[1].split(", ").filter((t) => SUPERVISION_TOPICS.includes(t)) : [];
+    const n = /Note: ([\s\S]*)/.exec(doc.message || ""); note = n ? n[1] : "";
+  }
+  res.json({ status: true, data: { topics: SUPERVISION_TOPICS, mine: doc ? { topics, note, status: doc.status, reply: doc.reply || "", at: doc.updatedAt || doc.createdAt } : null } });
+});
+
+// POST /therapist-comms/supervision { topics: [], note }
+export const sendSupervision = expressAsyncHandler(async (req, res) => {
+  const topics = [...new Set((Array.isArray(req.body?.topics) ? req.body.topics : []).filter((t) => SUPERVISION_TOPICS.includes(t)))];
+  if (!topics.length) return res.status(400).json({ status: false, message: "Please pick at least one topic" });
+  const note = str(req.body?.note, 1000).trim();
+  const message = supMsg(topics, note);
+  const cur = await TherapistFeedback.findOne({ user: req.user._id, kind: "supervision" }).sort({ createdAt: -1 });
+  if (cur) { cur.message = message; cur.status = "open"; await cur.save(); }
+  else await TherapistFeedback.create({ user: req.user._id, kind: "supervision", message, page: "/therapist-dashboard" });
+  res.json({ status: true, message: "Thanks — we'll let you know when sessions open", data: { topics, note } });
+});

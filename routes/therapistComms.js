@@ -5,8 +5,7 @@ import {
   adminTherapistOptions, adminListAnnouncements, adminCreateAnnouncement, adminDeleteAnnouncement, adminAnnouncementReads,
   adminListActions, adminCreateActions, adminUpdateAction,
   adminListPayouts, adminPayoutBookings, adminInitiateBookingPayout, adminPayoutPayInfo, adminSendPayout, adminSyncPayout, adminDeleteSessionBooking, adminCreatePayout, adminUpdatePayout, adminDeletePayout,
-  adminListFeedback, adminReplyFeedback, adminCommsSummary,
-} from "../controllers/TherapistCommsController.js";
+  adminListFeedback, adminReplyFeedback, adminCommsSummary, mySupervision, sendSupervision } from "../controllers/TherapistCommsController.js";
 
 const router = express.Router();
 const admin = hasPermission("therapists");
@@ -20,6 +19,8 @@ router.get("/therapist-comms/prefs", isTherapist, getPrefs);
 router.put("/therapist-comms/prefs", isTherapist, savePrefs);
 router.get("/therapist-comms/feedback", isTherapist, myFeedback);
 router.post("/therapist-comms/feedback", isTherapist, sendFeedback);
+router.get("/therapist-comms/supervision", isTherapist, mySupervision);
+router.post("/therapist-comms/supervision", isTherapist, sendSupervision);
 
 // admin panel
 router.get("/admin/therapist-comms/summary", admin, adminCommsSummary);
