@@ -36,6 +36,7 @@ import clientInsightRouter from "./routes/clientInsight.js";
 import worksheetRouter from "./routes/worksheet.js";
 import overviewRouter from "./routes/overview.js";
 import sessionBundleRouter from "./routes/sessionBundle.js";
+import calmRouter from "./routes/calm.js";
 import receptionRouter from "./routes/reception.js";
 import noidaAppointmentRouter from "./routes/noidaAppointment.js";
 import festivalRouter from "./routes/festival.js";
@@ -159,6 +160,7 @@ app.use("/api", clientInsightRouter);
 app.use("/api", worksheetRouter); // Therapist Toolkit worksheets
 app.use("/api", overviewRouter);
 app.use("/api", sessionBundleRouter);
+app.use("/api", calmRouter);
 app.use("/api", receptionRouter);
 app.use("/api", noidaAppointmentRouter);
 app.use("/api", festivalRouter);
