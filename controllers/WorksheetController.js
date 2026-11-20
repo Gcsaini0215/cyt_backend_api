@@ -351,6 +351,8 @@ export const myWorksheet = expressAsyncHandler(async (req, res) => {
   const e = await WorksheetEntry.findOne({ _id: req.params.id, user: req.user._id })
     .populate({ path: "therapist", select: "user profile_type state show_to_page", populate: { path: "user", select: "name profile" } }).lean();
   if (!e) return res.status(404).json({ status: false, message: "Worksheet not found" });
+  // opened for the first time: no longer "not opened" (the My Space reminder stops, the therapist sees it was opened)
+  if (e.status === "assigned") { await WorksheetEntry.updateOne({ _id: e._id, status: "assigned" }, { $set: { status: "draft" } }); e.status = "draft"; }
   const link = e.link ? await WorksheetLink.findById(e.link, { forClient: 1 }).lean() : null;
   const ongoing = await isOngoing(req.user._id, e.therapist?._id, link);
   res.json({ status: true, data: { ...entryRow(e, true), therapist: publicTherapist(e.therapist), ongoing, maxLogs: ongoing ? MAX_LOGS : 1, history: historyFor(e, false) } });
