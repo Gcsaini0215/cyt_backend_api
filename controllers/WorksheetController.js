@@ -277,6 +277,8 @@ export const therapistEntry = expressAsyncHandler(async (req, res) => {
   const e = await WorksheetEntry.findOne({ _id: req.params.id, therapistUser: req.user._id }).populate({ path: "user", select: "name profile" }).lean();
   if (!e) return res.status(404).json({ status: false, message: "Worksheet not found" });
   const shared = ["submitted", "reviewed"].includes(e.status);
+  // the client started a new one after sending (pack "Save & add a new one"): show the last one they sent
+  if (shared && isPack(e.tool) && !packFilled(e.data)) { const ls = (e.history || []).filter((h) => h.sent && h.data).pop(); if (ls) e.data = ls.data; }
   res.json({ status: true, data: { ...entryRow(e, shared), shared, history: shared ? historyFor(e, true) : [], client: { id: String(e.user?._id || ""), name: e.user?.name || "Client", photo: e.user?.profile || "" } } });
 });
 
@@ -371,6 +373,21 @@ export const saveMyWorksheet = expressAsyncHandler(async (req, res) => {
     if (e.status === "submitted" || e.status === "reviewed") { e.status = "draft"; e.submittedAt = null; }
     await e.save();
     return res.json({ status: true, message: "Worksheet cleared", data: { status: e.status, flag: false, updatedAt: e.updatedAt } });
+  }
+  // "Save & add a new one" (pack worksheets, e.g. one core belief after another — owner 2026-11-21): the answers on
+  // screen are kept as their own entry in the history, the form starts empty, the status stays as it is (the
+  // therapist keeps seeing every belief that was sent)
+  if (req.body?.next && isPack(e.tool)) {
+    if (req.body.data) { e.data = cleanFor(e.tool, req.body.data); e.markModified("data"); }
+    if (!packFilled(e.data)) return res.status(400).json({ status: false, message: "Answer at least one question first" });
+    const h = Array.isArray(e.history) ? e.history : [];
+    const last = h[h.length - 1];
+    if (!last || last.closed || JSON.stringify(last.data || {}) !== JSON.stringify(e.data || {})) snapshot(e, false);
+    const h2 = [...e.history]; h2[h2.length - 1] = { ...h2[h2.length - 1], closed: true }; e.history = h2; e.markModified("history");
+    e.data = cleanFor(e.tool, {}); e.markModified("data"); e.step = 0; e.flag = false;
+    if (e.status === "assigned") e.status = "draft";
+    await e.save();
+    return res.json({ status: true, message: "Saved — start a new one", data: { status: e.status, flag: false, updatedAt: e.updatedAt, history: historyFor(e, false) } });
   }
   if (req.body?.data) {
     let max = MAX_LOGS;
