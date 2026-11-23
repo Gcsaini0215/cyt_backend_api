@@ -12,7 +12,8 @@ const ChatThreadSchema = new Schema({
   kind: { type: String, enum: ["therapist", "support"], default: "therapist", index: true },
   therapistUser: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
   therapist: { type: Schema.Types.ObjectId, ref: "Therapists", default: null },
-  unreadAdmin: { type: Number, default: 0 }, // support chats: client messages the team hasn't opened yet
+  unreadAdmin: { type: Number, default: 0 }, // (support)
+  lastPage: { type: String, default: "" }, // support: the page of the client's latest message // support chats: client messages the team hasn't opened yet
   // a therapist thread the CYT team opened from a support chat: open without a booking for 15 days
   assignedAt: { type: Date, default: null },
   assignedBy: { type: String, default: "" },
@@ -36,6 +37,7 @@ const ChatMessageSchema = new Schema({
   from: { type: Schema.Types.ObjectId, ref: "User", default: null },
   fromRole: { type: String, enum: ["client", "therapist", "system", "admin"], required: true },
   fromName: { type: String, default: "" }, // admin replies: which team member wrote it (shown to admins only)
+  page: { type: String, default: "" }, // Care Team chats: the website page the client wrote from (e.g. /therapy-for/anxiety)
   body: { type: String, required: true }, // encrypted (what was shown, after hiding contact details)
   kind: { type: String, default: "text" }, // text | auto-reply | crisis-help | pre-question | pre-answer
   masked: { type: Boolean, default: false },

@@ -42,6 +42,7 @@ const ASSIGN_DAYS = 15;
 const msgRow = (m, forAdmin = false) => ({
   _id: String(m._id), thread: String(m.thread), fromRole: m.fromRole, kind: m.kind || "text",
   ...(m.fromRole === "admin" ? { fromName: forAdmin ? (m.fromName || SUPPORT_NAME) : SUPPORT_NAME } : {}),
+  ...(forAdmin && m.page ? { page: m.page } : {}),
   body: m.deletedAt && !forAdmin ? "" : dec(m.body), deleted: !!m.deletedAt, masked: !!m.masked, crisis: !!m.crisis,
   readAt: m.readAt, createdAt: m.createdAt,
 });
@@ -179,7 +180,7 @@ export const getThread = expressAsyncHandler(async (req, res) => {
 });
 
 const adminMeta = (t) => (t ? {
-  _id: String(t._id), kind: t.kind || "therapist", unreadAdmin: t.unreadAdmin || 0, assignedAt: t.assignedAt || null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom, messageCount: t.messageCount || 0,
+  _id: String(t._id), kind: t.kind || "therapist", unreadAdmin: t.unreadAdmin || 0, lastPage: t.lastPage || "", assignedAt: t.assignedAt || null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom, messageCount: t.messageCount || 0,
   crisisCount: t.crisisCount || 0, contactCount: t.contactCount || 0, lastCrisisAt: t.lastCrisisAt, firstReplyMins: t.firstReplyMins,
   unreadTherapist: t.unreadTherapist || 0, createdAt: t.createdAt,
 } : null);
@@ -217,7 +218,10 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
 
   const crisis = CRISIS.test(raw);
   if (t.kind === "support") {
-    const { m } = await addMessage(t, "client", req.user._id, raw, { crisis, kind: "text" });
+    // which page of the website they wrote from (the floating chat on every page sends it)
+    const page = /^\/(?!\/)[\w\-./?=&%]{0,180}$/.test(String(req.body?.page || "")) ? String(req.body.page) : "";
+    if (page) await ChatThread.updateOne({ _id: t._id }, { $set: { lastPage: page } });
+    const { m } = await addMessage(t, "client", req.user._id, raw, { crisis, kind: "text", page });
     if (crisis) await addMessage(t, "system", null, CRISIS_HELP.replace("your therapist has been told", "our team has been alerted"), { kind: "crisis-help" });
     if (!t.autoReplyAt || Date.now() - new Date(t.autoReplyAt).getTime() > 6 * 36e5) {
       await ChatThread.updateOne({ _id: t._id }, { $set: { autoReplyAt: new Date() } });
