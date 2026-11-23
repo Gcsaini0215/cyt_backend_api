@@ -45,6 +45,7 @@ import collabRouter from "./routes/collab.js";
 import therapistSubscriptionRouter from "./routes/therapistSubscription.js";
 import therapistCommsRouter from "./routes/therapistComms.js";
 import therapistReflectionRouter from "./routes/therapistReflection.js";
+import liveChatRouter from "./routes/liveChat.js";
 import profileStatsRouter from "./routes/profileStats.js";
 import aiVisitsRouter from "./routes/aiVisits.js";
 import funnelRouter from "./routes/funnel.js";
@@ -170,6 +171,7 @@ app.use("/api", collabRouter);
 app.use("/api", therapistSubscriptionRouter);
 app.use("/api", therapistCommsRouter);
 app.use("/api", therapistReflectionRouter);
+app.use("/api", liveChatRouter); // live therapist ↔ client chat (2026-11-23)
 app.use("/api", profileStatsRouter);
 app.use("/api", aiVisitsRouter);
 app.use("/api", funnelRouter);
