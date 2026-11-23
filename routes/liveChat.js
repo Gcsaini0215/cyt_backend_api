@@ -2,7 +2,7 @@ import { Router } from "express";
 import { isAuthCommon, hasPermission } from "../middlewares/authMiddleware.js";
 import {
   getConsent, giveConsent, listThreads, unreadCount, startThread, getThread, sendMessage, markRead, deleteMessage,
-  getSettings, saveSettings, therapistChatInfo, stream, adminThreads, adminThread, adminStats, adminAccessLog, ADMIN_PERM,
+  getSettings, saveSettings, therapistChatInfo, pushSubscribe, stream, adminThreads, adminThread, adminStats, adminAccessLog, ADMIN_PERM,
 } from "../controllers/LiveChatController.js";
 
 // Live therapist ↔ client chat (2026-11-23). The older routes/chat.js is separate and untouched.
@@ -19,6 +19,7 @@ router.get("/live-chat/threads/:id", isAuthCommon, getThread);
 router.post("/live-chat/threads/:id/messages", isAuthCommon, sendMessage);
 router.post("/live-chat/threads/:id/read", isAuthCommon, markRead);
 router.delete("/live-chat/messages/:id", isAuthCommon, deleteMessage);
+router.post("/live-chat/push-subscribe", isAuthCommon, pushSubscribe);
 router.get("/live-chat/settings", isAuthCommon, getSettings);
 router.put("/live-chat/settings", isAuthCommon, saveSettings);
 

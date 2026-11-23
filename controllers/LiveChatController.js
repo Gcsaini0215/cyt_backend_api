@@ -11,6 +11,8 @@ import { CRISIS, maskContacts, chatState, inOfficeHours, hoursText, OPEN_DAYS } 
 import { addChatClient, addChatAdmin, toUser, toAdmins, isOnline } from "../services/chatHub.js";
 import { notifyTherapists } from "../services/therapistNotify.js";
 import { notifyClient } from "../services/clientNotify.js";
+import PushSubscription from "../models/PushSubscription.js";
+import { pushToUsers } from "./PushController.js";
 
 /* Live therapist ↔ client chat (2026-11-23). Routes: routes/liveChat.js (/api/live-chat/*, /api/admin/live-chat/*).
    Rules in helper/chatRules.js, live events in services/chatHub.js. The old chat (routes/chat.js) is untouched.
@@ -26,6 +28,13 @@ export const ADMIN_PERM = ["page:/chat-monitor", "chatMonitor"];
 const roleOf = (req) => (req.user?.role === 1 ? "therapist" : "client");
 const otherOf = (t, role) => (role === "therapist" ? t.client : t.therapistUser);
 const hourRef = () => new Date().toISOString().slice(0, 13);
+
+/* phone notification (web push) when the person isn't in the app right now. The message text is never put on
+   the lock screen — only who wrote, so a client's words stay private on a shared phone. */
+function phonePush(userId, title, url) {
+  if (!userId || isOnline(userId)) return;
+  pushToUsers({ userId }, title, "Tap to read your message on CYT", url).catch(() => {});
+}
 
 const msgRow = (m, forAdmin = false) => ({
   _id: String(m._id), thread: String(m.thread), fromRole: m.fromRole, kind: m.kind || "text",
@@ -155,6 +164,7 @@ async function addMessage(t, fromRole, from, body, extra = {}) {
   if (extra.crisis) set.lastCrisisAt = m.createdAt;
   const nt = await ChatThread.findByIdAndUpdate(t._id, { $inc: inc, $set: set }, { new: true }).lean();
   const row = msgRow(m);
+  if (from) row.fromName = (await Users.findById(from, { name: 1 }).lean())?.name || ""; // for the pop-up banner
   toUser(t.client, "message", { threadId: String(t._id), message: row });
   toUser(t.therapistUser, "message", { threadId: String(t._id), message: row });
   const [named] = await withNames([nt]);
@@ -190,6 +200,7 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
     } else {
       notifyTherapists([t.therapistUser], { type: "notice", title: `New message from ${req.user.name || "a client"}`, body: text.slice(0, 140), link: `/therapists/messages?t=${t._id}`, ref: `chat:${t._id}:${hourRef()}` });
     }
+    phonePush(t.therapistUser, crisis ? `⚠ Urgent message from ${req.user.name || "a client"}` : `New message from ${req.user.name || "a client"}`, `/therapists/messages?t=${t._id}`);
     const set = await settingsFor(t.therapistUser);
     if (!inOfficeHours(set) && (!t.autoReplyAt || Date.now() - new Date(t.autoReplyAt).getTime() > 6 * 36e5)) {
       const msg = (set.autoReply || "").trim() || `Thanks for your message. I reply during my working hours (${hoursText(set)}). For an emergency, please call 112 or Tele-MANAS 14416.`;
@@ -198,6 +209,7 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
     }
   } else {
     notifyClient(t.client, { type: "message", title: `${req.user.name || "Your therapist"} replied`, body: text.slice(0, 140), link: `/client/messages?t=${t._id}`, ref: `chat:${t._id}:${hourRef()}` });
+    phonePush(t.client, `New message from ${req.user.name || "your therapist"}`, `/client/messages?t=${t._id}`);
   }
   res.json({ status: true, data: { message: msgRow(m), masked, crisis } });
 });
@@ -225,6 +237,14 @@ export const deleteMessage = expressAsyncHandler(async (req, res) => {
   const t = await ChatThread.findById(m.thread).lean();
   for (const u of [t.client, t.therapistUser]) toUser(u, "deleted", { threadId: String(t._id), id: String(m._id) });
   toAdmins("deleted", { threadId: String(t._id), id: String(m._id) });
+  res.json({ status: true });
+});
+
+/* ── phone notifications: POST /api/live-chat/push-subscribe { subscription } — saved against the signed-in user ── */
+export const pushSubscribe = expressAsyncHandler(async (req, res) => {
+  const sub = req.body?.subscription || req.body;
+  if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) return res.status(400).json({ status: false, message: "Invalid subscription" });
+  await PushSubscription.updateOne({ "subscription.endpoint": String(sub.endpoint) }, { $set: { userId: req.user._id, subscription: { endpoint: String(sub.endpoint), expirationTime: sub.expirationTime || null, keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) } } } }, { upsert: true });
   res.json({ status: true });
 });
 
