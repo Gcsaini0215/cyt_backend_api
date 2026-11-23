@@ -13,7 +13,13 @@ const ChatThreadSchema = new Schema({
   therapistUser: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
   therapist: { type: Schema.Types.ObjectId, ref: "Therapists", default: null },
   unreadAdmin: { type: Number, default: 0 }, // (support)
-  lastPage: { type: String, default: "" }, // support: the page of the client's latest message // support chats: client messages the team hasn't opened yet
+  lastPage: { type: String, default: "" }, // support: the page of the client's latest message
+  // "Clear chat" (2026-11-23): each side can clear for themselves; "for everyone" hides older messages for both.
+  // Messages are never removed — the admin record keeps them.
+  clientClearedAt: { type: Date, default: null },
+  therapistClearedAt: { type: Date, default: null },
+  adminClearedAt: { type: Date, default: null },
+  allClearedAt: { type: Date, default: null },
   // a therapist thread the CYT team opened from a support chat: open without a booking for 15 days
   assignedAt: { type: Date, default: null },
   assignedBy: { type: String, default: "" },

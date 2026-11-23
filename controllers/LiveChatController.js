@@ -88,7 +88,7 @@ async function threadRow(t, role) {
     return {
       _id: String(t._id), support: true,
       other: { id: "cyt", name: SUPPORT_NAME, photo: "", title: "We'll help you find the right therapist", online: false, support: true },
-      therapistId: null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom === "admin" ? "therapist" : t.lastFrom, preview: dec(t.lastPreview) || "Not sure who to see? Message us — we'll help you choose.",
+      therapistId: null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom === "admin" ? "therapist" : t.lastFrom, preview: (clearedFor(t, "client") && t.lastMessageAt && new Date(t.lastMessageAt) <= clearedFor(t, "client") ? "" : dec(t.lastPreview)) || "Not sure who to see? Message us — we'll help you choose.",
       unread: t.unreadClient,
     };
   }
@@ -98,7 +98,7 @@ async function threadRow(t, role) {
   return {
     _id: String(t._id),
     other: { id: String(otherId), name: other?.name || (role === "client" ? "Therapist" : "Client"), photo: other?.profile || "", title: th?.profile_type || "", online: isOnline(otherId) },
-    therapistId: String(t.therapist), lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom, preview: dec(t.lastPreview),
+    therapistId: String(t.therapist), lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom, preview: clearedFor(t, role) && t.lastMessageAt && new Date(t.lastMessageAt) <= clearedFor(t, role) ? "Chat cleared" : dec(t.lastPreview),
     unread: role === "therapist" ? t.unreadTherapist : t.unreadClient, assigned: !!t.assignedAt,
   };
 }
@@ -169,12 +169,22 @@ async function myThread(req, id) {
 }
 const myRole = (t, req) => (String(t.therapistUser) === String(req.user._id) ? "therapist" : "client");
 
+// the moment a side's view of a chat starts (after "Clear chat")
+const clearedFor = (t, role) => {
+  const mine = role === "therapist" ? t.therapistClearedAt : role === "admin" ? t.adminClearedAt : t.clientClearedAt;
+  const all = role === "admin" ? null : t.allClearedAt;
+  const ds = [mine, all].filter(Boolean).map((d) => new Date(d).getTime());
+  return ds.length ? new Date(Math.max(...ds)) : null;
+};
+
 export const getThread = expressAsyncHandler(async (req, res) => {
   const t = await myThread(req, req.params.id);
   if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
   const role = myRole(t, req);
   const q = { thread: t._id };
   if (req.query.before) { const d = new Date(String(req.query.before)); if (!Number.isNaN(d.getTime())) q.createdAt = { $lt: d }; }
+  const since = clearedFor(t, role);
+  if (since) q.createdAt = { ...(q.createdAt || {}), $gt: since };
   const msgs = await ChatMessage.find(q).sort({ createdAt: -1 }).limit(60).lean();
   res.json({ status: true, data: { thread: await threadRow(t, role), role, state: await stateFor(t, role), messages: msgs.reverse().map((m) => msgRow(m)), more: msgs.length === 60 } });
 });
@@ -383,6 +393,8 @@ export const adminThread = expressAsyncHandler(async (req, res) => {
   if (!req.query.before) await ChatAccessLog.create({ admin: req.user._id, adminName: req.user.name || req.user.email || "", thread: t._id, ip: String(req.ip || "").slice(0, 60) });
   const q = { thread: t._id };
   if (req.query.before) { const d = new Date(String(req.query.before)); if (!Number.isNaN(d.getTime())) q.createdAt = { $lt: d }; }
+  if (t.adminClearedAt && req.query.all !== "1") q.createdAt = { ...(q.createdAt || {}), $gt: t.adminClearedAt };
+  const hiddenCount = t.adminClearedAt && req.query.all !== "1" ? await ChatMessage.countDocuments({ thread: t._id, createdAt: { $lte: t.adminClearedAt } }) : 0;
   const msgs = await ChatMessage.find(q).sort({ createdAt: -1 }).limit(200).lean();
   const [row] = await withNames([t]);
   const st = t.kind === "support" ? { mode: "support" } : await chatState(t.client, t.therapist);
@@ -392,7 +404,7 @@ export const adminThread = expressAsyncHandler(async (req, res) => {
     if (th) assigned = { id: String(th._id), name: th.user?.name || "Therapist", title: th.profile_type || "" };
   }
   const opened = await ChatAccessLog.find({ thread: t._id }).sort({ createdAt: -1 }).limit(20).lean();
-  res.json({ status: true, data: { thread: row, mode: st.mode, messages: msgs.reverse().map((m) => msgRow(m, true)), more: msgs.length === 200, assigned, accessLog: opened.map((a) => ({ name: a.adminName, at: a.createdAt })) } });
+  res.json({ status: true, data: { thread: row, mode: st.mode, messages: msgs.reverse().map((m) => msgRow(m, true)), more: msgs.length === 200, hiddenCount, allClearedAt: t.allClearedAt || null, assigned, accessLog: opened.map((a) => ({ name: a.adminName, at: a.createdAt })) } });
 });
 
 export const adminStats = expressAsyncHandler(async (req, res) => {
@@ -469,4 +481,43 @@ export const adminAssign = expressAsyncHandler(async (req, res) => {
   notifyClient(sup.client, { type: "message", title: `You're connected with ${tname}`, body: "Open Messages to say hello.", link: `/client/messages?t=${t._id}`, ref: `chat-assign:${t._id}:${Date.now()}` });
   phonePush(sup.client, `You're connected with ${tname}`, `/client/messages?t=${t._id}`);
   res.json({ status: true, data: { thread: String(t._id), therapist: { id: String(th._id), name: tname, title: th.profile_type || "" } } });
+});
+
+
+/* ── Clear chat (2026-11-23, owner): "for me" or "for everyone". Messages stay in the admin record. ── */
+async function clearThread(t, role, scope, byName) {
+  const now = new Date();
+  if (scope === "all") {
+    await ChatThread.updateOne({ _id: t._id }, { $set: { allClearedAt: now, [role === "admin" ? "adminClearedAt" : role === "therapist" ? "therapistClearedAt" : "clientClearedAt"]: now, unreadClient: 0, unreadTherapist: 0 } });
+    const who = role === "admin" ? SUPPORT_NAME : role === "therapist" ? "your therapist" : "the client";
+    // a marker both sides see, written just after the clear so it shows
+    await new Promise((r) => setTimeout(r, 5));
+    await addMessage(t, "system", null, `Chat cleared for everyone by ${who}.`, { kind: "cleared", fromName: byName || "" });
+    for (const u of [t.client, t.therapistUser].filter(Boolean)) toUser(u, "cleared", { threadId: String(t._id), scope: "all" });
+    toAdmins("cleared", { threadId: String(t._id), scope: "all" });
+  } else {
+    const field = role === "admin" ? "adminClearedAt" : role === "therapist" ? "therapistClearedAt" : "clientClearedAt";
+    await ChatThread.updateOne({ _id: t._id }, { $set: { [field]: now, ...(role === "therapist" ? { unreadTherapist: 0 } : role === "client" ? { unreadClient: 0 } : { unreadAdmin: 0 }) } });
+  }
+  return now;
+}
+
+// POST /api/live-chat/threads/:id/clear { scope: "me" | "all" }
+export const clearChat = expressAsyncHandler(async (req, res) => {
+  const t = await myThread(req, req.params.id);
+  if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
+  const scope = req.body?.scope === "all" ? "all" : "me";
+  const at = await clearThread(t, myRole(t, req), scope, req.user.name || "");
+  res.json({ status: true, data: { scope, at } });
+});
+
+// POST /api/admin/live-chat/threads/:id/clear { scope: "me" | "all" }
+export const adminClear = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid chat" });
+  const t = await ChatThread.findById(req.params.id).lean();
+  if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
+  const scope = req.body?.scope === "all" ? "all" : "me";
+  const at = await clearThread(t, "admin", scope, req.user.name || req.user.email || "");
+  await ChatAccessLog.create({ admin: req.user._id, adminName: req.user.name || req.user.email || "", thread: t._id, action: scope === "all" ? "clear-all" : "clear-me", ip: String(req.ip || "").slice(0, 60) });
+  res.json({ status: true, data: { scope, at } });
 });
