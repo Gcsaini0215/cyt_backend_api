@@ -20,7 +20,8 @@ const isId = (x) => mongoose.Types.ObjectId.isValid(String(x || ""));
 const dec = (b) => { try { return b ? decrypt(b) : ""; } catch { return ""; } };
 const MAX_LEN = 2000;
 const CRISIS_HELP = "If you're in danger or thinking about ending your life, please call 112 now, or India's free 24×7 Tele-MANAS helpline 14416. This chat is not watched round the clock — your therapist has been told.";
-export const ADMIN_PERM = "page:/chat-monitor";
+// page-level roles get "page:/chat-monitor"; module roles get "chatMonitor" (admin helpers/permissions.js)
+export const ADMIN_PERM = ["page:/chat-monitor", "chatMonitor"];
 
 const roleOf = (req) => (req.user?.role === 1 ? "therapist" : "client");
 const otherOf = (t, role) => (role === "therapist" ? t.client : t.therapistUser);
@@ -262,7 +263,7 @@ async function adminAllowed(decoded) {
   if (!admin) return false;
   if (!admin.roleId) return true;
   const role = await Role.findById(admin.roleId, { permissions: 1 }).lean();
-  return !!role?.permissions?.includes(ADMIN_PERM);
+  return ADMIN_PERM.some((k) => role?.permissions?.includes(k));
 }
 export const stream = async (req, res) => {
   let decoded;
