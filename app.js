@@ -35,6 +35,7 @@ import traineePortalRouter from "./routes/traineePortal.js";
 import clientInsightRouter from "./routes/clientInsight.js";
 import worksheetRouter from "./routes/worksheet.js";
 import overviewRouter from "./routes/overview.js";
+import growthRouter from "./routes/growth.js";
 import sessionBundleRouter from "./routes/sessionBundle.js";
 import calmRouter from "./routes/calm.js";
 import receptionRouter from "./routes/reception.js";
@@ -161,6 +162,7 @@ app.use("/api", traineePortalRouter);
 app.use("/api", clientInsightRouter);
 app.use("/api", worksheetRouter); // Therapist Toolkit worksheets
 app.use("/api", overviewRouter);
+app.use("/api", growthRouter);
 app.use("/api", sessionBundleRouter);
 app.use("/api", calmRouter);
 app.use("/api", receptionRouter);
