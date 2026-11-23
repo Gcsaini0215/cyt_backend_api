@@ -8,8 +8,15 @@ const { Schema } = mongoose;
 
 const ChatThreadSchema = new Schema({
   client: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
-  therapistUser: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
-  therapist: { type: Schema.Types.ObjectId, ref: "Therapists", required: true },
+  // "therapist": client ↔ therapist. "support": client ↔ CYT Care Team (admins answer; no therapist) — 2026-11-23
+  kind: { type: String, enum: ["therapist", "support"], default: "therapist", index: true },
+  therapistUser: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
+  therapist: { type: Schema.Types.ObjectId, ref: "Therapists", default: null },
+  unreadAdmin: { type: Number, default: 0 }, // support chats: client messages the team hasn't opened yet
+  // a therapist thread the CYT team opened from a support chat: open without a booking for 15 days
+  assignedAt: { type: Date, default: null },
+  assignedBy: { type: String, default: "" },
+  assignedTherapist: { type: Schema.Types.ObjectId, ref: "Therapists", default: null }, // on the support thread: who CYT connected them with
   lastMessageAt: { type: Date, default: null, index: true },
   lastFrom: { type: String, default: "" }, // client | therapist | system
   lastPreview: { type: String, default: "" }, // encrypted, short
@@ -27,7 +34,8 @@ ChatThreadSchema.index({ client: 1, therapistUser: 1 }, { unique: true });
 const ChatMessageSchema = new Schema({
   thread: { type: Schema.Types.ObjectId, ref: "LiveChatThread", required: true, index: true },
   from: { type: Schema.Types.ObjectId, ref: "User", default: null },
-  fromRole: { type: String, enum: ["client", "therapist", "system"], required: true },
+  fromRole: { type: String, enum: ["client", "therapist", "system", "admin"], required: true },
+  fromName: { type: String, default: "" }, // admin replies: which team member wrote it (shown to admins only)
   body: { type: String, required: true }, // encrypted (what was shown, after hiding contact details)
   kind: { type: String, default: "text" }, // text | auto-reply | crisis-help | pre-question | pre-answer
   masked: { type: Boolean, default: false },

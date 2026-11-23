@@ -36,8 +36,12 @@ function phonePush(userId, title, url) {
   pushToUsers({ userId }, title, "Tap to read your message on CYT", url).catch(() => {});
 }
 
+const SUPPORT_NAME = "CYT Care Team";
+const SUPPORT_HOURS = "every day, 9 AM – 9 PM";
+const ASSIGN_DAYS = 15;
 const msgRow = (m, forAdmin = false) => ({
   _id: String(m._id), thread: String(m.thread), fromRole: m.fromRole, kind: m.kind || "text",
+  ...(m.fromRole === "admin" ? { fromName: forAdmin ? (m.fromName || SUPPORT_NAME) : SUPPORT_NAME } : {}),
   body: m.deletedAt && !forAdmin ? "" : dec(m.body), deleted: !!m.deletedAt, masked: !!m.masked, crisis: !!m.crisis,
   readAt: m.readAt, createdAt: m.createdAt,
 });
@@ -48,7 +52,11 @@ async function settingsFor(therapistUser) {
 
 // what the viewer may do in this thread right now
 async function stateFor(t, role) {
+  if (t.kind === "support") return { mode: "open", support: true, openUntil: null, closedAt: null, enabled: true, hours: SUPPORT_HOURS, inHours: true, canSend: true, note: "" };
   const st = await chatState(t.client, t.therapist);
+  if (st.mode !== "open" && t.assignedAt && Date.now() - new Date(t.assignedAt).getTime() < ASSIGN_DAYS * 864e5) {
+    st.mode = "open"; st.openUntil = new Date(new Date(t.assignedAt).getTime() + ASSIGN_DAYS * 864e5);
+  }
   const set = await settingsFor(t.therapistUser);
   const out = { mode: st.mode, openUntil: st.openUntil || null, closedAt: st.closedAt || null, enabled: set.enabled !== false, hours: hoursText(set), inHours: inOfficeHours(set), canSend: false, note: "" };
   if (st.mode === "open") {
@@ -75,6 +83,14 @@ async function stateFor(t, role) {
 }
 
 async function threadRow(t, role) {
+  if (t.kind === "support") {
+    return {
+      _id: String(t._id), support: true,
+      other: { id: "cyt", name: SUPPORT_NAME, photo: "", title: "We'll help you find the right therapist", online: false, support: true },
+      therapistId: null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom === "admin" ? "therapist" : t.lastFrom, preview: dec(t.lastPreview) || "Not sure who to see? Message us — we'll help you choose.",
+      unread: t.unreadClient,
+    };
+  }
   const otherId = otherOf(t, role);
   const other = await Users.findById(otherId, { name: 1, profile: 1 }).lean();
   const th = role === "client" ? await Therapists.findById(t.therapist, { profile_type: 1 }).lean() : null;
@@ -82,8 +98,13 @@ async function threadRow(t, role) {
     _id: String(t._id),
     other: { id: String(otherId), name: other?.name || (role === "client" ? "Therapist" : "Client"), photo: other?.profile || "", title: th?.profile_type || "", online: isOnline(otherId) },
     therapistId: String(t.therapist), lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom, preview: dec(t.lastPreview),
-    unread: role === "therapist" ? t.unreadTherapist : t.unreadClient,
+    unread: role === "therapist" ? t.unreadTherapist : t.unreadClient, assigned: !!t.assignedAt,
   };
+}
+
+// every client has a CYT Care Team chat (made on first use)
+async function supportThreadFor(clientId) {
+  return ChatThread.findOneAndUpdate({ client: clientId, kind: "support" }, { $setOnInsert: { client: clientId, kind: "support", therapistUser: null, therapist: null } }, { upsert: true, new: true }).lean();
 }
 
 /* ── consent ── */
@@ -98,8 +119,12 @@ export const giveConsent = expressAsyncHandler(async (req, res) => {
 /* ── threads ── */
 export const listThreads = expressAsyncHandler(async (req, res) => {
   const role = roleOf(req);
-  const q = role === "therapist" ? { therapistUser: req.user._id } : { client: req.user._id };
-  const list = await ChatThread.find({ ...q, lastMessageAt: { $ne: null } }).sort({ lastMessageAt: -1 }).limit(200).lean();
+  if (role === "client") {
+    const sup = await supportThreadFor(req.user._id);
+    const list = await ChatThread.find({ client: req.user._id, kind: { $ne: "support" }, lastMessageAt: { $ne: null } }).sort({ lastMessageAt: -1 }).limit(200).lean();
+    return res.json({ status: true, data: { role, threads: await Promise.all([sup, ...list].map((t) => threadRow(t, role))) } });
+  }
+  const list = await ChatThread.find({ therapistUser: req.user._id, lastMessageAt: { $ne: null } }).sort({ lastMessageAt: -1 }).limit(200).lean();
   res.json({ status: true, data: { role, threads: await Promise.all(list.map((t) => threadRow(t, role))) } });
 });
 
@@ -109,6 +134,12 @@ export const unreadCount = expressAsyncHandler(async (req, res) => {
   const q = role === "therapist" ? { therapistUser: req.user._id } : { client: req.user._id };
   const r = await ChatThread.aggregate([{ $match: { ...q, [field]: { $gt: 0 } } }, { $group: { _id: null, n: { $sum: `$${field}` }, threads: { $sum: 1 } } }]);
   res.json({ status: true, data: { count: r[0]?.n || 0, threads: r[0]?.threads || 0 } });
+});
+
+export const supportThread = expressAsyncHandler(async (req, res) => {
+  if (req.user.role !== 0) return res.status(403).json({ status: false, message: "Clients only" });
+  const t = await supportThreadFor(req.user._id);
+  res.json({ status: true, data: { id: String(t._id) } });
 });
 
 // POST /api/live-chat/start { therapistId } — a client opens (or finds) the thread with a therapist
@@ -148,7 +179,7 @@ export const getThread = expressAsyncHandler(async (req, res) => {
 });
 
 const adminMeta = (t) => (t ? {
-  _id: String(t._id), lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom, messageCount: t.messageCount || 0,
+  _id: String(t._id), kind: t.kind || "therapist", unreadAdmin: t.unreadAdmin || 0, assignedAt: t.assignedAt || null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom, messageCount: t.messageCount || 0,
   crisisCount: t.crisisCount || 0, contactCount: t.contactCount || 0, lastCrisisAt: t.lastCrisisAt, firstReplyMins: t.firstReplyMins,
   unreadTherapist: t.unreadTherapist || 0, createdAt: t.createdAt,
 } : null);
@@ -156,17 +187,18 @@ const adminMeta = (t) => (t ? {
 async function addMessage(t, fromRole, from, body, extra = {}) {
   const m = await ChatMessage.create({ thread: t._id, from, fromRole, body: encrypt(body), ...extra });
   const inc = { messageCount: 1 };
-  if (fromRole !== "therapist") inc.unreadTherapist = 1;
-  if (fromRole !== "client") inc.unreadClient = 1;
+  if (t.kind === "support") { if (fromRole === "client") inc.unreadAdmin = 1; else inc.unreadClient = 1; }
+  else { if (fromRole !== "therapist") inc.unreadTherapist = 1; if (fromRole !== "client") inc.unreadClient = 1; }
   if (extra.crisis) inc.crisisCount = 1;
   if (extra.masked) inc.contactCount = 1;
   const set = { lastMessageAt: m.createdAt, lastFrom: fromRole, lastPreview: encrypt(body.slice(0, 90)) };
   if (extra.crisis) set.lastCrisisAt = m.createdAt;
   const nt = await ChatThread.findByIdAndUpdate(t._id, { $inc: inc, $set: set }, { new: true }).lean();
   const row = msgRow(m);
-  if (from) row.fromName = (await Users.findById(from, { name: 1 }).lean())?.name || ""; // for the pop-up banner
+  if (fromRole === "admin") row.fromName = SUPPORT_NAME;
+  else if (from) row.fromName = (await Users.findById(from, { name: 1 }).lean())?.name || ""; // for the pop-up banner
   toUser(t.client, "message", { threadId: String(t._id), message: row });
-  toUser(t.therapistUser, "message", { threadId: String(t._id), message: row });
+  if (t.therapistUser) toUser(t.therapistUser, "message", { threadId: String(t._id), message: row });
   const [named] = await withNames([nt]);
   toAdmins("message", { threadId: String(t._id), message: msgRow(m, true), thread: named });
   return { m, nt };
@@ -183,8 +215,17 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
   const st = await stateFor(t, role);
   if (!st.canSend) return res.status(403).json({ status: false, message: st.note || "You can't send messages here right now", state: st });
 
-  const { text, masked } = maskContacts(raw);
   const crisis = CRISIS.test(raw);
+  if (t.kind === "support") {
+    const { m } = await addMessage(t, "client", req.user._id, raw, { crisis, kind: "text" });
+    if (crisis) await addMessage(t, "system", null, CRISIS_HELP.replace("your therapist has been told", "our team has been alerted"), { kind: "crisis-help" });
+    if (!t.autoReplyAt || Date.now() - new Date(t.autoReplyAt).getTime() > 6 * 36e5) {
+      await ChatThread.updateOne({ _id: t._id }, { $set: { autoReplyAt: new Date() } });
+      await addMessage(t, "system", null, "Thanks for writing to CYT. Someone from our care team will reply soon (every day, 9 AM – 9 PM) and help you find the right therapist.", { kind: "auto-reply" });
+    }
+    return res.json({ status: true, data: { message: msgRow(m), masked: false, crisis } });
+  }
+  const { text, masked } = maskContacts(raw);
   const kind = st.mode === "pre" ? (role === "client" ? "pre-question" : "pre-answer") : "text";
   const { m } = await addMessage(t, role, req.user._id, text, { masked, crisis, kind });
 
@@ -218,11 +259,12 @@ export const markRead = expressAsyncHandler(async (req, res) => {
   const t = await myThread(req, req.params.id);
   if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
   const role = myRole(t, req);
-  const otherRoles = role === "therapist" ? ["client", "system"] : ["therapist", "system"];
+  const otherRoles = role === "therapist" ? ["client", "system"] : ["therapist", "system", "admin"];
   const now = new Date();
   await ChatMessage.updateMany({ thread: t._id, fromRole: { $in: otherRoles }, readAt: null }, { $set: { readAt: now } });
   await ChatThread.updateOne({ _id: t._id }, { $set: { [role === "therapist" ? "unreadTherapist" : "unreadClient"]: 0 } });
-  toUser(otherOf(t, role), "read", { threadId: String(t._id), by: role, at: now });
+  if (otherOf(t, role)) toUser(otherOf(t, role), "read", { threadId: String(t._id), by: role, at: now });
+  if (t.kind === "support") toAdmins("read", { threadId: String(t._id), by: role, at: now });
   toUser(req.user._id, "read", { threadId: String(t._id), by: role, at: now });
   res.json({ status: true });
 });
@@ -235,7 +277,7 @@ export const deleteMessage = expressAsyncHandler(async (req, res) => {
   if (Date.now() - m.createdAt.getTime() > 10 * 60000) return res.status(400).json({ status: false, message: "Messages can only be deleted within 10 minutes" });
   m.deletedAt = new Date(); await m.save();
   const t = await ChatThread.findById(m.thread).lean();
-  for (const u of [t.client, t.therapistUser]) toUser(u, "deleted", { threadId: String(t._id), id: String(m._id) });
+  for (const u of [t.client, t.therapistUser].filter(Boolean)) toUser(u, "deleted", { threadId: String(t._id), id: String(m._id) });
   toAdmins("deleted", { threadId: String(t._id), id: String(m._id) });
   res.json({ status: true });
 });
@@ -302,13 +344,13 @@ export const stream = async (req, res) => {
 
 /* ── admin: the complete record ── */
 async function withNames(list) {
-  const ids = [...new Set(list.filter(Boolean).flatMap((t) => [String(t.client), String(t.therapistUser)]))];
+  const ids = [...new Set(list.filter(Boolean).flatMap((t) => [String(t.client), t.therapistUser ? String(t.therapistUser) : null]).filter(Boolean))];
   const users = await Users.find({ _id: { $in: ids } }, { name: 1, email: 1, profile: 1 }).lean();
   const by = Object.fromEntries(users.map((u) => [String(u._id), u]));
   return list.filter(Boolean).map((t) => ({
     ...adminMeta(t), preview: dec(t.lastPreview), therapistId: String(t.therapist),
     client: { id: String(t.client), name: by[String(t.client)]?.name || "Client", email: by[String(t.client)]?.email || "", photo: by[String(t.client)]?.profile || "" },
-    therapist: { id: String(t.therapistUser), name: by[String(t.therapistUser)]?.name || "Therapist", photo: by[String(t.therapistUser)]?.profile || "" },
+    therapist: t.kind === "support" ? { id: "cyt", name: SUPPORT_NAME, photo: "", support: true } : { id: String(t.therapistUser), name: by[String(t.therapistUser)]?.name || "Therapist", photo: by[String(t.therapistUser)]?.profile || "" },
   }));
 }
 
@@ -316,7 +358,8 @@ export const adminThreads = expressAsyncHandler(async (req, res) => {
   const q = { lastMessageAt: { $ne: null } };
   if (req.query.filter === "crisis") q.crisisCount = { $gt: 0 };
   if (req.query.filter === "contact") q.contactCount = { $gt: 0 };
-  if (req.query.filter === "waiting") { q.unreadTherapist = { $gt: 0 }; q.lastFrom = "client"; }
+  if (req.query.filter === "waiting") { q.$and = [{ $or: [{ kind: "support", unreadAdmin: { $gt: 0 } }, { kind: { $ne: "support" }, unreadTherapist: { $gt: 0 }, lastFrom: { $in: ["client", "system"] } }] }]; } // after an auto-reply lastFrom is "system"
+  if (req.query.filter === "support") q.kind = "support";
   const search = String(req.query.q || "").trim().slice(0, 60);
   if (search) {
     const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
@@ -332,14 +375,20 @@ export const adminThread = expressAsyncHandler(async (req, res) => {
   if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid chat" });
   const t = await ChatThread.findById(req.params.id).lean();
   if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
+  if (t.kind === "support" && t.unreadAdmin) await ChatThread.updateOne({ _id: t._id }, { $set: { unreadAdmin: 0 } });
   if (!req.query.before) await ChatAccessLog.create({ admin: req.user._id, adminName: req.user.name || req.user.email || "", thread: t._id, ip: String(req.ip || "").slice(0, 60) });
   const q = { thread: t._id };
   if (req.query.before) { const d = new Date(String(req.query.before)); if (!Number.isNaN(d.getTime())) q.createdAt = { $lt: d }; }
   const msgs = await ChatMessage.find(q).sort({ createdAt: -1 }).limit(200).lean();
   const [row] = await withNames([t]);
-  const st = await chatState(t.client, t.therapist);
+  const st = t.kind === "support" ? { mode: "support" } : await chatState(t.client, t.therapist);
+  let assigned = null;
+  if (t.kind === "support" && t.assignedTherapist) {
+    const th = await Therapists.findById(t.assignedTherapist, { user: 1, profile_type: 1 }).populate({ path: "user", select: "name" }).lean();
+    if (th) assigned = { id: String(th._id), name: th.user?.name || "Therapist", title: th.profile_type || "" };
+  }
   const opened = await ChatAccessLog.find({ thread: t._id }).sort({ createdAt: -1 }).limit(20).lean();
-  res.json({ status: true, data: { thread: row, mode: st.mode, messages: msgs.reverse().map((m) => msgRow(m, true)), more: msgs.length === 200, accessLog: opened.map((a) => ({ name: a.adminName, at: a.createdAt })) } });
+  res.json({ status: true, data: { thread: row, mode: st.mode, messages: msgs.reverse().map((m) => msgRow(m, true)), more: msgs.length === 200, assigned, accessLog: opened.map((a) => ({ name: a.adminName, at: a.createdAt })) } });
 });
 
 export const adminStats = expressAsyncHandler(async (req, res) => {
@@ -347,7 +396,7 @@ export const adminStats = expressAsyncHandler(async (req, res) => {
   const [threads, today, waiting, crisis7, contact7, avg] = await Promise.all([
     ChatThread.countDocuments({ lastMessageAt: { $ne: null } }),
     ChatMessage.countDocuments({ createdAt: { $gte: new Date(Date.now() - 864e5) }, fromRole: { $ne: "system" } }),
-    ChatThread.countDocuments({ unreadTherapist: { $gt: 0 }, lastFrom: "client" }),
+    ChatThread.countDocuments({ $or: [{ kind: "support", unreadAdmin: { $gt: 0 } }, { kind: { $ne: "support" }, unreadTherapist: { $gt: 0 }, lastFrom: { $in: ["client", "system"] } }] }),
     ChatThread.countDocuments({ lastCrisisAt: { $gte: week } }),
     ChatThread.countDocuments({ contactCount: { $gt: 0 }, updatedAt: { $gte: week } }),
     ChatThread.aggregate([{ $match: { firstReplyMins: { $ne: null } } }, { $group: { _id: null, m: { $avg: "$firstReplyMins" } } }]),
@@ -361,4 +410,59 @@ export const adminAccessLog = expressAsyncHandler(async (req, res) => {
   const ts = await withNames(await ChatThread.find({ _id: { $in: tids } }).lean());
   const by = Object.fromEntries(ts.map((t) => [t._id, t]));
   res.json({ status: true, data: list.map((a) => ({ at: a.createdAt, admin: a.adminName, thread: String(a.thread), client: by[String(a.thread)]?.client?.name || "", therapist: by[String(a.thread)]?.therapist?.name || "" })) });
+});
+
+
+/* ── admin: CYT Care Team replies + connecting a client with a therapist (2026-11-23, owner) ── */
+// POST /api/admin/live-chat/threads/:id/messages { text } — Care Team chats only
+export const adminReply = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid chat" });
+  const t = await ChatThread.findById(req.params.id).lean();
+  if (!t || t.kind !== "support") return res.status(404).json({ status: false, message: "Only Care Team chats can be answered here" });
+  const text = String(req.body?.text || "").trim().slice(0, MAX_LEN);
+  if (!text) return res.status(400).json({ status: false, message: "Write a message first" });
+  const { m } = await addMessage(t, "admin", null, text, { kind: "text", fromName: req.user.name || req.user.email || "" });
+  await ChatThread.updateOne({ _id: t._id }, { $set: { unreadAdmin: 0 } });
+  notifyClient(t.client, { type: "message", title: `${SUPPORT_NAME} replied`, body: text.slice(0, 140), link: `/client/messages?t=${t._id}`, ref: `chat:${t._id}:${hourRef()}` });
+  phonePush(t.client, `New message from ${SUPPORT_NAME}`, `/client/messages?t=${t._id}`);
+  res.json({ status: true, data: { message: msgRow(m, true) } });
+});
+
+// GET /api/admin/live-chat/therapists?q= — live therapists to connect a client with
+export const adminTherapists = expressAsyncHandler(async (req, res) => {
+  const q = String(req.query.q || "").trim().slice(0, 60);
+  let userIds = null;
+  if (q) {
+    const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    userIds = (await Users.find({ role: 1, $or: [{ name: rx }, { email: rx }] }, { _id: 1 }).limit(100).lean()).map((u) => u._id);
+  }
+  const list = await Therapists.find({ ...(userIds ? { user: { $in: userIds } } : {}), show_to_page: { $in: [1, true] } }, { user: 1, profile_type: 1, state: 1 })
+    .populate({ path: "user", select: "name profile" }).limit(30).lean();
+  res.json({ status: true, data: list.filter((t) => t.user).map((t) => ({ id: String(t._id), name: t.user.name, photo: t.user.profile || "", title: t.profile_type || "", place: t.state || "" })) });
+});
+
+// POST /api/admin/live-chat/threads/:id/assign { therapistId } — opens a therapist chat for this client
+// (no booking needed for ${ASSIGN_DAYS} days), tells both of them, and notes it in the Care Team chat
+export const adminAssign = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id) || !isId(req.body?.therapistId)) return res.status(400).json({ status: false, message: "Invalid request" });
+  const sup = await ChatThread.findById(req.params.id).lean();
+  if (!sup || sup.kind !== "support") return res.status(404).json({ status: false, message: "Care Team chat not found" });
+  const th = await Therapists.findById(req.body.therapistId, { user: 1, profile_type: 1 }).populate({ path: "user", select: "name" }).lean();
+  if (!th?.user) return res.status(404).json({ status: false, message: "Therapist not found" });
+  const client = await Users.findById(sup.client, { name: 1 }).lean();
+  const by = req.user.name || req.user.email || "CYT";
+  const t = await ChatThread.findOneAndUpdate(
+    { client: sup.client, therapistUser: th.user._id },
+    { $set: { assignedAt: new Date(), assignedBy: by, kind: "therapist" }, $setOnInsert: { client: sup.client, therapistUser: th.user._id, therapist: th._id } },
+    { upsert: true, new: true },
+  ).lean();
+  await ChatThread.updateOne({ _id: sup._id }, { $set: { assignedTherapist: th._id } });
+  const tname = th.user.name || "your therapist";
+  await addMessage(sup, "admin", null, `We've connected you with ${tname}${th.profile_type ? ` (${th.profile_type})` : ""}. You can message them now from your Messages — and book a session when you're ready.`, { kind: "text", fromName: by });
+  await addMessage(t, "system", null, `CYT Care Team connected ${client?.name || "this client"} with ${tname}. Messages are open for ${ASSIGN_DAYS} days, and stay open once a session is booked.`, { kind: "assigned" });
+  notifyTherapists([th.user._id], { type: "action", title: `CYT connected you with ${client?.name || "a new client"}`, body: "Please say hello in Messages — they're looking for support.", link: `/therapists/messages?t=${t._id}`, ref: `chat-assign:${t._id}:${Date.now()}` });
+  phonePush(th.user._id, `New client from CYT: ${client?.name || "a client"}`, `/therapists/messages?t=${t._id}`);
+  notifyClient(sup.client, { type: "message", title: `You're connected with ${tname}`, body: "Open Messages to say hello.", link: `/client/messages?t=${t._id}`, ref: `chat-assign:${t._id}:${Date.now()}` });
+  phonePush(sup.client, `You're connected with ${tname}`, `/client/messages?t=${t._id}`);
+  res.json({ status: true, data: { thread: String(t._id), therapist: { id: String(th._id), name: tname, title: th.profile_type || "" } } });
 });
