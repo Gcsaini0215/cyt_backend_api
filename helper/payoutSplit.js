@@ -20,7 +20,9 @@ const num = (v) => Number(v?.$numberDecimal ?? v?.toString?.() ?? v) || 0;
 
 /* a Booking (with `transaction` populated, or its amount on b.transaction) → { paid, base, therapist, platform, pct }.
    A CYT Noida session counts what the client paid CYT (its Booking itself carries ₹0). Unpaid → all zero. */
-export function bookingSplit(b) {
+/* levelPct (optional): the therapist's % now (helper/achievements.js levelPctMap) — used for a session that isn't
+   completed yet, so it shows what they'd get today (projected: true). A completed session always keeps its own %. */
+export function bookingSplit(b, levelPct) {
   if (!b) return { paid: 0, ...payoutSplit({}) };
   // an earlier CYT Noida session kept as a record: settled before payouts — nothing to earn or pay
   if (b.noida_legacy) return { paid: Number(b.noida_amount) || 0, base: 0, therapist: 0, platform: 0, pct: THERAPIST_PCT, legacy: true };
@@ -35,9 +37,12 @@ export function bookingSplit(b) {
   const base = paidOk && noida && b.noida_session_value != null ? Number(b.noida_session_value) || 0
     : cytFunded > 0 ? Math.max(0, paid + cytFunded - (Number(b.assessment_fee) || 0)) : undefined;
   // sessions completed before levels existed (no therapist_pct) stay 70/30
-  const pct = Number(b.therapist_pct) > 0 ? Number(b.therapist_pct) : THERAPIST_PCT;
+  const stamped = Number(b.therapist_pct) > 0;
+  const projected = !stamped && b.status !== "Completed" && Number(levelPct) > 0;
+  const pct = stamped ? Number(b.therapist_pct) : projected ? Number(levelPct) : THERAPIST_PCT;
   return {
     paid,
+    ...(projected ? { projected: true } : {}),
     ...payoutSplit({
       pct,
       paid, base, platformFee: noida ? Number(b.noida_fee) || 0 : 0,

@@ -11,6 +11,12 @@ import TraineeAttendance from "../models/TraineeAttendance.js";
 import CollabApplication from "../models/CollabApplication.js";
 import TherapistActionRequest from "../models/TherapistActionRequest.js";
 import WorkshopBooking from "../models/WorkshopBooking.js";
+import mongoose from "mongoose";
+import Booking from "../models/Booking.js";
+import "../models/Transaction.js";
+import { bookingSplit } from "../helper/payoutSplit.js";
+import { levelPctMap } from "../helper/achievements.js";
+import { isSuperAdminReq } from "../middlewares/hideRevenueMiddleware.js";
 
 /* GET /api/admin/overview-summary — the parts of the business the Overview didn't track yet:
    Noida centre, assessments, therapist plans, payouts, internships / trainee portal, collaborations,
@@ -22,6 +28,34 @@ const sum = async (Model, match, field = "$amount") => {
   const r = await Model.aggregate([{ $match: match }, { $group: { _id: null, total: { $sum: { $toDouble: { $ifNull: [field, 0] } } }, n: { $sum: 1 } } }]);
   return { total: Math.round(r[0]?.total || 0), n: r[0]?.n || 0 };
 };
+
+/* Sessions booked this month (online + CYT Noida), split the same way as Payouts (helper/payoutSplit.js):
+   collected = what clients paid · therapists = their share (each session's own %, or the therapist's % today
+   if not completed yet) · cyt = collected − therapists. A CYT Noida package session was paid for with the
+   package (collected earlier, in full, on the booking that bought it), so it adds only the therapist's share —
+   cash basis. Cancelled sessions are counted apart. */
+async function monthSplit(from) {
+  const since = mongoose.Types.ObjectId.createFromTime(Math.floor(from.getTime() / 1000));
+  const rows = await Booking.find({ _id: { $gte: since }, $or: [{ payment_status: "Paid" }, { transaction: { $ne: null } }, { source: "noida" }] })
+    .select("status source payment_status amount referral_discount credit_used noida_amount noida_fee noida_session_value noida_legacy assessment_fee assessment_therapist_share transaction therapist therapist_pct")
+    .populate("transaction", "amount").lean();
+  const levels = await levelPctMap(rows.map((b) => b.therapist)).catch(() => new Map());
+  const out = { collected: 0, therapists: 0, cyt: 0, sessions: 0, online: 0, noida: 0, packageSessions: 0, projected: 0, cancelledPaid: 0, cancelledCount: 0 };
+  for (const b of rows) {
+    const sp = bookingSplit(b, levels.get(String(b.therapist || "")));
+    if (sp.legacy || (!sp.paid && !sp.base)) continue;
+    if (b.status === "Cancelled") { if (sp.paid) { out.cancelledPaid += sp.paid; out.cancelledCount += 1; } continue; }
+    out.sessions += 1;
+    out[b.source === "noida" ? "noida" : "online"] += 1;
+    if (!sp.paid) out.packageSessions += 1;
+    if (sp.projected) out.projected += 1;
+    out.collected += sp.paid;
+    out.therapists += sp.therapist;
+  }
+  out.cyt = out.collected - out.therapists;
+  for (const k of ["collected", "therapists", "cyt", "cancelledPaid"]) out[k] = Math.round(out[k]);
+  return out;
+}
 
 export const overviewSummary = expressAsyncHandler(async (req, res) => {
   const today = istDay();
@@ -45,6 +79,7 @@ export const overviewSummary = expressAsyncHandler(async (req, res) => {
     TherapistActionRequest.countDocuments({ status: "open" }),
     sum(WorkshopBooking, { is_payment_success: true, createdAt: { $gte: from } }),
   ]);
+  const split = isSuperAdminReq(req) ? await monthSplit(from).catch(() => null) : null; // rupee split: Super Admin only
   res.json({
     status: true,
     data: {
@@ -57,6 +92,7 @@ export const overviewSummary = expressAsyncHandler(async (req, res) => {
       collaborations: { new: collabNew },
       therapistRequests: { open: therapistReqs },
       workshops: { monthRevenue: workshopMonth.total, monthCount: workshopMonth.n },
+      split,
     },
   });
 });

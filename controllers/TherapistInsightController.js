@@ -16,6 +16,7 @@ import TherapistAddon from "../models/TherapistAddon.js";
 import SessionNote from "../models/SessionNote.js";
 import "../models/Transaction.js";
 import { bookingSplit } from "../helper/payoutSplit.js";
+import { splitLevelFor, levelPctMap } from "../helper/achievements.js";
 import { TEST_BY_KEY } from "../helper/assessmentTests.js";
 import { onlineInfo, onlineIdsByRole } from "./ClientPresenceController.js";
 
@@ -82,6 +83,7 @@ export const listTherapists = expressAsyncHandler(async (req, res) => {
   ]);
   const m = (arr) => new Map(arr.map((x) => [String(x._id), x]));
   const B = m(bk); const R = m(rv); const P = m(ps);
+  const L = await levelPctMap(ids).catch(() => new Map()); // the therapist's % of each session today (70 → up to 93)
   const data = rows.map((t) => {
     const id = String(t._id); const u = t.user || {};
     const b = B.get(id) || {}; const r = R.get(id) || {};
@@ -91,7 +93,7 @@ export const listTherapists = expressAsyncHandler(async (req, res) => {
       verification: t.verification_status || "pending", live: (t.show_to_page || 0) > 0, top: !!t.top_therapist,
       plan: t.subscription_expires_at && new Date(t.subscription_expires_at) > now ? (t.subscription_plan || "Paid") : "", planEnds: t.subscription_expires_at || null,
       sessions: b.sessions || 0, completed: b.completed || 0, upcoming: b.upcoming || 0, clients: (b.clients || []).filter(Boolean).length,
-      reviews: r.n || 0, rating: r.avg ? Math.round(r.avg * 10) / 10 : null, views30: P.get(id)?.views || 0,
+      reviews: r.n || 0, rating: r.avg ? Math.round(r.avg * 10) / 10 : null, views30: P.get(id)?.views || 0, pct: L.get(id) || 70,
       lastVisit: u.last_visit || null, online: !!onlineInfo(u._id),
     };
   });
@@ -121,24 +123,33 @@ export const therapistDetail = expressAsyncHandler(async (req, res) => {
     uid ? SessionNote.find({ user: uid }, { booking: 1, createdAt: 1, updatedAt: 1 }).lean() : [],
   ]);
 
+  // the therapist's level now (helper/achievements.js): their % today and what the next step needs
+  const level = await splitLevelFor(t).catch(() => null);
   const now = Date.now();
   const noted = new Set(notes.map((n) => String(n.booking)));
   const sessions = bookings.map((b) => {
-    const sp = bookingSplit(b);
+    const sp = bookingSplit(b, level?.therapistPct);
     const when = b.booking_date ? new Date(b.booking_date) : null;
     const paid = b.payment_status === "Paid" || b.source === "noida";
     const state = b.status === "Cancelled" ? "cancelled" : b.status === "Completed" ? "completed" : !paid ? "pending" : when && when.getTime() > now ? "upcoming" : b.status === "Started" ? "in-progress" : "past";
     return {
       _id: String(b._id), date: b.booking_date, state, status: b.status || "", paid, noida: b.source === "noida",
       client: b.client ? { id: String(b.client._id), name: b.client.name, photo: b.client.profile || "" } : { id: "", name: b.cname || "Client", photo: "" },
-      service: b.service || "", format: b.format || "", amount: sp.paid || 0, share: sp.therapist || 0, pct: sp.pct,
+      service: b.service || "", format: b.format || "", amount: sp.paid || 0, share: sp.therapist || 0, platform: sp.platform || 0, pct: sp.pct, projected: !!sp.projected,
+      legacy: !!sp.legacy, pkg: !sp.legacy && !sp.paid && sp.base > 0, // legacy = earlier Noida session settled before payouts; pkg = Noida package session
       paymentId: b.transaction?.transaction_id || "", payment: b.source === "noida" ? "Noida centre" : b.payment_status || "",
       startedAt: b.session_started_at || null, completedAt: b.session_completed_at || null, paidOut: !!b.payout_id, note: noted.has(String(b._id)),
       meet: !!b.meet_link || !!b.calendar_event_id,
     };
   });
   const real = sessions.filter((s) => s.paid);
-  const earned = real.filter((s) => s.state !== "cancelled").reduce((x, s) => x + s.share, 0);
+  // earned = completed sessions only (same as the therapist's Payouts page); booked-but-not-done = expected
+  const earned = real.filter((s) => s.state === "completed").reduce((x, s) => x + s.share, 0);
+  const expected = real.filter((s) => s.state !== "completed" && s.state !== "cancelled").reduce((x, s) => x + s.share, 0);
+  const cytShare = real.filter((s) => s.state !== "cancelled").reduce((x, s) => x + s.platform, 0);
+  const notCancelled = real.filter((s) => s.state !== "cancelled");
+  const legacyGross = notCancelled.filter((s) => s.legacy).reduce((x, s) => x + s.amount, 0);   // not split (settled before payouts)
+  const pkgValue = notCancelled.filter((s) => s.pkg).reduce((x, s) => x + s.share + s.platform, 0); // paid earlier with a package
   const paidOut = payouts.filter((p) => p.status === "paid").reduce((x, p) => x + (p.amount || 0), 0);
   const rating = reviews.length ? Math.round((reviews.reduce((x, r) => x + (r.rating || 0), 0) / reviews.length) * 10) / 10 : null;
 
@@ -212,10 +223,12 @@ export const therapistDetail = expressAsyncHandler(async (req, res) => {
       totals: {
         sessions: real.length, completed: real.filter((s) => s.state === "completed").length, upcoming: real.filter((s) => s.state === "upcoming").length,
         cancelled: real.filter((s) => s.state === "cancelled").length, pending: sessions.filter((s) => !s.paid && s.state === "pending").length,
-        clients: new Set(real.map((s) => s.client.id).filter(Boolean)).size, gross: Math.round(real.filter((s) => s.state !== "cancelled").reduce((x, s) => x + s.amount, 0)),
-        earned: Math.round(earned), paidOut: Math.round(paidOut), due: Math.max(0, Math.round(earned - paidOut)),
+        clients: new Set(real.map((s) => s.client.id).filter(Boolean)).size, gross: Math.round(notCancelled.filter((s) => !s.legacy).reduce((x, s) => x + s.amount, 0)),
+        legacyGross: Math.round(legacyGross), legacyCount: notCancelled.filter((s) => s.legacy).length, pkgValue: Math.round(pkgValue), pkgCount: notCancelled.filter((s) => s.pkg).length,
+        earned: Math.round(earned), expected: Math.round(expected), cytShare: Math.round(cytShare), paidOut: Math.round(paidOut), due: Math.max(0, Math.round(earned - paidOut)),
         reviews: reviews.length, rating, assessments: assessments.length, notes: notes.length, views: views.total, views30: views.d30,
       },
+      level: level ? { pct: level.therapistPct, cyt: level.platformPct, name: level.level, ratingHold: level.ratingHold, next: level.next ? { pct: 100 - level.next.pct, needs: level.next.needs } : null } : null,
       sessions, views,
       reviews: reviews.map((r) => ({ _id: String(r._id), name: r.name || "", rating: r.rating, text: r.description || "", at: r.createdAt })),
       assessments: assessments.map((a) => ({ _id: String(a._id), name: testShort(a.tool), client: a.client?.name || "", status: a.status, sentAt: a.sentAt || a.createdAt, doneAt: a.doneAt || null, releasedAt: a.releasedAt || null, amount: a.amount || 0 })),

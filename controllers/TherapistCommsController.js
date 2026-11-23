@@ -13,7 +13,7 @@ import { deleteMeetEvent } from "../helper/googleMeet.js";
 import { therapistBookingsChanged } from "../services/therapistNotify.js";
 import { changed as clientBookingsChanged } from "../services/clientNotify.js";
 import { THERAPIST_PCT, payoutSplit, bookingSplit } from "../helper/payoutSplit.js";
-import { splitLevelFor, stampTherapistPct } from "../helper/achievements.js";
+import { splitLevelFor, stampTherapistPct, levelPctMap } from "../helper/achievements.js";
 import { razorpayxReady, payoutDestination, sendRazorpayxPayout, fetchRazorpayxPayout } from "../helper/razorpayx.js";
 import { generateQrCode } from "../helper/generate.js";
 import TherapistFeedback from "../models/TherapistFeedback.js";
@@ -131,7 +131,8 @@ export const completeAction = expressAsyncHandler(async (req, res) => {
 export const myPayouts = expressAsyncHandler(async (req, res) => {
   const payouts = await TherapistPayout.find({ user: req.user._id }).sort({ createdAt: -1 }).limit(200)
     .select("amount periodFrom periodTo sessions method reference status paidAt note createdAt").lean();
-  // earnings by session: every session a client has paid for (newest first) — the therapist's 70% and its payout
+  // earnings by session: every session a client has paid for (newest first) — the therapist's share (their % when
+  // completed; their % today for one not completed yet) and its payout
   const me = await Therapists.findOne({ user: req.user._id }).select("_id createdAt").lean();
   const level = me ? await splitLevelFor(me).catch(() => ({ therapistPct: THERAPIST_PCT, platformPct: 100 - THERAPIST_PCT })) : { therapistPct: THERAPIST_PCT, platformPct: 100 - THERAPIST_PCT };
   const sessions = me ? await Booking.find({ therapist: me._id, status: { $ne: "Cancelled" }, $or: [{ payment_status: "Paid" }, { transaction: { $ne: null } }] })
@@ -139,10 +140,10 @@ export const myPayouts = expressAsyncHandler(async (req, res) => {
     .populate("transaction", "amount").populate("client", "name").populate("payout_id", "status amount paidAt createdAt")
     .sort({ booking_date: -1 }).limit(1000).lean() : [];
   const earnings = sessions.map((b) => {
-    const sp = bookingSplit(b);
+    const sp = bookingSplit(b, level.therapistPct);
     return {
       _id: b._id, sessionAt: b.booking_date, client: b.client?.name || b.cname || "Client", service: b.service || "", format: b.format || "",
-      source: b.source === "noida" ? "noida" : "online", status: b.status, paid: sp.paid, share: sp.therapist, platform: sp.platform, pct: sp.pct, legacy: !!sp.legacy,
+      source: b.source === "noida" ? "noida" : "online", status: b.status, paid: sp.paid, share: sp.therapist, platform: sp.platform, pct: sp.pct, projected: !!sp.projected, legacy: !!sp.legacy,
       payout: b.payout_id ? { status: b.payout_id.status, amount: b.payout_id.amount, at: b.payout_id.paidAt || b.payout_id.createdAt } : null,
     };
   }).filter((e) => e.paid > 0 && !e.legacy);
@@ -452,6 +453,7 @@ export const adminPayoutBookings = expressAsyncHandler(async (req, res) => {
     .populate({ path: "transaction", select: "amount transaction_id payment_method createdAt is_payment_success" })
     .populate({ path: "payout_id", select: "amount status paidAt createdAt method reference sessions rzp_payout_id rzp_status rzp_error rzp_mode" })
     .sort({ booking_date: -1 }).limit(3000).lean();
+  const levels = await levelPctMap(rows.map((b) => b.therapist?._id)).catch(() => new Map());
   const data = rows.map((b) => {
     const noida = b.source === "noida";
     const tx = b.transaction || null;
@@ -478,7 +480,7 @@ export const adminPayoutBookings = expressAsyncHandler(async (req, res) => {
       txnId: tx?.transaction_id || "",
       paidAt: tx?.createdAt || null,
       startedAt: b.session_started_at || null, completedAt: b.session_completed_at || null,
-      split: bookingSplit(b),
+      split: bookingSplit(b, levels.get(String(b.therapist?._id || ""))), // not completed yet → the therapist's % today (projected)
       legacy: !!b.noida_legacy,
       packageSession: noida && !paid && b.noida_session_value > 0,
       payout: b.payout_id ? { _id: b.payout_id._id, status: b.payout_id.status, amount: b.payout_id.amount, sessions: b.payout_id.sessions, paidAt: b.payout_id.paidAt || b.payout_id.createdAt, method: b.payout_id.method, reference: b.payout_id.reference, rzpId: b.payout_id.rzp_payout_id || "", rzpStatus: b.payout_id.rzp_status || "", rzpError: b.payout_id.rzp_error || "", rzpMode: b.payout_id.rzp_mode || "" } : null,

@@ -54,7 +54,8 @@ import { findUsableCoupon, discountOf } from "../helper/coupon.js";
 import { CONSULT_AMOUNT_RUPEES } from "../helper/consult.js";
 import SessionBundle from "../models/SessionBundle.js";
 import { feeFor, packPrice, isUsable, takeSession, returnSession, activatePackFor, getPackConfig } from "../helper/sessionBundle.js";
-import { stampTherapistPct } from "../helper/achievements.js";
+import { stampTherapistPct, levelPctMap } from "../helper/achievements.js";
+import { isSuperAdminReq } from "../middlewares/hideRevenueMiddleware.js";
 import Jwt from "jsonwebtoken";
 import { checkGuestEmailProof } from "./GuestOtpController.js";
 
@@ -1060,14 +1061,16 @@ export const getBookings = expressAsyncHandler(async (req, res, next) => {
       .sort({ _id: -1 })
       .exec();
 
-    // the therapist sees what they earn from each session: 70% of the session amount (helper/payoutSplit.js)
+    // the therapist sees what they earn from each session: their % of the session amount (70% to start, up to 93%
+    // with achievements; a session not completed yet shows their % today) — helper/payoutSplit.js
     if (req.user.role === 1) {
+      const levels = await levelPctMap(result.map((b) => b.therapist?._id || b.therapist)).catch(() => new Map());
       result = result.map((b) => {
         const o = b.toObject();
-        const sp = bookingSplit(o);
+        const sp = bookingSplit(o, levels.get(String(o.therapist?._id || o.therapist || "")));
         // a Noida booking made without an email has no client account: name + phone from the booking
         const client = o.client || (o.source === "noida" ? { name: o.cname || "Client", phone: o.noida_phone || "", email: "" } : o.client);
-        return { ...o, client, therapist_share: sp.therapist, platform_share: sp.platform, client_paid: sp.paid, share_pct: sp.pct };
+        return { ...o, client, therapist_share: sp.therapist, platform_share: sp.platform, client_paid: sp.paid, share_pct: sp.pct, share_projected: !!sp.projected };
       });
     } else {
       result = result.map((b) => {
@@ -1537,6 +1540,18 @@ export const getBookingsForAdmin = expressAsyncHandler(async (req, res, next) =>
       .exec();
 
     let paymentStatus = await PaymentStatus.find();
+
+    /* Super Admin: each booking's money split, from the same helper as Payouts (helper/payoutSplit.js) —
+       client_paid = therapist_share + platform_share (+ assessment fee where one was paid). A session not
+       completed yet uses the therapist's % today (share_projected). Team members don't get the split. */
+    if (isSuperAdminReq(req)) {
+      const levels = await levelPctMap(result.map((b) => b.therapist?._id || b.therapist)).catch(() => new Map());
+      result = result.map((b) => {
+        const o = b.toObject();
+        const sp = bookingSplit(o, levels.get(String(o.therapist?._id || o.therapist || "")));
+        return { ...o, client_paid: sp.paid, therapist_share: sp.therapist, platform_share: sp.platform, share_pct: sp.pct, share_projected: !!sp.projected };
+      });
+    }
 
     res.status(201).json({
       status: true,

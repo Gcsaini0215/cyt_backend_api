@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import mongoose from "mongoose";
 import Booking from "../models/Booking.js";
 import Review from "../models/Review.js";
 import TherapistAchievement from "../models/TherapistAchievement.js";
@@ -110,6 +111,40 @@ export async function splitLevelFor(therapist, known) {
     }
   }
   return { platformPct: cur.pct, therapistPct: 100 - cur.pct, level: cur.level, ratingHold: !!cur.ratingHold, next, minPlatformPct: MIN_PLATFORM_PCT };
+}
+
+/* The therapist's % now, for many therapists at once (3 queries, kept 10 minutes): Map(therapistId → therapistPct).
+   For sessions not completed yet (no therapist_pct stamped), so a list shows what the therapist will get today. */
+const levelCache = new Map(); // id → { pct, at }
+const LEVEL_TTL = 10 * 60 * 1000;
+export async function levelPctMap(ids) {
+  const out = new Map();
+  const want = [];
+  for (const raw of new Set((ids || []).filter(Boolean).map(String))) {
+    const c = levelCache.get(raw);
+    if (c && Date.now() - c.at < LEVEL_TTL) out.set(raw, c.pct);
+    else if (/^[a-f0-9]{24}$/i.test(raw)) want.push(raw);
+  }
+  if (!want.length) return out;
+  const oids = want.map((x) => new mongoose.Types.ObjectId(x));
+  const [done, revs, ach] = await Promise.all([
+    Booking.aggregate([{ $match: { therapist: { $in: oids }, status: "Completed" } }, { $group: { _id: "$therapist", n: { $sum: 1 } } }]),
+    Review.aggregate([{ $match: { therapist_id: { $in: oids }, rating: { $gt: 0 } } }, { $group: { _id: "$therapist_id", n: { $sum: 1 }, avg: { $avg: "$rating" } } }]),
+    TherapistAchievement.find({ therapist: { $in: oids } }).select("therapist key").lean(),
+  ]);
+  const D = new Map(done.map((x) => [String(x._id), x.n]));
+  const R = new Map(revs.map((x) => [String(x._id), x]));
+  const K = new Map();
+  for (const a of ach) { const k = String(a.therapist); if (!K.has(k)) K.set(k, new Set()); K.get(k).add(a.key); }
+  for (const id of want) {
+    const r = R.get(id);
+    // same numbers as statsOf (average rounded to one decimal)
+    const stats = { sessions: D.get(id) || 0, reviews: r?.n || 0, avgRating: r ? Math.round(r.avg * 10) / 10 : 0 };
+    const pct = 100 - platformPctOf(stats, K.get(id) || new Set()).pct;
+    levelCache.set(id, { pct, at: Date.now() });
+    out.set(id, pct);
+  }
+  return out;
 }
 
 // a session was just completed: keep the therapist's % for it on the booking (once — later changes don't move it)

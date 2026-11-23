@@ -2,7 +2,7 @@ import expressAsyncHandler from "express-async-handler";
 import { mailProfileLiveOnce } from "../helper/profileLive.js";
 import Therapists, { defaultFees } from "../models/Therapists.js";
 import { placeFromPin, areaKey } from "../helper/therapistArea.js";
-import { publicAchievements } from "../helper/achievements.js";
+import { publicAchievements, levelPctMap } from "../helper/achievements.js";
 import TherapistAddon from "../models/TherapistAddon.js";
 import Users from "../models/Users.js";
 import Bank from "../models/Bank.js";
@@ -588,8 +588,10 @@ export const getDashboardData = expressAsyncHandler(async (req, res, next) => {
       .sort({ _id: -1 })
       .lean();
 
-    // the therapist's 70% of each paid session (what the client paid, less CYT's share — helper/payoutSplit.js)
-    const appointmentRevenue = bookings.reduce((sum, booking) => sum + (booking.status === "Cancelled" ? 0 : bookingSplit(booking).therapist), 0);
+    // the therapist's share of each paid session (70% to start, up to 93% with achievements; a session not completed
+    // yet counts at their % today — helper/payoutSplit.js)
+    const levelPct = (await levelPctMap([therapistProfile._id]).catch(() => new Map())).get(String(therapistProfile._id));
+    const appointmentRevenue = bookings.reduce((sum, booking) => sum + (booking.status === "Cancelled" ? 0 : bookingSplit(booking, levelPct).therapist), 0);
 
     const workshops = await Workshop.find({ post_by: therapistProfile._id });
     const workshopIds = workshops.map(w => w._id);
