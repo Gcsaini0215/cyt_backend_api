@@ -252,9 +252,7 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
     if (crisis) {
       await addMessage(t, "system", null, CRISIS_HELP, { kind: "crisis-help" });
       notifyTherapists([t.therapistUser], { type: "action", title: `⚠ ${req.user.name || "A client"} may be at risk — please check the chat`, body: "Their message mentions self-harm. They were shown 112 and Tele-MANAS 14416.", link: `/therapists/messages?t=${t._id}`, ref: `chat-crisis:${m._id}` });
-    } else {
-      notifyTherapists([t.therapistUser], { type: "notice", title: `New message from ${req.user.name || "a client"}`, body: text.slice(0, 140), link: `/therapists/messages?t=${t._id}`, ref: `chat:${t._id}:${hourRef()}` });
-    }
+    } // ordinary messages: no bell notification — Messages + the chat button + phone push show them (owner, 2026-11-24)
     phonePush(t.therapistUser, crisis ? `⚠ Urgent message from ${req.user.name || "a client"}` : `New message from ${req.user.name || "a client"}`, `/therapists/messages?t=${t._id}`);
     const set = await settingsFor(t.therapistUser);
     if (!inOfficeHours(set) && (!t.autoReplyAt || Date.now() - new Date(t.autoReplyAt).getTime() > 6 * 36e5)) {
@@ -263,7 +261,6 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
       await addMessage(t, "system", null, msg, { kind: "auto-reply" });
     }
   } else {
-    notifyClient(t.client, { type: "message", title: `${req.user.name || "Your therapist"} replied`, body: text.slice(0, 140), link: `/client/messages?t=${t._id}`, ref: `chat:${t._id}:${hourRef()}` });
     phonePush(t.client, `New message from ${req.user.name || "your therapist"}`, `/client/messages?t=${t._id}`);
   }
   res.json({ status: true, data: { message: msgRow(m), masked, crisis } });
@@ -440,7 +437,6 @@ export const adminReply = expressAsyncHandler(async (req, res) => {
   if (!text) return res.status(400).json({ status: false, message: "Write a message first" });
   const { m } = await addMessage(t, "admin", null, text, { kind: "text", fromName: req.user.name || req.user.email || "" });
   await ChatThread.updateOne({ _id: t._id }, { $set: { unreadAdmin: 0 } });
-  notifyClient(t.client, { type: "message", title: `${SUPPORT_NAME} replied`, body: text.slice(0, 140), link: `/client/messages?t=${t._id}`, ref: `chat:${t._id}:${hourRef()}` });
   phonePush(t.client, `New message from ${SUPPORT_NAME}`, `/client/messages?t=${t._id}`);
   res.json({ status: true, data: { message: msgRow(m, true) } });
 });
