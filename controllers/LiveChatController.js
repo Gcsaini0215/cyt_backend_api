@@ -369,7 +369,8 @@ async function withNames(list) {
 }
 
 export const adminThreads = expressAsyncHandler(async (req, res) => {
-  const q = { lastMessageAt: { $ne: null } };
+  // a chat the admin deleted "for me" stays out of the list until a newer message arrives
+  const q = { lastMessageAt: { $ne: null }, $expr: { $gt: ["$lastMessageAt", { $ifNull: ["$adminHiddenAt", new Date(0)] }] } };
   if (req.query.filter === "crisis") q.crisisCount = { $gt: 0 };
   if (req.query.filter === "contact") q.contactCount = { $gt: 0 };
   if (req.query.filter === "waiting") { q.$and = [{ $or: [{ kind: "support", unreadAdmin: { $gt: 0 } }, { kind: { $ne: "support" }, unreadTherapist: { $gt: 0 }, lastFrom: { $in: ["client", "system"] } }] }]; } // after an auto-reply lastFrom is "system"
@@ -512,6 +513,27 @@ export const clearChat = expressAsyncHandler(async (req, res) => {
 });
 
 // POST /api/admin/live-chat/threads/:id/clear { scope: "me" | "all" }
+/* Delete a whole chat from Live Chats (owner, 2026-11-24).
+   scope "me"  — gone from the admin's list only; the client / therapist keep it; a new message brings it back.
+   scope "all" — the chat and all its messages are removed for good, for everyone. Only the access-log line remains. */
+export const adminDelete = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid chat" });
+  const t = await ChatThread.findById(req.params.id).lean();
+  if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
+  const scope = req.body?.scope === "all" ? "all" : "me";
+  const by = req.user.name || req.user.email || "";
+  if (scope === "all") {
+    await ChatMessage.deleteMany({ thread: t._id });
+    await ChatThread.deleteOne({ _id: t._id });
+    for (const u of [t.client, t.therapistUser].filter(Boolean)) toUser(u, "cleared", { threadId: String(t._id), scope: "deleted" });
+  } else {
+    await ChatThread.updateOne({ _id: t._id }, { $set: { adminHiddenAt: new Date() } });
+  }
+  toAdmins("cleared", { threadId: String(t._id), scope: scope === "all" ? "deleted" : "hidden" });
+  await ChatAccessLog.create({ admin: req.user._id, adminName: by, thread: t._id, action: scope === "all" ? "delete-all" : "delete-me", ip: String(req.ip || "").slice(0, 60) });
+  res.json({ status: true, data: { scope } });
+});
+
 export const adminClear = expressAsyncHandler(async (req, res) => {
   if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid chat" });
   const t = await ChatThread.findById(req.params.id).lean();
