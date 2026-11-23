@@ -122,10 +122,10 @@ export const listThreads = expressAsyncHandler(async (req, res) => {
   const role = roleOf(req);
   if (role === "client") {
     const sup = await supportThreadFor(req.user._id);
-    const list = await ChatThread.find({ client: req.user._id, kind: { $ne: "support" }, lastMessageAt: { $ne: null } }).sort({ lastMessageAt: -1 }).limit(200).lean();
+    const list = await ChatThread.find({ client: req.user._id, kind: { $ne: "support" }, lastMessageAt: { $ne: null }, $expr: { $gt: ["$lastMessageAt", { $ifNull: ["$clientHiddenAt", new Date(0)] }] } }).sort({ lastMessageAt: -1 }).limit(200).lean();
     return res.json({ status: true, data: { role, threads: await Promise.all([sup, ...list].map((t) => threadRow(t, role))) } });
   }
-  const list = await ChatThread.find({ therapistUser: req.user._id, lastMessageAt: { $ne: null } }).sort({ lastMessageAt: -1 }).limit(200).lean();
+  const list = await ChatThread.find({ therapistUser: req.user._id, lastMessageAt: { $ne: null }, $expr: { $gt: ["$lastMessageAt", { $ifNull: ["$therapistHiddenAt", new Date(0)] }] } }).sort({ lastMessageAt: -1 }).limit(200).lean();
   res.json({ status: true, data: { role, threads: await Promise.all(list.map((t) => threadRow(t, role))) } });
 });
 
@@ -508,8 +508,16 @@ export const clearChat = expressAsyncHandler(async (req, res) => {
   const t = await myThread(req, req.params.id);
   if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
   const scope = req.body?.scope === "all" ? "all" : "me";
-  const at = await clearThread(t, myRole(t, req), scope, req.user.name || "");
-  res.json({ status: true, data: { scope, at } });
+  const role = myRole(t, req);
+  const at = await clearThread(t, role, scope, req.user.name || "");
+  if (req.body?.remove) {
+    const now = new Date(Date.now() + 1000); // after the "cleared" note clearThread may have added
+    const set = scope === "all" ? { clientHiddenAt: now, therapistHiddenAt: now } : { [`${role}HiddenAt`]: now };
+    await ChatThread.updateOne({ _id: t._id }, { $set: set });
+    const who = scope === "all" ? [t.client, t.therapistUser] : [req.user._id];
+    for (const u of who.filter(Boolean)) toUser(u, "cleared", { threadId: String(t._id), scope: "removed" });
+  }
+  res.json({ status: true, data: { scope, at, removed: !!req.body?.remove } });
 });
 
 // POST /api/admin/live-chat/threads/:id/clear { scope: "me" | "all" }

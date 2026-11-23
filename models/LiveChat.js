@@ -19,7 +19,9 @@ const ChatThreadSchema = new Schema({
   clientClearedAt: { type: Date, default: null },
   therapistClearedAt: { type: Date, default: null },
   adminClearedAt: { type: Date, default: null },
-  adminHiddenAt: { type: Date, default: null }, // admin deleted the chat from their Live Chats list; a newer message brings it back
+  adminHiddenAt: { type: Date, default: null },
+  clientHiddenAt: { type: Date, default: null }, // client / therapist deleted the chat from their own list (CYT's record keeps it)
+  therapistHiddenAt: { type: Date, default: null }, // admin deleted the chat from their Live Chats list; a newer message brings it back
   allClearedAt: { type: Date, default: null },
   // a therapist thread the CYT team opened from a support chat: open without a booking for 15 days
   assignedAt: { type: Date, default: null },
