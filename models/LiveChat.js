@@ -10,6 +10,9 @@ const ChatThreadSchema = new Schema({
   client: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
   // "therapist": client ↔ therapist. "support": client ↔ CYT Care Team (admins answer; no therapist) — 2026-11-23
   kind: { type: String, enum: ["therapist", "support"], default: "therapist", index: true },
+  // support chats: who is talking to the CYT team — a client, or a therapist (owner, 2026-11-25). The person is always
+  // stored in "client"; a therapist's own messages are saved as fromRole "therapist".
+  audience: { type: String, enum: ["client", "therapist"], default: "client" },
   therapistUser: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
   therapist: { type: Schema.Types.ObjectId, ref: "Therapists", default: null },
   unreadAdmin: { type: Number, default: 0 }, // (support)

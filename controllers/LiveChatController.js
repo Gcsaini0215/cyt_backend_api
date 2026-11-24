@@ -83,12 +83,15 @@ async function stateFor(t, role) {
   return out;
 }
 
+const supFrom = (t) => (t.audience === "therapist" ? "therapist" : "client");
+
 async function threadRow(t, role) {
   if (t.kind === "support") {
+    const th = t.audience === "therapist";
     return {
-      _id: String(t._id), support: true,
-      other: { id: "cyt", name: SUPPORT_NAME, photo: "", title: "We'll help you find the right therapist", online: false, support: true },
-      therapistId: null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom === "admin" ? "therapist" : t.lastFrom, preview: (clearedFor(t, "client") && t.lastMessageAt && new Date(t.lastMessageAt) <= clearedFor(t, "client") ? "" : dec(t.lastPreview)) || "Not sure who to see? Message us — we'll help you choose.",
+      _id: String(t._id), support: true, audience: t.audience || "client",
+      other: { id: "cyt", name: SUPPORT_NAME, photo: "", title: th ? "Profile, sessions, payouts — ask us anything" : "We'll help you find the right therapist", online: false, support: true },
+      therapistId: null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom === "admin" ? (th ? "client" : "therapist") : t.lastFrom, preview: (clearedFor(t, "client") && t.lastMessageAt && new Date(t.lastMessageAt) <= clearedFor(t, "client") ? "" : dec(t.lastPreview)) || (th ? "Need help from the CYT team? Message us here." : "Not sure who to see? Message us — we'll help you choose."),
       unread: t.unreadClient,
       assigned: t.assignedThread ? { thread: String(t.assignedThread), name: t.assignedName || "your therapist", at: t.assignedOn || null } : null,
     };
@@ -105,8 +108,9 @@ async function threadRow(t, role) {
 }
 
 // every client has a CYT Care Team chat (made on first use)
-async function supportThreadFor(clientId) {
-  return ChatThread.findOneAndUpdate({ client: clientId, kind: "support" }, { $setOnInsert: { client: clientId, kind: "support", therapistUser: null, therapist: null } }, { upsert: true, new: true }).lean();
+// therapists get one too — their line to the CYT team (owner, 2026-11-25)
+async function supportThreadFor(clientId, audience = "client") {
+  return ChatThread.findOneAndUpdate({ client: clientId, kind: "support" }, { $setOnInsert: { client: clientId, kind: "support", audience, therapistUser: null, therapist: null } }, { upsert: true, new: true }).lean();
 }
 
 /* ── consent ── */
@@ -129,7 +133,10 @@ export const listThreads = expressAsyncHandler(async (req, res) => {
     return res.json({ status: true, data: { role, threads: await Promise.all([...(supGone ? [] : [sup]), ...list].map((t) => threadRow(t, role))) } });
   }
   const list = await ChatThread.find({ therapistUser: req.user._id, lastMessageAt: { $ne: null }, $expr: { $gt: ["$lastMessageAt", { $ifNull: ["$therapistHiddenAt", new Date(0)] }] } }).sort({ lastMessageAt: -1 }).limit(200).lean();
-  res.json({ status: true, data: { role, threads: await Promise.all(list.map((t) => threadRow(t, role))) } });
+  // the therapist's chat with the CYT team, pinned on top (unless they deleted it — it comes back with the next message)
+  const sup = await supportThreadFor(req.user._id, "therapist");
+  const supGone = sup && sup.clientHiddenAt && (!sup.lastMessageAt || new Date(sup.lastMessageAt) <= new Date(sup.clientHiddenAt));
+  res.json({ status: true, data: { role, threads: await Promise.all([...(supGone ? [] : [sup]), ...list].map((t) => threadRow(t, t.kind === "support" ? "client" : role))) } });
 });
 
 export const unreadCount = expressAsyncHandler(async (req, res) => {
@@ -137,12 +144,17 @@ export const unreadCount = expressAsyncHandler(async (req, res) => {
   const field = role === "therapist" ? "unreadTherapist" : "unreadClient";
   const q = role === "therapist" ? { therapistUser: req.user._id } : { client: req.user._id };
   const r = await ChatThread.aggregate([{ $match: { ...q, [field]: { $gt: 0 } } }, { $group: { _id: null, n: { $sum: `$${field}` }, threads: { $sum: 1 } } }]);
-  res.json({ status: true, data: { count: r[0]?.n || 0, threads: r[0]?.threads || 0 } });
+  let n = r[0]?.n || 0, threads = r[0]?.threads || 0;
+  if (role === "therapist") {
+    const sup = await ChatThread.findOne({ client: req.user._id, kind: "support", unreadClient: { $gt: 0 } }, { unreadClient: 1 }).lean();
+    if (sup) { n += sup.unreadClient; threads += 1; }
+  }
+  res.json({ status: true, data: { count: n, threads } });
 });
 
 export const supportThread = expressAsyncHandler(async (req, res) => {
-  if (req.user.role !== 0) return res.status(403).json({ status: false, message: "Clients only" });
-  const t = await supportThreadFor(req.user._id);
+  if (req.user.role !== 0 && req.user.role !== 1) return res.status(403).json({ status: false, message: "Clients and therapists only" });
+  const t = await supportThreadFor(req.user._id, req.user.role === 1 ? "therapist" : "client");
   res.json({ status: true, data: { id: String(t._id) } });
 });
 
@@ -193,7 +205,7 @@ export const getThread = expressAsyncHandler(async (req, res) => {
 });
 
 const adminMeta = (t) => (t ? {
-  _id: String(t._id), kind: t.kind || "therapist", unreadAdmin: t.unreadAdmin || 0, lastPage: t.lastPage || "", assignedAt: t.assignedAt || null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom, messageCount: t.messageCount || 0,
+  _id: String(t._id), kind: t.kind || "therapist", audience: t.kind === "support" ? (t.audience || "client") : undefined, unreadAdmin: t.unreadAdmin || 0, lastPage: t.lastPage || "", assignedAt: t.assignedAt || null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom, messageCount: t.messageCount || 0,
   crisisCount: t.crisisCount || 0, contactCount: t.contactCount || 0, lastCrisisAt: t.lastCrisisAt, firstReplyMins: t.firstReplyMins,
   unreadTherapist: t.unreadTherapist || 0, createdAt: t.createdAt,
 } : null);
@@ -201,7 +213,7 @@ const adminMeta = (t) => (t ? {
 async function addMessage(t, fromRole, from, body, extra = {}) {
   const m = await ChatMessage.create({ thread: t._id, from, fromRole, body: encrypt(body), ...extra });
   const inc = { messageCount: 1 };
-  if (t.kind === "support") { if (fromRole === "client") inc.unreadAdmin = 1; else inc.unreadClient = 1; }
+  if (t.kind === "support") { if (fromRole === "client" || fromRole === "therapist") inc.unreadAdmin = 1; else inc.unreadClient = 1; }
   else { if (fromRole !== "therapist") inc.unreadTherapist = 1; if (fromRole !== "client") inc.unreadClient = 1; }
   if (extra.crisis) inc.crisisCount = 1;
   if (extra.masked) inc.contactCount = 1;
@@ -234,13 +246,18 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
     // which page of the website they wrote from (the floating chat on every page sends it)
     const page = /^\/(?!\/)[\w\-./?=&%]{0,180}$/.test(String(req.body?.page || "")) ? String(req.body.page) : "";
     if (page) await ChatThread.updateOne({ _id: t._id }, { $set: { lastPage: page } });
-    const { m } = await addMessage(t, "client", req.user._id, raw, { crisis, kind: "text", page });
-    if (crisis) await addMessage(t, "system", null, CRISIS_HELP.replace("your therapist has been told", "our team has been alerted"), { kind: "crisis-help" });
+    const th = t.audience === "therapist";
+    // a therapist writing about a client's risk isn't in crisis themselves — no crisis banner on their own line to CYT
+    const flag = crisis && !th;
+    const { m } = await addMessage(t, supFrom(t), req.user._id, raw, { crisis: flag, kind: "text", page });
+    if (flag) await addMessage(t, "system", null, CRISIS_HELP.replace("your therapist has been told", "our team has been alerted"), { kind: "crisis-help" });
     if (!t.autoReplyAt || Date.now() - new Date(t.autoReplyAt).getTime() > 6 * 36e5) {
       await ChatThread.updateOne({ _id: t._id }, { $set: { autoReplyAt: new Date() } });
-      await addMessage(t, "system", null, "Thanks for writing to CYT. Someone from our care team will reply soon (every day, 9 AM – 9 PM) and help you find the right therapist.", { kind: "auto-reply" });
+      await addMessage(t, "system", null, th
+        ? "Thanks for writing to the CYT team. We'll reply soon (every day, 9 AM – 9 PM)."
+        : "Thanks for writing to CYT. Someone from our care team will reply soon (every day, 9 AM – 9 PM) and help you find the right therapist.", { kind: "auto-reply" });
     }
-    return res.json({ status: true, data: { message: msgRow(m), masked: false, crisis } });
+    return res.json({ status: true, data: { message: msgRow(m), masked: false, crisis: flag } });
   }
   const { text, masked } = maskContacts(raw);
   const kind = st.mode === "pre" ? (role === "client" ? "pre-question" : "pre-answer") : "text";
@@ -273,7 +290,7 @@ export const markRead = expressAsyncHandler(async (req, res) => {
   const t = await myThread(req, req.params.id);
   if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
   const role = myRole(t, req);
-  const otherRoles = role === "therapist" ? ["client", "system"] : ["therapist", "system", "admin"];
+  const otherRoles = t.kind === "support" ? ["system", "admin"] : role === "therapist" ? ["client", "system"] : ["therapist", "system", "admin"];
   const now = new Date();
   await ChatMessage.updateMany({ thread: t._id, fromRole: { $in: otherRoles }, readAt: null }, { $set: { readAt: now } });
   await ChatThread.updateOne({ _id: t._id }, { $set: { [role === "therapist" ? "unreadTherapist" : "unreadClient"]: 0 } });
@@ -374,7 +391,8 @@ export const adminThreads = expressAsyncHandler(async (req, res) => {
   if (req.query.filter === "crisis") q.crisisCount = { $gt: 0 };
   if (req.query.filter === "contact") q.contactCount = { $gt: 0 };
   if (req.query.filter === "waiting") { q.$and = [{ $or: [{ kind: "support", unreadAdmin: { $gt: 0 } }, { kind: { $ne: "support" }, unreadTherapist: { $gt: 0 }, lastFrom: { $in: ["client", "system"] } }] }]; } // after an auto-reply lastFrom is "system"
-  if (req.query.filter === "support") q.kind = "support";
+  if (req.query.filter === "support") { q.kind = "support"; q.audience = { $ne: "therapist" }; }
+  if (req.query.filter === "therapists") { q.kind = "support"; q.audience = "therapist"; }
   const search = String(req.query.q || "").trim().slice(0, 60);
   if (search) {
     const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
@@ -440,7 +458,7 @@ export const adminReply = expressAsyncHandler(async (req, res) => {
   if (!text) return res.status(400).json({ status: false, message: "Write a message first" });
   const { m } = await addMessage(t, "admin", null, text, { kind: "text", fromName: req.user.name || req.user.email || "" });
   await ChatThread.updateOne({ _id: t._id }, { $set: { unreadAdmin: 0 } });
-  phonePush(t.client, `New message from ${SUPPORT_NAME}`, `/client/messages?t=${t._id}`);
+  phonePush(t.client, `New message from ${SUPPORT_NAME}`, `${t.audience === "therapist" ? "/therapists/messages" : "/client/messages"}?t=${t._id}`);
   res.json({ status: true, data: { message: msgRow(m, true) } });
 });
 
@@ -463,6 +481,7 @@ export const adminAssign = expressAsyncHandler(async (req, res) => {
   if (!isId(req.params.id) || !isId(req.body?.therapistId)) return res.status(400).json({ status: false, message: "Invalid request" });
   const sup = await ChatThread.findById(req.params.id).lean();
   if (!sup || sup.kind !== "support") return res.status(404).json({ status: false, message: "Care Team chat not found" });
+  if (sup.audience === "therapist") return res.status(400).json({ status: false, message: "This is a therapist's chat with the CYT team" });
   const th = await Therapists.findById(req.body.therapistId, { user: 1, profile_type: 1 }).populate({ path: "user", select: "name" }).lean();
   if (!th?.user) return res.status(404).json({ status: false, message: "Therapist not found" });
   const client = await Users.findById(sup.client, { name: 1 }).lean();
