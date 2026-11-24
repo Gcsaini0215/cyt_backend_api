@@ -26,7 +26,10 @@ const ChatThreadSchema = new Schema({
   // a therapist thread the CYT team opened from a support chat: open without a booking for 15 days
   assignedAt: { type: Date, default: null },
   assignedBy: { type: String, default: "" },
-  assignedTherapist: { type: Schema.Types.ObjectId, ref: "Therapists", default: null }, // on the support thread: who CYT connected them with
+  assignedTherapist: { type: Schema.Types.ObjectId, ref: "Therapists", default: null },
+  assignedThread: { type: Schema.Types.ObjectId, default: null }, // on the support thread: the chat with that therapist
+  assignedName: { type: String, default: "" },
+  assignedOn: { type: Date, default: null }, // when CYT connected them (the widget starts fresh from here) // on the support thread: who CYT connected them with
   lastMessageAt: { type: Date, default: null, index: true },
   lastFrom: { type: String, default: "" }, // client | therapist | system
   lastPreview: { type: String, default: "" }, // encrypted, short

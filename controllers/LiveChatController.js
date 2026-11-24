@@ -90,6 +90,7 @@ async function threadRow(t, role) {
       other: { id: "cyt", name: SUPPORT_NAME, photo: "", title: "We'll help you find the right therapist", online: false, support: true },
       therapistId: null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom === "admin" ? "therapist" : t.lastFrom, preview: (clearedFor(t, "client") && t.lastMessageAt && new Date(t.lastMessageAt) <= clearedFor(t, "client") ? "" : dec(t.lastPreview)) || "Not sure who to see? Message us — we'll help you choose.",
       unread: t.unreadClient,
+      assigned: t.assignedThread ? { thread: String(t.assignedThread), name: t.assignedName || "your therapist", at: t.assignedOn || null } : null,
     };
   }
   const otherId = otherOf(t, role);
@@ -123,7 +124,9 @@ export const listThreads = expressAsyncHandler(async (req, res) => {
   if (role === "client") {
     const sup = await supportThreadFor(req.user._id);
     const list = await ChatThread.find({ client: req.user._id, kind: { $ne: "support" }, lastMessageAt: { $ne: null }, $expr: { $gt: ["$lastMessageAt", { $ifNull: ["$clientHiddenAt", new Date(0)] }] } }).sort({ lastMessageAt: -1 }).limit(200).lean();
-    return res.json({ status: true, data: { role, threads: await Promise.all([sup, ...list].map((t) => threadRow(t, role))) } });
+    // the Care Team chat stays pinned unless the client deleted it (then it comes back with the next message) — owner, 2026-11-24
+    const supGone = sup && sup.clientHiddenAt && (!sup.lastMessageAt || new Date(sup.lastMessageAt) <= new Date(sup.clientHiddenAt));
+    return res.json({ status: true, data: { role, threads: await Promise.all([...(supGone ? [] : [sup]), ...list].map((t) => threadRow(t, role))) } });
   }
   const list = await ChatThread.find({ therapistUser: req.user._id, lastMessageAt: { $ne: null }, $expr: { $gt: ["$lastMessageAt", { $ifNull: ["$therapistHiddenAt", new Date(0)] }] } }).sort({ lastMessageAt: -1 }).limit(200).lean();
   res.json({ status: true, data: { role, threads: await Promise.all(list.map((t) => threadRow(t, role))) } });
@@ -469,14 +472,15 @@ export const adminAssign = expressAsyncHandler(async (req, res) => {
     { $set: { assignedAt: new Date(), assignedBy: by, kind: "therapist" }, $setOnInsert: { client: sup.client, therapistUser: th.user._id, therapist: th._id } },
     { upsert: true, new: true },
   ).lean();
-  await ChatThread.updateOne({ _id: sup._id }, { $set: { assignedTherapist: th._id } });
   const tname = th.user.name || "your therapist";
+  await ChatThread.updateOne({ _id: sup._id }, { $set: { assignedTherapist: th._id, assignedThread: t._id, assignedName: tname, assignedOn: new Date() } });
   await addMessage(sup, "admin", null, `We've connected you with ${tname}${th.profile_type ? ` (${th.profile_type})` : ""}. You can message them now from your Messages — and book a session when you're ready.`, { kind: "text", fromName: by });
   await addMessage(t, "system", null, `CYT Care Team connected ${client?.name || "this client"} with ${tname}. Messages are open for ${ASSIGN_DAYS} days, and stay open once a session is booked.`, { kind: "assigned" });
   notifyTherapists([th.user._id], { type: "action", title: `CYT connected you with ${client?.name || "a new client"}`, body: "Please say hello in Messages — they're looking for support.", link: `/therapists/messages?t=${t._id}`, ref: `chat-assign:${t._id}:${Date.now()}` });
   phonePush(th.user._id, `New client from CYT: ${client?.name || "a client"}`, `/therapists/messages?t=${t._id}`);
   notifyClient(sup.client, { type: "message", title: `You're connected with ${tname}`, body: "Open Messages to say hello.", link: `/client/messages?t=${t._id}`, ref: `chat-assign:${t._id}:${Date.now()}` });
   phonePush(sup.client, `You're connected with ${tname}`, `/client/messages?t=${t._id}`);
+  toUser(sup.client, "assigned", { supportId: String(sup._id), threadId: String(t._id), name: tname });
   res.json({ status: true, data: { thread: String(t._id), therapist: { id: String(th._id), name: tname, title: th.profile_type || "" } } });
 });
 
