@@ -5,7 +5,8 @@ import Users from "../models/Users.js";
 import Admin from "../models/Admin.js";
 import Role from "../models/Role.js";
 import Therapists from "../models/Therapists.js";
-import { ChatThread, ChatMessage, ChatAccessLog, ChatSettings, ChatConsent } from "../models/LiveChat.js";
+import { ChatThread, ChatMessage, ChatAccessLog, ChatSettings, ChatConsent, ChatNote, ChatCanned } from "../models/LiveChat.js";
+import Booking from "../models/Booking.js";
 import { encrypt, decrypt } from "../helper/googleMeet.js";
 import { CRISIS, maskContacts, chatState, inOfficeHours, hoursText, OPEN_DAYS } from "../helper/chatRules.js";
 import { addChatClient, addChatAdmin, toUser, toAdmins, isOnline, liveAdminIds } from "../services/chatHub.js";
@@ -224,6 +225,7 @@ export const getThread = expressAsyncHandler(async (req, res) => {
 });
 
 const adminMeta = (t) => (t ? {
+  claimedBy: t.claimedBy ? String(t.claimedBy) : null, claimedName: t.claimedName || "", status: t.status || "open", resolvedName: t.resolvedName || "",
   _id: String(t._id), kind: t.kind || "therapist", audience: t.kind === "support" ? (t.audience || "client") : undefined, unreadAdmin: t.unreadAdmin || 0, lastPage: t.lastPage || "", assignedAt: t.assignedAt || null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom, messageCount: t.messageCount || 0,
   crisisCount: t.crisisCount || 0, contactCount: t.contactCount || 0, lastCrisisAt: t.lastCrisisAt, firstReplyMins: t.firstReplyMins,
   unreadTherapist: t.unreadTherapist || 0, createdAt: t.createdAt,
@@ -232,11 +234,13 @@ const adminMeta = (t) => (t ? {
 async function addMessage(t, fromRole, from, body, extra = {}) {
   const m = await ChatMessage.create({ thread: t._id, from, fromRole, body: encrypt(body), ...extra });
   const inc = { messageCount: 1 };
+  const reopen = t.kind === "support" && (fromRole === "client" || fromRole === "therapist") && t.status === "resolved";
   if (t.kind === "support") { if (fromRole === "client" || fromRole === "therapist") inc.unreadAdmin = 1; else inc.unreadClient = 1; }
   else { if (fromRole !== "therapist") inc.unreadTherapist = 1; if (fromRole !== "client") inc.unreadClient = 1; }
   if (extra.crisis) inc.crisisCount = 1;
   if (extra.masked) inc.contactCount = 1;
   const set = { lastMessageAt: m.createdAt, lastFrom: fromRole, lastPreview: encrypt(body.slice(0, 90)) };
+  if (reopen) { set.status = "open"; set.resolvedAt = null; set.resolvedName = ""; }
   if (extra.crisis) set.lastCrisisAt = m.createdAt;
   const nt = await ChatThread.findByIdAndUpdate(t._id, { $inc: inc, $set: set }, { new: true }).lean();
   const row = msgRow(m);
@@ -342,6 +346,132 @@ export const pushSubscribe = expressAsyncHandler(async (req, res) => {
   res.json({ status: true });
 });
 
+/* ── Phase B (owner, 2026-11-25): who's handling a chat, open / resolved, team notes, saved replies, context, team report ── */
+const noteRow = (n) => ({ _id: String(n._id), body: dec(n.body), adminName: n.adminName || "Admin", admin: n.admin ? String(n.admin) : null, createdAt: n.createdAt });
+const claimEvent = (t) => toAdmins("claim", { threadId: String(t._id), claimedBy: t.claimedBy ? String(t.claimedBy) : null, claimedName: t.claimedName || "", status: t.status || "open", resolvedName: t.resolvedName || "" });
+async function setClaim(id, admin) {
+  const t = await ChatThread.findByIdAndUpdate(id, { $set: admin ? { claimedBy: admin._id, claimedName: admin.name || admin.email || "Admin", claimedAt: new Date() } : { claimedBy: null, claimedName: "", claimedAt: null } }, { new: true }).lean();
+  if (t) claimEvent(t);
+  return t;
+}
+// POST /admin/live-chat/threads/:id/claim { on: true | false } — "I'm handling this" / let it go
+export const adminClaim = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid chat" });
+  const t = await setClaim(req.params.id, req.body?.on === false ? null : req.user);
+  if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
+  res.json({ status: true, data: { claimedBy: t.claimedBy ? String(t.claimedBy) : null, claimedName: t.claimedName || "" } });
+});
+// POST /admin/live-chat/threads/:id/status { status: "open" | "resolved" }
+export const adminStatus = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid chat" });
+  const resolved = req.body?.status === "resolved";
+  const t = await ChatThread.findByIdAndUpdate(req.params.id, { $set: resolved ? { status: "resolved", resolvedAt: new Date(), resolvedName: req.user.name || req.user.email || "Admin", unreadAdmin: 0 } : { status: "open", resolvedAt: null, resolvedName: "" } }, { new: true }).lean();
+  if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
+  claimEvent(t);
+  res.json({ status: true, data: { status: t.status, resolvedName: t.resolvedName || "" } });
+});
+// POST /admin/live-chat/threads/:id/notes { body } · DELETE /admin/live-chat/notes/:id
+export const adminAddNote = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid chat" });
+  const body = String(req.body?.body || "").trim().slice(0, 1000);
+  if (!body) return res.status(400).json({ status: false, message: "Write the note first" });
+  if (!(await ChatThread.exists({ _id: req.params.id }))) return res.status(404).json({ status: false, message: "Chat not found" });
+  const n = await ChatNote.create({ thread: req.params.id, admin: req.user._id, adminName: req.user.name || req.user.email || "Admin", body: encrypt(body) });
+  const row = noteRow(n);
+  toAdmins("note", { threadId: String(req.params.id), note: row });
+  res.json({ status: true, data: row });
+});
+export const adminDeleteNote = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid note" });
+  const n = await ChatNote.findByIdAndDelete(req.params.id).lean();
+  if (!n) return res.status(404).json({ status: false, message: "Note not found" });
+  toAdmins("note", { threadId: String(n.thread), deleted: String(n._id) });
+  res.json({ status: true });
+});
+// saved replies: GET / POST /admin/live-chat/canned · PUT / DELETE /admin/live-chat/canned/:id
+const cannedRow = (c) => ({ _id: String(c._id), title: c.title, body: c.body, order: c.order || 0 });
+export const adminCannedList = expressAsyncHandler(async (req, res) => {
+  res.json({ status: true, data: (await ChatCanned.find({}).sort({ order: 1, createdAt: 1 }).limit(100).lean()).map(cannedRow) });
+});
+const cannedIn = (b) => ({ title: String(b?.title || "").trim().slice(0, 60), body: String(b?.body || "").trim().slice(0, 2000) });
+export const adminCannedSave = expressAsyncHandler(async (req, res) => {
+  const v = cannedIn(req.body);
+  if (!v.title || !v.body) return res.status(400).json({ status: false, message: "Add a short title and the reply" });
+  if (req.params.id) {
+    if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid reply" });
+    const c = await ChatCanned.findByIdAndUpdate(req.params.id, { $set: v }, { new: true }).lean();
+    if (!c) return res.status(404).json({ status: false, message: "Saved reply not found" });
+    return res.json({ status: true, data: cannedRow(c) });
+  }
+  if ((await ChatCanned.countDocuments({})) >= 100) return res.status(400).json({ status: false, message: "Up to 100 saved replies" });
+  const c = await ChatCanned.create({ ...v, createdName: req.user.name || "", order: Date.now() });
+  res.json({ status: true, data: cannedRow(c) });
+});
+export const adminCannedDelete = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid reply" });
+  await ChatCanned.deleteOne({ _id: req.params.id });
+  res.json({ status: true });
+});
+// GET /admin/live-chat/threads/:id/context — who this is, at a glance (bookings), with links to Client / Therapist 360
+export const adminContext = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid chat" });
+  const t = await ChatThread.findById(req.params.id).lean();
+  if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
+  const now = new Date();
+  const person = await Users.findById(t.client, { name: 1, email: 1, phone: 1, createdAt: 1, role: 1 }).lean();
+  const out = { person: person ? { id: String(person._id), name: person.name || "", email: person.email || "", phone: person.phone || "", since: person.createdAt || null } : null, kind: t.kind, audience: t.kind === "support" ? (t.audience || "client") : null };
+  if (t.kind === "support" && t.audience === "therapist") {
+    const th = await Therapists.findOne({ user: t.client }, { profile_type: 1, state: 1 }).lean();
+    const [total, upcoming] = th ? await Promise.all([
+      Booking.countDocuments({ therapist: th._id, payment_status: "Paid" }),
+      Booking.countDocuments({ therapist: th._id, payment_status: "Paid", booking_date: { $gte: now } }),
+    ]) : [0, 0];
+    out.therapist = th ? { id: String(th._id), title: th.profile_type || "", place: th.state || "", paidSessions: total, upcoming } : null;
+  } else {
+    const list = await Booking.find({ client: t.client, payment_status: "Paid" }, { booking_date: 1, therapist: 1, status: 1 }).sort({ booking_date: -1 }).limit(200).populate({ path: "therapist", select: "user", populate: { path: "user", select: "name" } }).lean();
+    const next = [...list].reverse().find((b) => new Date(b.booking_date) >= now);
+    const last = list.find((b) => new Date(b.booking_date) < now);
+    const names = [...new Set(list.map((b) => b.therapist?.user?.name).filter(Boolean))].slice(0, 5);
+    out.client = {
+      paidSessions: list.length,
+      next: next ? { at: next.booking_date, with: next.therapist?.user?.name || "" } : null,
+      last: last ? { at: last.booking_date, with: last.therapist?.user?.name || "" } : null,
+      therapists: names,
+    };
+    if (t.kind === "therapist") {
+      const th = await Therapists.findById(t.therapist, { user: 1 }).populate({ path: "user", select: "name" }).lean();
+      out.chatTherapist = th ? { id: String(th._id), name: th.user?.name || "" } : null;
+    }
+  }
+  res.json({ status: true, data: out });
+});
+// GET /admin/live-chat/team?days=7|30 — per admin: replies, chats, how fast the first reply came, chats resolved
+export const adminTeam = expressAsyncHandler(async (req, res) => {
+  const days = [7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 7;
+  const since = new Date(Date.now() - days * 864e5);
+  const threads = await ChatThread.find({ kind: "support", lastMessageAt: { $gte: since } }, { _id: 1, audience: 1 }).limit(3000).lean();
+  const ids = threads.map((t) => t._id);
+  const msgs = await ChatMessage.find({ thread: { $in: ids }, createdAt: { $gte: since }, fromRole: { $in: ["client", "therapist", "admin"] } }, { thread: 1, fromRole: 1, fromName: 1, createdAt: 1 }).sort({ thread: 1, createdAt: 1 }).limit(50000).lean();
+  const by = {}; // name -> { replies, chats:Set, waits:[] }
+  const row = (n) => (by[n] = by[n] || { replies: 0, chats: new Set(), waits: [], resolved: 0 });
+  let waiting = null, cur = null;
+  for (const m of msgs) {
+    const tid = String(m.thread);
+    if (tid !== cur) { cur = tid; waiting = null; }
+    if (m.fromRole === "admin") {
+      const r = row(m.fromName || "Admin");
+      r.replies += 1; r.chats.add(tid);
+      if (waiting) { r.waits.push((new Date(m.createdAt) - new Date(waiting)) / 60000); waiting = null; }
+    } else if (!waiting) waiting = m.createdAt; // the person wrote; the clock runs until the team replies
+  }
+  const resolved = await ChatThread.aggregate([{ $match: { kind: "support", status: "resolved", resolvedAt: { $gte: since } } }, { $group: { _id: "$resolvedName", n: { $sum: 1 } } }]);
+  for (const x of resolved) row(x._id || "Admin").resolved = x.n;
+  const median = (a) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); const h = Math.floor(s.length / 2); return Math.round(s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2); };
+  const data = Object.entries(by).map(([name, r]) => ({ name, replies: r.replies, chats: r.chats.size, resolved: r.resolved, medianReplyMins: median(r.waits), answered: r.waits.length })).sort((a, b) => b.replies - a.replies);
+  const unanswered = await ChatThread.countDocuments({ kind: "support", unreadAdmin: { $gt: 0 } });
+  res.json({ status: true, data: { days, team: data, waitingNow: unanswered } });
+});
+
 /* ── "typing…" (owner, 2026-11-25): POST /api/live-chat/threads/:id/typing — sent every few seconds while typing ── */
 export const typing = expressAsyncHandler(async (req, res) => {
   const t = await myThread(req, req.params.id);
@@ -354,7 +484,10 @@ export const typing = expressAsyncHandler(async (req, res) => {
 export const adminTyping = expressAsyncHandler(async (req, res) => {
   if (!isId(req.params.id)) return res.status(400).json({ status: false });
   const t = await ChatThread.findById(req.params.id, { client: 1, kind: 1 }).lean();
-  if (t?.kind === "support") toUser(t.client, "typing", { threadId: String(t._id), by: "admin" });
+  if (t?.kind === "support") {
+    toUser(t.client, "typing", { threadId: String(t._id), by: "admin" });
+    toAdmins("typing", { threadId: String(t._id), by: "admin", adminId: String(req.user._id), name: req.user.name || "" });
+  }
   res.json({ status: true });
 });
 // POST /api/admin/live-chat/push-subscribe { subscription } — this admin's phone gets Live Chats alerts
@@ -437,6 +570,9 @@ export const adminThreads = expressAsyncHandler(async (req, res) => {
   if (req.query.filter === "waiting") { q.$and = [{ $or: [{ kind: "support", unreadAdmin: { $gt: 0 } }, { kind: { $ne: "support" }, unreadTherapist: { $gt: 0 }, lastFrom: { $in: ["client", "system"] } }] }]; } // after an auto-reply lastFrom is "system"
   if (req.query.filter === "support") { q.kind = "support"; q.audience = { $ne: "therapist" }; }
   if (req.query.filter === "therapists") { q.kind = "support"; q.audience = "therapist"; }
+  if (req.query.filter === "open") { q.kind = "support"; q.status = { $ne: "resolved" }; }
+  if (req.query.filter === "resolved") { q.kind = "support"; q.status = "resolved"; }
+  if (req.query.filter === "mine") q.claimedBy = req.user._id;
   const search = String(req.query.q || "").trim().slice(0, 60);
   if (search) {
     const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
@@ -467,7 +603,8 @@ export const adminThread = expressAsyncHandler(async (req, res) => {
     if (th) assigned = { id: String(th._id), name: th.user?.name || "Therapist", title: th.profile_type || "" };
   }
   const opened = await ChatAccessLog.find({ thread: t._id }).sort({ createdAt: -1 }).limit(20).lean();
-  res.json({ status: true, data: { thread: row, mode: st.mode, messages: msgs.reverse().map((m) => msgRow(m, true)), more: msgs.length === 200, hiddenCount, allClearedAt: t.allClearedAt || null, assigned, accessLog: opened.map((a) => ({ name: a.adminName, at: a.createdAt })) } });
+  const notes = await ChatNote.find({ thread: t._id }).sort({ createdAt: 1 }).limit(200).lean();
+  res.json({ status: true, data: { thread: row, mode: st.mode, messages: msgs.reverse().map((m) => msgRow(m, true)), more: msgs.length === 200, hiddenCount, allClearedAt: t.allClearedAt || null, assigned, notes: notes.map(noteRow), accessLog: opened.map((a) => ({ name: a.adminName, at: a.createdAt })) } });
 });
 
 export const adminStats = expressAsyncHandler(async (req, res) => {
@@ -500,8 +637,9 @@ export const adminReply = expressAsyncHandler(async (req, res) => {
   if (!t || t.kind !== "support") return res.status(404).json({ status: false, message: "Only Care Team chats can be answered here" });
   const text = String(req.body?.text || "").trim().slice(0, MAX_LEN);
   if (!text) return res.status(400).json({ status: false, message: "Write a message first" });
-  const { m } = await addMessage(t, "admin", null, text, { kind: "text", fromName: req.user.name || req.user.email || "" });
+  const { m } = await addMessage(t, "admin", req.user._id, text, { kind: "text", fromName: req.user.name || req.user.email || "" });
   await ChatThread.updateOne({ _id: t._id }, { $set: { unreadAdmin: 0 } });
+  if (!t.claimedBy) await setClaim(t._id, req.user);
   phonePush(t.client, `New message from ${SUPPORT_NAME}`, `${t.audience === "therapist" ? "/therapists/messages" : "/client/messages"}?t=${t._id}`);
   res.json({ status: true, data: { message: msgRow(m, true) } });
 });

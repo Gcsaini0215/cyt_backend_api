@@ -23,6 +23,13 @@ const ChatThreadSchema = new Schema({
   therapistClearedAt: { type: Date, default: null },
   adminClearedAt: { type: Date, default: null },
   adminHiddenAt: { type: Date, default: null },
+  // who in the team is handling this chat, and is it done (Phase B, 2026-11-25)
+  claimedBy: { type: Schema.Types.ObjectId, default: null },
+  claimedName: { type: String, default: "" },
+  claimedAt: { type: Date, default: null },
+  status: { type: String, enum: ["open", "resolved"], default: "open" },
+  resolvedAt: { type: Date, default: null },
+  resolvedName: { type: String, default: "" },
   clientHiddenAt: { type: Date, default: null }, // client / therapist deleted the chat from their own list (CYT's record keeps it)
   therapistHiddenAt: { type: Date, default: null }, // admin deleted the chat from their Live Chats list; a newer message brings it back
   allClearedAt: { type: Date, default: null },
@@ -85,7 +92,24 @@ const ChatConsentSchema = new Schema({
   ip: { type: String, default: "" },
 }, { timestamps: true });
 
+// notes only the team sees, on a chat (never shown to the client / therapist)
+const ChatNoteSchema = new Schema({
+  thread: { type: Schema.Types.ObjectId, required: true, index: true },
+  admin: { type: Schema.Types.ObjectId, default: null },
+  adminName: { type: String, default: "" },
+  body: { type: String, required: true }, // encrypted
+}, { timestamps: true });
+// saved replies the team inserts with one tap
+const ChatCannedSchema = new Schema({
+  title: { type: String, required: true, maxlength: 60 },
+  body: { type: String, required: true, maxlength: 2000 },
+  createdName: { type: String, default: "" },
+  order: { type: Number, default: 0 },
+}, { timestamps: true });
+
 export const ChatThread = mongoose.model("LiveChatThread", ChatThreadSchema);
+export const ChatNote = mongoose.model("LiveChatNote", ChatNoteSchema);
+export const ChatCanned = mongoose.model("LiveChatCanned", ChatCannedSchema);
 export const ChatMessage = mongoose.model("LiveChatMessage", ChatMessageSchema);
 export const ChatAccessLog = mongoose.model("LiveChatAccessLog", ChatAccessLogSchema);
 export const ChatSettings = mongoose.model("LiveChatSettings", ChatSettingsSchema);

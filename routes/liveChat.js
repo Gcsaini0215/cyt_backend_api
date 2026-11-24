@@ -2,7 +2,7 @@ import { Router } from "express";
 import { isAuthCommon, hasPermission } from "../middlewares/authMiddleware.js";
 import {
   getConsent, giveConsent, listThreads, unreadCount, startThread, getThread, sendMessage, markRead, deleteMessage,
-  getSettings, saveSettings, therapistChatInfo, pushSubscribe, supportThread, adminReply, adminTherapists, adminAssign, clearChat, adminClear, adminDelete, typing, adminTyping, adminPushSubscribe, stream, adminThreads, adminThread, adminStats, adminAccessLog, ADMIN_PERM,
+  getSettings, saveSettings, therapistChatInfo, pushSubscribe, supportThread, adminReply, adminTherapists, adminAssign, clearChat, adminClear, adminDelete, typing, adminTyping, adminPushSubscribe, adminClaim, adminStatus, adminAddNote, adminDeleteNote, adminCannedList, adminCannedSave, adminCannedDelete, adminContext, adminTeam, stream, adminThreads, adminThread, adminStats, adminAccessLog, ADMIN_PERM,
 } from "../controllers/LiveChatController.js";
 
 // Live therapist ↔ client chat (2026-11-23). The older routes/chat.js is separate and untouched.
@@ -38,5 +38,16 @@ router.post("/admin/live-chat/threads/:id/clear", hasPermission(ADMIN_PERM), adm
 router.post("/admin/live-chat/threads/:id/delete", hasPermission(ADMIN_PERM), adminDelete);
 router.post("/admin/live-chat/threads/:id/typing", hasPermission(ADMIN_PERM), adminTyping);
 router.post("/admin/live-chat/push-subscribe", hasPermission(ADMIN_PERM), adminPushSubscribe);
+// Phase B (2026-11-25): team tools
+router.post("/admin/live-chat/threads/:id/claim", hasPermission(ADMIN_PERM), adminClaim);
+router.post("/admin/live-chat/threads/:id/status", hasPermission(ADMIN_PERM), adminStatus);
+router.post("/admin/live-chat/threads/:id/notes", hasPermission(ADMIN_PERM), adminAddNote);
+router.delete("/admin/live-chat/notes/:id", hasPermission(ADMIN_PERM), adminDeleteNote);
+router.get("/admin/live-chat/threads/:id/context", hasPermission(ADMIN_PERM), adminContext);
+router.get("/admin/live-chat/canned", hasPermission(ADMIN_PERM), adminCannedList);
+router.post("/admin/live-chat/canned", hasPermission(ADMIN_PERM), adminCannedSave);
+router.put("/admin/live-chat/canned/:id", hasPermission(ADMIN_PERM), adminCannedSave);
+router.delete("/admin/live-chat/canned/:id", hasPermission(ADMIN_PERM), adminCannedDelete);
+router.get("/admin/live-chat/team", hasPermission(ADMIN_PERM), adminTeam);
 
 export default router;
