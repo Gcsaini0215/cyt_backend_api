@@ -7,6 +7,8 @@ import Role from "../models/Role.js";
 import Therapists from "../models/Therapists.js";
 import { ChatThread, ChatMessage, ChatAccessLog, ChatSettings, ChatConsent, ChatNote, ChatCanned } from "../models/LiveChat.js";
 import Booking from "../models/Booking.js";
+import Review from "../models/Review.js";
+import { therapistUserId } from "../services/therapistNotify.js";
 import { WorksheetLink } from "../models/Worksheet.js";
 import { TOOLS as WORKSHEETS } from "./WorksheetController.js";
 import { FREE_TESTS } from "../helper/assessmentTests.js";
@@ -422,7 +424,7 @@ export const bookingCard = expressAsyncHandler(async (req, res) => {
   if (t.bookingCardAt && Date.now() - new Date(t.bookingCardAt).getTime() < 36e5) return res.status(400).json({ status: false, message: "You sent a booking card less than an hour ago" });
   await ChatThread.updateOne({ _id: t._id }, { $set: { bookingCardAt: new Date() } });
   const name = req.user.name || "your therapist";
-  const { m } = await addMessage(t, "therapist", req.user._id, `Book a session with ${name}`, { kind: "booking", meta: { therapistId: String(t.therapist), name } });
+  const { m } = await addMessage(t, "therapist", req.user._id, `Book a session with ${name}`, { kind: "booking", meta: { therapistId: String(t.therapist), name, ...(await myCardFace(req, t)) } });
   phonePush(t.client, name, `/client/messages?t=${t._id}`, "Sent you a booking link");
   res.json({ status: true, data: { message: msgRow(m) } });
 });
@@ -465,6 +467,10 @@ export const rateThread = expressAsyncHandler(async (req, res) => {
 /* ── Therapist's chat kit (owner, 2026-11-25): from the chat the therapist can ask for a review, send a booking link,
    a worksheet from their Toolkit, or a clinical assessment — the assessment at the price CYT has set (no change). ── */
 // GET /api/live-chat/therapist-kit — what the "+" menu offers
+async function myCardFace(req, t) {
+  const [u, th] = await Promise.all([Users.findById(req.user._id, { profile: 1 }).lean(), Therapists.findById(t.therapist, { profile_type: 1 }).lean()]);
+  return { photo: u?.profile || "", title: th?.profile_type || "" };
+}
 export const therapistKit = expressAsyncHandler(async (req, res) => {
   if (req.user.role !== 1) return res.status(403).json({ status: false, message: "Therapists only" });
   const p = await getPricing();
@@ -481,7 +487,7 @@ export const sendCard = expressAsyncHandler(async (req, res) => {
   const type = String(req.body?.type || "");
   let kind, body, meta, push;
   if (type === "review") {
-    kind = "review"; body = `${name} would love a short review`; meta = { therapistId: String(t.therapist), name }; push = "Asked you for a short review";
+    kind = "review"; body = `${name} would love a short review`; meta = { therapistId: String(t.therapist), name, ...(await myCardFace(req, t)) }; push = "Asked you for a short review";
   } else if (type === "tool") {
     const code = String(req.body?.path || "").match(/^\/worksheet\/([A-Za-z0-9_-]{4,40})$/)?.[1];
     const link = code ? await WorksheetLink.findOne({ code, therapistUser: req.user._id }, { tool: 1, note: 1, code: 1 }).lean() : null;
@@ -496,6 +502,26 @@ export const sendCard = expressAsyncHandler(async (req, res) => {
   const { m } = await addMessage(t, "therapist", req.user._id, body, { kind, meta });
   phonePush(t.client, name, `/client/messages?t=${t._id}`, push);
   res.json({ status: true, data: { message: msgRow(m) } });
+});
+
+// POST /api/live-chat/messages/:id/review { stars, text } — answer a review card from inside the chat (client)
+export const reviewFromCard = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid card" });
+  const m = await ChatMessage.findOne({ _id: req.params.id, kind: "review", deletedAt: null });
+  if (!m) return res.status(404).json({ status: false, message: "Review card not found" });
+  const t = await myThread(req, m.thread);
+  if (!t || t.kind === "support" || myRole(t, req) !== "client") return res.status(404).json({ status: false, message: "Review card not found" });
+  if (m.meta?.reviewed) return res.status(400).json({ status: false, message: "You've already reviewed from this card" });
+  const stars = Math.round(Number(req.body?.stars));
+  const text = String(req.body?.text || "").trim().slice(0, 1000);
+  if (!(stars >= 1 && stars <= 5)) return res.status(400).json({ status: false, message: "Pick 1 to 5 stars" });
+  if (text.length < 3) return res.status(400).json({ status: false, message: "Write a few words about your sessions" });
+  const u = await Users.findById(req.user._id, { name: 1, email: 1 }).lean();
+  const review = await Review.create({ therapist_id: t.therapist, name: u?.name || "CYT client", email: u?.email || "client@chooseyourtherapist.in", rating: stars, description: text });
+  m.meta = { ...(m.meta || {}), reviewed: stars, reviewText: text.slice(0, 300) }; m.markModified("meta"); await m.save();
+  tellThread(t, "reviewed", { threadId: String(t._id), id: String(m._id), stars, text: text.slice(0, 300) });
+  notifyTherapists([await therapistUserId(t.therapist).catch(() => null)], { type: "review", title: `New ${stars}★ review from ${u?.name || "a client"}`, body: text.slice(0, 160), link: "/therapists/reviews", ref: `review:${review._id}` });
+  res.json({ status: true, data: { stars, text: text.slice(0, 300) } });
 });
 
 /* ── CYT Care Team's kit (owner, 2026-11-25): from a Care Team chat the team sends a therapist's card (photo, name,
