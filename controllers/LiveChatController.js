@@ -182,12 +182,13 @@ export const unreadCount = expressAsyncHandler(async (req, res) => {
   const role = roleOf(req);
   const field = role === "therapist" ? "unreadTherapist" : "unreadClient";
   const q = role === "therapist" ? { therapistUser: req.user._id } : { client: req.user._id };
-  const r = await ChatThread.aggregate([{ $match: { ...q, [field]: { $gt: 0 } } }, { $group: { _id: null, n: { $sum: `$${field}` }, threads: { $sum: 1 } } }]);
+  // a chat this person deleted doesn't count (until a newer message brings it back)
+  const hidden = role === "therapist" ? "$therapistHiddenAt" : "$clientHiddenAt";
+  const r = await ChatThread.aggregate([{ $match: { ...q, kind: { $ne: "support" }, [field]: { $gt: 0 }, $expr: { $gt: ["$lastMessageAt", { $ifNull: [hidden, new Date(0)] }] } } }, { $group: { _id: null, n: { $sum: "$" + field }, threads: { $sum: 1 } } }]);
   let n = r[0]?.n || 0, threads = r[0]?.threads || 0;
-  if (role === "therapist") {
-    const sup = await ChatThread.findOne({ client: req.user._id, kind: "support", unreadClient: { $gt: 0 } }, { unreadClient: 1 }).lean();
-    if (sup) { n += sup.unreadClient; threads += 1; }
-  }
+  // the CYT Care Team chat (clients and therapists each have one)
+  const sup = await ChatThread.findOne({ client: req.user._id, kind: "support", unreadClient: { $gt: 0 } }, { unreadClient: 1, lastMessageAt: 1, clientHiddenAt: 1 }).lean();
+  if (sup && !(sup.clientHiddenAt && new Date(sup.lastMessageAt) <= new Date(sup.clientHiddenAt))) { n += sup.unreadClient; threads += 1; }
   res.json({ status: true, data: { count: n, threads } });
 });
 
@@ -467,9 +468,11 @@ export const rateThread = expressAsyncHandler(async (req, res) => {
 /* ── Therapist's chat kit (owner, 2026-11-25): from the chat the therapist can ask for a review, send a booking link,
    a worksheet from their Toolkit, or a clinical assessment — the assessment at the price CYT has set (no change). ── */
 // GET /api/live-chat/therapist-kit — what the "+" menu offers
+// a placeholder picture (the sign-up default) is not a photo — cards show the initials instead
+const realPhoto = (p) => (p && !/pngegg|default/i.test(p) ? p : "");
 async function myCardFace(req, t) {
   const [u, th] = await Promise.all([Users.findById(req.user._id, { profile: 1 }).lean(), Therapists.findById(t.therapist, { profile_type: 1 }).lean()]);
-  return { photo: u?.profile || "", title: th?.profile_type || "" };
+  return { photo: realPhoto(u?.profile), title: th?.profile_type || "" };
 }
 export const therapistKit = expressAsyncHandler(async (req, res) => {
   if (req.user.role !== 1) return res.status(403).json({ status: false, message: "Therapists only" });
@@ -543,7 +546,7 @@ export const adminCard = expressAsyncHandler(async (req, res) => {
     const th = await Therapists.findOne({ _id: req.body.therapistId, show_to_page: { $in: [1, true] } }, { user: 1, profile_type: 1, state: 1 }).populate({ path: "user", select: "name profile" }).lean();
     if (!th?.user) return res.status(404).json({ status: false, message: "Therapist not found or not live" });
     kind = "therapist"; body = `${th.user.name}${th.profile_type ? ` — ${th.profile_type}` : ""}`;
-    meta = { therapistId: String(th._id), name: th.user.name, title: th.profile_type || "", place: th.state || "", photo: th.user.profile || "" };
+    meta = { therapistId: String(th._id), name: th.user.name, title: th.profile_type || "", place: th.state || "", photo: realPhoto(th.user.profile) };
     push = `Suggested for you: ${th.user.name}`;
   } else if (type === "assessment") {
     const test = FREE_TESTS.find((x) => x.key === req.body?.tool);
