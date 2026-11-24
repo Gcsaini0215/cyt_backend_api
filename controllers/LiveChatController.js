@@ -65,7 +65,19 @@ const msgRow = (m, forAdmin = false) => ({
   ...(forAdmin && m.page ? { page: m.page } : {}),
   body: m.deletedAt && !forAdmin ? "" : dec(m.body), deleted: !!m.deletedAt, masked: !!m.masked, crisis: !!m.crisis,
   readAt: m.readAt, createdAt: m.createdAt,
+  ...(m.replyTo && m.replyTo.id ? { replyTo: { id: String(m.replyTo.id), body: dec(m.replyTo.body), fromRole: m.replyTo.fromRole } } : {}),
+  ...(m.reactions && m.reactions.length ? { reactions: m.reactions.map((r) => ({ emoji: r.emoji, role: r.role, by: r.by })) } : {}),
+  ...(m.editedAt ? { editedAt: m.editedAt } : {}),
+  ...(m.meta ? { meta: m.meta } : {}),
+  ...(forAdmin && m.history && m.history.length ? { history: m.history.map((h) => ({ body: dec(h.body), at: h.at })) } : {}),
 });
+// a reply quotes a message from the same chat (a short snippet is kept with it)
+async function quoteOf(t, id) {
+  if (!id || !isId(id)) return undefined;
+  const q = await ChatMessage.findOne({ _id: id, thread: t._id }, { body: 1, fromRole: 1, deletedAt: 1 }).lean();
+  if (!q || q.deletedAt || q.fromRole === "system") return undefined;
+  return { id: q._id, body: encrypt(dec(q.body).slice(0, 140)), fromRole: q.fromRole };
+}
 
 async function settingsFor(therapistUser) {
   return (await ChatSettings.findOne({ therapistUser }).lean()) || { enabled: true, start: "10:00", end: "19:00", days: [1, 2, 3, 4, 5, 6], autoReply: "" };
@@ -114,6 +126,7 @@ async function threadRow(t, role) {
       therapistId: null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom === "admin" ? (th ? "client" : "therapist") : t.lastFrom, preview: (clearedFor(t, "client") && t.lastMessageAt && new Date(t.lastMessageAt) <= clearedFor(t, "client") ? "" : dec(t.lastPreview)) || (th ? "Need help from the CYT team? Message us here." : "Not sure who to see? Message us — we'll help you choose."),
       unread: t.unreadClient,
       assigned: t.assignedThread ? { thread: String(t.assignedThread), name: t.assignedName || "your therapist", at: t.assignedOn || null } : null,
+      rating: t.rating?.stars || null,
     };
   }
   const otherId = otherOf(t, role);
@@ -225,7 +238,7 @@ export const getThread = expressAsyncHandler(async (req, res) => {
 });
 
 const adminMeta = (t) => (t ? {
-  claimedBy: t.claimedBy ? String(t.claimedBy) : null, claimedName: t.claimedName || "", status: t.status || "open", resolvedName: t.resolvedName || "",
+  claimedBy: t.claimedBy ? String(t.claimedBy) : null, claimedName: t.claimedName || "", status: t.status || "open", resolvedName: t.resolvedName || "", rating: t.rating?.stars || null,
   _id: String(t._id), kind: t.kind || "therapist", audience: t.kind === "support" ? (t.audience || "client") : undefined, unreadAdmin: t.unreadAdmin || 0, lastPage: t.lastPage || "", assignedAt: t.assignedAt || null, lastMessageAt: t.lastMessageAt, lastFrom: t.lastFrom, messageCount: t.messageCount || 0,
   crisisCount: t.crisisCount || 0, contactCount: t.contactCount || 0, lastCrisisAt: t.lastCrisisAt, firstReplyMins: t.firstReplyMins,
   unreadTherapist: t.unreadTherapist || 0, createdAt: t.createdAt,
@@ -272,7 +285,7 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
     const th = t.audience === "therapist";
     // a therapist writing about a client's risk isn't in crisis themselves — no crisis banner on their own line to CYT
     const flag = crisis && !th;
-    const { m } = await addMessage(t, supFrom(t), req.user._id, raw, { crisis: flag, kind: "text", page });
+    const { m } = await addMessage(t, supFrom(t), req.user._id, raw, { crisis: flag, kind: "text", page, replyTo: await quoteOf(t, req.body?.replyTo) });
     pushAdmins(flag ? `⚠ Urgent: ${req.user.name || "a client"} may be at risk` : `${req.user.name || (th ? "A therapist" : "A client")}${th ? " (therapist)" : ""}: new message`, `/chat-monitor?t=${t._id}`);
     if (flag) await addMessage(t, "system", null, CRISIS_HELP.replace("your therapist has been told", "our team has been alerted"), { kind: "crisis-help" });
     if (!t.autoReplyAt || Date.now() - new Date(t.autoReplyAt).getTime() > 6 * 36e5) {
@@ -285,7 +298,7 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
   }
   const { text, masked } = maskContacts(raw);
   const kind = st.mode === "pre" ? (role === "client" ? "pre-question" : "pre-answer") : "text";
-  const { m } = await addMessage(t, role, req.user._id, text, { masked, crisis, kind });
+  const { m } = await addMessage(t, role, req.user._id, text, { masked, crisis, kind, replyTo: await quoteOf(t, req.body?.replyTo) });
 
   if (role === "therapist" && t.firstReplyMins == null) {
     const first = await ChatMessage.findOne({ thread: t._id, fromRole: "client" }).sort({ createdAt: 1 }).lean();
@@ -346,6 +359,105 @@ export const pushSubscribe = expressAsyncHandler(async (req, res) => {
   res.json({ status: true });
 });
 
+/* ── Phase C (owner, 2026-11-25): edit, reactions, booking card, search, rating ── */
+const EMOJI = ["👍", "❤️", "😂", "🙏", "😮", "😢"];
+const tellThread = (t, event, data) => {
+  for (const u of [t.client, t.therapistUser].filter(Boolean)) toUser(u, event, data);
+  toAdmins(event, data);
+};
+// PUT /api/live-chat/messages/:id { text } — change your own message within 10 minutes (the admin record keeps the earlier text)
+export const editMessage = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid message" });
+  const m = await ChatMessage.findOne({ _id: req.params.id, from: req.user._id, deletedAt: null });
+  if (!m || !["client", "therapist"].includes(m.fromRole) || !["text", "pre-question", "pre-answer"].includes(m.kind || "text")) return res.status(404).json({ status: false, message: "Message not found" });
+  if (Date.now() - m.createdAt.getTime() > 10 * 60000) return res.status(400).json({ status: false, message: "Messages can only be edited within 10 minutes" });
+  const raw = String(req.body?.text || "").trim().slice(0, MAX_LEN);
+  if (!raw) return res.status(400).json({ status: false, message: "Write a message first" });
+  const t = await ChatThread.findById(m.thread).lean();
+  const { text, masked } = t.kind === "support" ? { text: raw, masked: false } : maskContacts(raw);
+  if (text === dec(m.body)) return res.json({ status: true, data: { message: msgRow(m) } });
+  const newCrisis = !m.crisis && CRISIS.test(raw) && (m.fromRole === "client" || (t.kind === "support" && t.audience !== "therapist"));
+  m.history = [...(m.history || []), { body: m.body, at: m.editedAt || m.createdAt }];
+  m.body = encrypt(text); m.editedAt = new Date(); m.masked = m.masked || masked;
+  if (newCrisis) m.crisis = true;
+  await m.save();
+  const row = msgRow(m);
+  for (const u of [t.client, t.therapistUser].filter(Boolean)) toUser(u, "edited", { threadId: String(t._id), message: row });
+  toAdmins("edited", { threadId: String(t._id), message: msgRow(m, true) });
+  if (newCrisis) {
+    // edited into words about self-harm: the same help + alerts as a new message
+    await ChatThread.updateOne({ _id: t._id }, { $inc: { crisisCount: 1 }, $set: { lastCrisisAt: new Date() } });
+    await addMessage(t, "system", null, t.kind === "support" ? CRISIS_HELP.replace("your therapist has been told", "our team has been alerted") : CRISIS_HELP, { kind: "crisis-help" });
+    pushAdmins(`⚠ Crisis words in a chat — ${req.user.name || "a client"}`, `/chat-monitor?t=${t._id}`);
+    if (t.therapistUser) notifyTherapists([t.therapistUser], { type: "action", title: `⚠ ${req.user.name || "A client"} may be at risk — please check the chat`, body: "Their message mentions self-harm. They were shown 112 and Tele-MANAS 14416.", link: `/therapists/messages?t=${t._id}`, ref: `chat-crisis:${m._id}` });
+  }
+  res.json({ status: true, data: { message: row, masked } });
+});
+// POST /api/live-chat/messages/:id/react { emoji } — one reaction per person; the same emoji again takes it off
+export const reactMessage = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid message" });
+  const emoji = String(req.body?.emoji || "");
+  if (!EMOJI.includes(emoji)) return res.status(400).json({ status: false, message: "Pick one of the reactions" });
+  const m = await ChatMessage.findById(req.params.id);
+  if (!m || m.deletedAt || m.fromRole === "system") return res.status(404).json({ status: false, message: "Message not found" });
+  const t = await myThread(req, m.thread);
+  if (!t) return res.status(404).json({ status: false, message: "Message not found" });
+  const by = String(req.user._id);
+  const had = (m.reactions || []).find((r) => r.by === by);
+  m.reactions = (m.reactions || []).filter((r) => r.by !== by);
+  if (!had || had.emoji !== emoji) m.reactions.push({ by, role: t.kind === "support" ? supFrom(t) : myRole(t, req), emoji });
+  await m.save();
+  const reactions = m.reactions.map((r) => ({ emoji: r.emoji, role: r.role, by: r.by }));
+  tellThread(t, "react", { threadId: String(t._id), id: String(m._id), reactions });
+  res.json({ status: true, data: { reactions } });
+});
+// POST /api/live-chat/threads/:id/booking-card — the therapist sends a "Book a slot" card (one an hour)
+export const bookingCard = expressAsyncHandler(async (req, res) => {
+  const t = await myThread(req, req.params.id);
+  if (!t || t.kind === "support" || myRole(t, req) !== "therapist") return res.status(404).json({ status: false, message: "Chat not found" });
+  if (t.bookingCardAt && Date.now() - new Date(t.bookingCardAt).getTime() < 36e5) return res.status(400).json({ status: false, message: "You sent a booking card less than an hour ago" });
+  await ChatThread.updateOne({ _id: t._id }, { $set: { bookingCardAt: new Date() } });
+  const name = req.user.name || "your therapist";
+  const { m } = await addMessage(t, "therapist", req.user._id, `Book a session with ${name}`, { kind: "booking", meta: { therapistId: String(t.therapist), name } });
+  phonePush(t.client, `${name} sent you a booking link`, `/client/messages?t=${t._id}`);
+  res.json({ status: true, data: { message: msgRow(m) } });
+});
+// GET /api/live-chat/threads/:id/search?q= (and the admin version) — messages are encrypted, so they're read and matched here
+async function searchIn(t, q, since, forAdmin) {
+  const needle = String(q || "").trim().toLowerCase().slice(0, 60);
+  if (needle.length < 2) return [];
+  const find = { thread: t._id, fromRole: { $ne: "system" }, ...(forAdmin ? {} : { deletedAt: null }) };
+  if (since) find.createdAt = { $gt: since };
+  const all = await ChatMessage.find(find, { body: 1, fromRole: 1, fromName: 1, createdAt: 1 }).sort({ createdAt: -1 }).limit(3000).lean();
+  const out = [];
+  for (const m of all) { const b = dec(m.body); if (b.toLowerCase().includes(needle)) { out.push({ _id: String(m._id), body: b.slice(0, 200), fromRole: m.fromRole, createdAt: m.createdAt }); if (out.length >= 50) break; } }
+  return out;
+}
+export const searchThread = expressAsyncHandler(async (req, res) => {
+  const t = await myThread(req, req.params.id);
+  if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
+  res.json({ status: true, data: await searchIn(t, req.query.q, clearedFor(t, myRole(t, req)), false) });
+});
+export const adminSearchThread = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid chat" });
+  const t = await ChatThread.findById(req.params.id).lean();
+  if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
+  res.json({ status: true, data: await searchIn(t, req.query.q, null, true) });
+});
+// POST /api/live-chat/threads/:id/rate { stars } — the person rates the CYT team after a chat was resolved
+export const rateThread = expressAsyncHandler(async (req, res) => {
+  const t = await myThread(req, req.params.id);
+  if (!t || t.kind !== "support") return res.status(404).json({ status: false, message: "Chat not found" });
+  const stars = Math.round(Number(req.body?.stars));
+  if (!(stars >= 1 && stars <= 5)) return res.status(400).json({ status: false, message: "Pick 1 to 5 stars" });
+  const ask = await ChatMessage.findOne({ thread: t._id, kind: "rate" }).sort({ createdAt: -1 });
+  if (!ask) return res.status(400).json({ status: false, message: "Nothing to rate yet" });
+  await ChatThread.updateOne({ _id: t._id }, { $set: { rating: { stars, at: new Date(), resolvedName: t.resolvedName || t.claimedName || "" } } });
+  ask.meta = { ...(ask.meta || {}), stars }; ask.markModified("meta"); await ask.save();
+  tellThread(t, "rated", { threadId: String(t._id), id: String(ask._id), stars });
+  res.json({ status: true, data: { stars } });
+});
+
 /* ── Phase B (owner, 2026-11-25): who's handling a chat, open / resolved, team notes, saved replies, context, team report ── */
 const noteRow = (n) => ({ _id: String(n._id), body: dec(n.body), adminName: n.adminName || "Admin", admin: n.admin ? String(n.admin) : null, createdAt: n.createdAt });
 const claimEvent = (t) => toAdmins("claim", { threadId: String(t._id), claimedBy: t.claimedBy ? String(t.claimedBy) : null, claimedName: t.claimedName || "", status: t.status || "open", resolvedName: t.resolvedName || "" });
@@ -368,6 +480,10 @@ export const adminStatus = expressAsyncHandler(async (req, res) => {
   const t = await ChatThread.findByIdAndUpdate(req.params.id, { $set: resolved ? { status: "resolved", resolvedAt: new Date(), resolvedName: req.user.name || req.user.email || "Admin", unreadAdmin: 0 } : { status: "open", resolvedAt: null, resolvedName: "" } }, { new: true }).lean();
   if (!t) return res.status(404).json({ status: false, message: "Chat not found" });
   claimEvent(t);
+  if (resolved && t.kind === "support" && (!t.rating?.at || Date.now() - new Date(t.rating.at).getTime() > 30 * 864e5)) {
+    const asked = await ChatMessage.findOne({ thread: t._id, kind: "rate", createdAt: { $gte: new Date(Date.now() - 30 * 864e5) } }, { _id: 1 }).lean();
+    if (!asked) await addMessage(t, "system", null, "How did the CYT Care Team do? Tap a star to let us know.", { kind: "rate", meta: { stars: null } });
+  }
   res.json({ status: true, data: { status: t.status, resolvedName: t.resolvedName || "" } });
 });
 // POST /admin/live-chat/threads/:id/notes { body } · DELETE /admin/live-chat/notes/:id
@@ -466,8 +582,10 @@ export const adminTeam = expressAsyncHandler(async (req, res) => {
   }
   const resolved = await ChatThread.aggregate([{ $match: { kind: "support", status: "resolved", resolvedAt: { $gte: since } } }, { $group: { _id: "$resolvedName", n: { $sum: 1 } } }]);
   for (const x of resolved) row(x._id || "Admin").resolved = x.n;
+  const rated = await ChatThread.aggregate([{ $match: { kind: "support", "rating.at": { $gte: since } } }, { $group: { _id: "$rating.resolvedName", avg: { $avg: "$rating.stars" }, n: { $sum: 1 } } }]);
+  for (const x of rated) { const r = row(x._id || "Admin"); r.rating = Math.round(x.avg * 10) / 10; r.ratings = x.n; }
   const median = (a) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); const h = Math.floor(s.length / 2); return Math.round(s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2); };
-  const data = Object.entries(by).map(([name, r]) => ({ name, replies: r.replies, chats: r.chats.size, resolved: r.resolved, medianReplyMins: median(r.waits), answered: r.waits.length })).sort((a, b) => b.replies - a.replies);
+  const data = Object.entries(by).map(([name, r]) => ({ name, replies: r.replies, chats: r.chats.size, resolved: r.resolved, medianReplyMins: median(r.waits), answered: r.waits.length, rating: r.rating || null, ratings: r.ratings || 0 })).sort((a, b) => b.replies - a.replies);
   const unanswered = await ChatThread.countDocuments({ kind: "support", unreadAdmin: { $gt: 0 } });
   res.json({ status: true, data: { days, team: data, waitingNow: unanswered } });
 });
@@ -637,7 +755,7 @@ export const adminReply = expressAsyncHandler(async (req, res) => {
   if (!t || t.kind !== "support") return res.status(404).json({ status: false, message: "Only Care Team chats can be answered here" });
   const text = String(req.body?.text || "").trim().slice(0, MAX_LEN);
   if (!text) return res.status(400).json({ status: false, message: "Write a message first" });
-  const { m } = await addMessage(t, "admin", req.user._id, text, { kind: "text", fromName: req.user.name || req.user.email || "" });
+  const { m } = await addMessage(t, "admin", req.user._id, text, { kind: "text", fromName: req.user.name || req.user.email || "", replyTo: await quoteOf(t, req.body?.replyTo) });
   await ChatThread.updateOne({ _id: t._id }, { $set: { unreadAdmin: 0 } });
   if (!t.claimedBy) await setClaim(t._id, req.user);
   phonePush(t.client, `New message from ${SUPPORT_NAME}`, `${t.audience === "therapist" ? "/therapists/messages" : "/client/messages"}?t=${t._id}`);

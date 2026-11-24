@@ -2,7 +2,7 @@ import { Router } from "express";
 import { isAuthCommon, hasPermission } from "../middlewares/authMiddleware.js";
 import {
   getConsent, giveConsent, listThreads, unreadCount, startThread, getThread, sendMessage, markRead, deleteMessage,
-  getSettings, saveSettings, therapistChatInfo, pushSubscribe, supportThread, adminReply, adminTherapists, adminAssign, clearChat, adminClear, adminDelete, typing, adminTyping, adminPushSubscribe, adminClaim, adminStatus, adminAddNote, adminDeleteNote, adminCannedList, adminCannedSave, adminCannedDelete, adminContext, adminTeam, stream, adminThreads, adminThread, adminStats, adminAccessLog, ADMIN_PERM,
+  getSettings, saveSettings, therapistChatInfo, pushSubscribe, supportThread, adminReply, adminTherapists, adminAssign, clearChat, adminClear, adminDelete, typing, adminTyping, adminPushSubscribe, adminClaim, adminStatus, adminAddNote, adminDeleteNote, adminCannedList, adminCannedSave, adminCannedDelete, adminContext, adminTeam, editMessage, reactMessage, bookingCard, searchThread, adminSearchThread, rateThread, stream, adminThreads, adminThread, adminStats, adminAccessLog, ADMIN_PERM,
 } from "../controllers/LiveChatController.js";
 
 // Live therapist ↔ client chat (2026-11-23). The older routes/chat.js is separate and untouched.
@@ -20,6 +20,12 @@ router.get("/live-chat/threads/:id", isAuthCommon, getThread);
 router.post("/live-chat/threads/:id/messages", isAuthCommon, sendMessage);
 router.post("/live-chat/threads/:id/read", isAuthCommon, markRead);
 router.post("/live-chat/threads/:id/typing", isAuthCommon, typing);
+// Phase C (2026-11-25)
+router.put("/live-chat/messages/:id", isAuthCommon, editMessage);
+router.post("/live-chat/messages/:id/react", isAuthCommon, reactMessage);
+router.post("/live-chat/threads/:id/booking-card", isAuthCommon, bookingCard);
+router.get("/live-chat/threads/:id/search", isAuthCommon, searchThread);
+router.post("/live-chat/threads/:id/rate", isAuthCommon, rateThread);
 router.post("/live-chat/threads/:id/clear", isAuthCommon, clearChat);
 router.delete("/live-chat/messages/:id", isAuthCommon, deleteMessage);
 router.post("/live-chat/push-subscribe", isAuthCommon, pushSubscribe);
@@ -49,5 +55,6 @@ router.post("/admin/live-chat/canned", hasPermission(ADMIN_PERM), adminCannedSav
 router.put("/admin/live-chat/canned/:id", hasPermission(ADMIN_PERM), adminCannedSave);
 router.delete("/admin/live-chat/canned/:id", hasPermission(ADMIN_PERM), adminCannedDelete);
 router.get("/admin/live-chat/team", hasPermission(ADMIN_PERM), adminTeam);
+router.get("/admin/live-chat/threads/:id/search", hasPermission(ADMIN_PERM), adminSearchThread);
 
 export default router;

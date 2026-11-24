@@ -30,6 +30,8 @@ const ChatThreadSchema = new Schema({
   status: { type: String, enum: ["open", "resolved"], default: "open" },
   resolvedAt: { type: Date, default: null },
   resolvedName: { type: String, default: "" },
+  rating: { type: new Schema({ stars: Number, at: Date, resolvedName: String }, { _id: false }), default: undefined }, // the person's rating of the CYT team
+  bookingCardAt: { type: Date, default: null }, // last "Book a slot" card the therapist sent (one an hour)
   clientHiddenAt: { type: Date, default: null }, // client / therapist deleted the chat from their own list (CYT's record keeps it)
   therapistHiddenAt: { type: Date, default: null }, // admin deleted the chat from their Live Chats list; a newer message brings it back
   allClearedAt: { type: Date, default: null },
@@ -66,6 +68,12 @@ const ChatMessageSchema = new Schema({
   crisis: { type: Boolean, default: false },
   readAt: { type: Date, default: null },
   deletedAt: { type: Date, default: null },
+  // Phase C (2026-11-25)
+  replyTo: { type: new Schema({ id: Schema.Types.ObjectId, body: String /* encrypted snippet */, fromRole: String }, { _id: false }), default: undefined },
+  reactions: { type: [{ by: String, role: String, emoji: String, _id: false }], default: undefined },
+  editedAt: { type: Date, default: null },
+  history: { type: [{ body: String /* encrypted */, at: Date, _id: false }], default: undefined }, // earlier versions — admin record only
+  meta: { type: Schema.Types.Mixed, default: undefined }, // booking card: { therapistId, name } · rating ask: { stars }
 }, { timestamps: true });
 ChatMessageSchema.index({ thread: 1, createdAt: -1 });
 
