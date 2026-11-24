@@ -498,6 +498,42 @@ export const sendCard = expressAsyncHandler(async (req, res) => {
   res.json({ status: true, data: { message: msgRow(m) } });
 });
 
+/* ── CYT Care Team's kit (owner, 2026-11-25): from a Care Team chat the team sends a therapist's card (photo, name,
+   title — not a bare link), a clinical assessment at CYT's price, or the Noida centre. ── */
+// GET /api/admin/live-chat/kit — the assessments with today's price
+export const adminKit = expressAsyncHandler(async (req, res) => {
+  const p = await getPricing();
+  res.json({ status: true, data: { tests: FREE_TESTS.filter((t) => p.tests[t.key]?.active !== false).map((t) => ({ key: t.key, short: t.short, title: t.title, price: p.tests[t.key]?.price ?? null })) } });
+});
+// POST /api/admin/live-chat/threads/:id/card { type: "therapist" | "assessment" | "noida", therapistId?, tool? }
+export const adminCard = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false, message: "Invalid chat" });
+  const t = await ChatThread.findById(req.params.id).lean();
+  if (!t || t.kind !== "support") return res.status(404).json({ status: false, message: "Cards go in Care Team chats" });
+  const type = String(req.body?.type || "");
+  let kind, body, meta, push;
+  if (type === "therapist") {
+    if (!isId(req.body?.therapistId)) return res.status(400).json({ status: false, message: "Choose a therapist" });
+    const th = await Therapists.findOne({ _id: req.body.therapistId, show_to_page: { $in: [1, true] } }, { user: 1, profile_type: 1, state: 1 }).populate({ path: "user", select: "name profile" }).lean();
+    if (!th?.user) return res.status(404).json({ status: false, message: "Therapist not found or not live" });
+    kind = "therapist"; body = `${th.user.name}${th.profile_type ? ` — ${th.profile_type}` : ""}`;
+    meta = { therapistId: String(th._id), name: th.user.name, title: th.profile_type || "", place: th.state || "", photo: th.user.profile || "" };
+    push = `Suggested for you: ${th.user.name}`;
+  } else if (type === "assessment") {
+    const test = FREE_TESTS.find((x) => x.key === req.body?.tool);
+    const p = await getPricing();
+    if (!test || p.tests[test.key]?.active === false) return res.status(400).json({ status: false, message: "Assessment not available" });
+    kind = "assessment"; body = `Assessment: ${test.title} (${test.short})`; meta = { tool: test.key, short: test.short, title: test.title, price: p.tests[test.key]?.price ?? null }; push = "Sent you an assessment";
+  } else if (type === "noida") {
+    kind = "noida"; body = "Meet a psychologist in person at the CYT Noida centre, Sector 51"; meta = {}; push = "The CYT Noida centre — book a time";
+  } else return res.status(400).json({ status: false, message: "Unknown card" });
+  const { m } = await addMessage(t, "admin", req.user._id, body, { kind, meta, fromName: req.user.name || req.user.email || "" });
+  await ChatThread.updateOne({ _id: t._id }, { $set: { unreadAdmin: 0 } });
+  if (!t.claimedBy) await setClaim(t._id, req.user);
+  phonePush(t.client, SUPPORT_NAME, `${t.audience === "therapist" ? "/therapists/messages" : "/client/messages"}?t=${t._id}`, push);
+  res.json({ status: true, data: { message: msgRow(m, true) } });
+});
+
 /* ── Phase B (owner, 2026-11-25): who's handling a chat, open / resolved, team notes, saved replies, context, team report ── */
 const noteRow = (n) => ({ _id: String(n._id), body: dec(n.body), adminName: n.adminName || "Admin", admin: n.admin ? String(n.admin) : null, createdAt: n.createdAt });
 const claimEvent = (t) => toAdmins("claim", { threadId: String(t._id), claimedBy: t.claimedBy ? String(t.claimedBy) : null, claimedName: t.claimedName || "", status: t.status || "open", resolvedName: t.resolvedName || "" });

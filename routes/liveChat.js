@@ -2,7 +2,7 @@ import { Router } from "express";
 import { isAuthCommon, hasPermission } from "../middlewares/authMiddleware.js";
 import {
   getConsent, giveConsent, listThreads, unreadCount, startThread, getThread, sendMessage, markRead, deleteMessage,
-  getSettings, saveSettings, therapistChatInfo, pushSubscribe, supportThread, adminReply, adminTherapists, adminAssign, clearChat, adminClear, adminDelete, typing, adminTyping, adminPushSubscribe, adminClaim, adminStatus, adminAddNote, adminDeleteNote, adminCannedList, adminCannedSave, adminCannedDelete, adminContext, adminTeam, editMessage, reactMessage, bookingCard, therapistKit, sendCard, searchThread, adminSearchThread, rateThread, stream, adminThreads, adminThread, adminStats, adminAccessLog, ADMIN_PERM,
+  getSettings, saveSettings, therapistChatInfo, pushSubscribe, supportThread, adminReply, adminTherapists, adminAssign, clearChat, adminClear, adminDelete, typing, adminTyping, adminPushSubscribe, adminClaim, adminStatus, adminAddNote, adminDeleteNote, adminCannedList, adminCannedSave, adminCannedDelete, adminContext, adminTeam, editMessage, reactMessage, bookingCard, therapistKit, sendCard, adminKit, adminCard, searchThread, adminSearchThread, rateThread, stream, adminThreads, adminThread, adminStats, adminAccessLog, ADMIN_PERM,
 } from "../controllers/LiveChatController.js";
 
 // Live therapist ↔ client chat (2026-11-23). The older routes/chat.js is separate and untouched.
@@ -58,5 +58,7 @@ router.put("/admin/live-chat/canned/:id", hasPermission(ADMIN_PERM), adminCanned
 router.delete("/admin/live-chat/canned/:id", hasPermission(ADMIN_PERM), adminCannedDelete);
 router.get("/admin/live-chat/team", hasPermission(ADMIN_PERM), adminTeam);
 router.get("/admin/live-chat/threads/:id/search", hasPermission(ADMIN_PERM), adminSearchThread);
+router.get("/admin/live-chat/kit", hasPermission(ADMIN_PERM), adminKit);
+router.post("/admin/live-chat/threads/:id/card", hasPermission(ADMIN_PERM), adminCard);
 
 export default router;
