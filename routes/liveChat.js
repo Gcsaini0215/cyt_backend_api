@@ -2,7 +2,7 @@ import { Router } from "express";
 import { isAuthCommon, hasPermission } from "../middlewares/authMiddleware.js";
 import {
   getConsent, giveConsent, listThreads, unreadCount, startThread, getThread, sendMessage, markRead, deleteMessage,
-  getSettings, saveSettings, therapistChatInfo, pushSubscribe, supportThread, adminReply, adminTherapists, adminAssign, clearChat, adminClear, adminDelete, typing, adminTyping, adminPushSubscribe, adminClaim, adminStatus, adminAddNote, adminDeleteNote, adminCannedList, adminCannedSave, adminCannedDelete, adminContext, adminTeam, editMessage, reactMessage, bookingCard, searchThread, adminSearchThread, rateThread, stream, adminThreads, adminThread, adminStats, adminAccessLog, ADMIN_PERM,
+  getSettings, saveSettings, therapistChatInfo, pushSubscribe, supportThread, adminReply, adminTherapists, adminAssign, clearChat, adminClear, adminDelete, typing, adminTyping, adminPushSubscribe, adminClaim, adminStatus, adminAddNote, adminDeleteNote, adminCannedList, adminCannedSave, adminCannedDelete, adminContext, adminTeam, editMessage, reactMessage, bookingCard, therapistKit, sendCard, searchThread, adminSearchThread, rateThread, stream, adminThreads, adminThread, adminStats, adminAccessLog, ADMIN_PERM,
 } from "../controllers/LiveChatController.js";
 
 // Live therapist ↔ client chat (2026-11-23). The older routes/chat.js is separate and untouched.
@@ -24,6 +24,8 @@ router.post("/live-chat/threads/:id/typing", isAuthCommon, typing);
 router.put("/live-chat/messages/:id", isAuthCommon, editMessage);
 router.post("/live-chat/messages/:id/react", isAuthCommon, reactMessage);
 router.post("/live-chat/threads/:id/booking-card", isAuthCommon, bookingCard);
+router.get("/live-chat/therapist-kit", isAuthCommon, therapistKit);
+router.post("/live-chat/threads/:id/card", isAuthCommon, sendCard);
 router.get("/live-chat/threads/:id/search", isAuthCommon, searchThread);
 router.post("/live-chat/threads/:id/rate", isAuthCommon, rateThread);
 router.post("/live-chat/threads/:id/clear", isAuthCommon, clearChat);

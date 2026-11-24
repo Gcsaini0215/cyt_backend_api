@@ -7,6 +7,10 @@ import Role from "../models/Role.js";
 import Therapists from "../models/Therapists.js";
 import { ChatThread, ChatMessage, ChatAccessLog, ChatSettings, ChatConsent, ChatNote, ChatCanned } from "../models/LiveChat.js";
 import Booking from "../models/Booking.js";
+import { WorksheetLink } from "../models/Worksheet.js";
+import { TOOLS as WORKSHEETS } from "./WorksheetController.js";
+import { FREE_TESTS } from "../helper/assessmentTests.js";
+import { getPricing } from "../helper/assessmentPricing.js";
 import { encrypt, decrypt } from "../helper/googleMeet.js";
 import { CRISIS, maskContacts, chatState, inOfficeHours, hoursText, OPEN_DAYS } from "../helper/chatRules.js";
 import { addChatClient, addChatAdmin, toUser, toAdmins, isOnline, liveAdminIds } from "../services/chatHub.js";
@@ -456,6 +460,42 @@ export const rateThread = expressAsyncHandler(async (req, res) => {
   ask.meta = { ...(ask.meta || {}), stars }; ask.markModified("meta"); await ask.save();
   tellThread(t, "rated", { threadId: String(t._id), id: String(ask._id), stars });
   res.json({ status: true, data: { stars } });
+});
+
+/* ── Therapist's chat kit (owner, 2026-11-25): from the chat the therapist can ask for a review, send a booking link,
+   a worksheet from their Toolkit, or a clinical assessment — the assessment at the price CYT has set (no change). ── */
+// GET /api/live-chat/therapist-kit — what the "+" menu offers
+export const therapistKit = expressAsyncHandler(async (req, res) => {
+  if (req.user.role !== 1) return res.status(403).json({ status: false, message: "Therapists only" });
+  const p = await getPricing();
+  res.json({ status: true, data: {
+    tools: Object.entries(WORKSHEETS).map(([key, name]) => ({ key, name })),
+    tests: FREE_TESTS.filter((t) => p.tests[t.key]?.active !== false).map((t) => ({ key: t.key, short: t.short, title: t.title, price: p.tests[t.key]?.price ?? null, offer: !!p.tests[t.key]?.offer })),
+  } });
+});
+// POST /api/live-chat/threads/:id/card { type: "review" | "tool" | "assessment", path?, tool? }
+export const sendCard = expressAsyncHandler(async (req, res) => {
+  const t = await myThread(req, req.params.id);
+  if (!t || t.kind === "support" || myRole(t, req) !== "therapist") return res.status(404).json({ status: false, message: "Chat not found" });
+  const name = req.user.name || "your therapist";
+  const type = String(req.body?.type || "");
+  let kind, body, meta, push;
+  if (type === "review") {
+    kind = "review"; body = `${name} would love a short review`; meta = { therapistId: String(t.therapist), name }; push = "Asked you for a short review";
+  } else if (type === "tool") {
+    const code = String(req.body?.path || "").match(/^\/worksheet\/([A-Za-z0-9_-]{4,40})$/)?.[1];
+    const link = code ? await WorksheetLink.findOne({ code, therapistUser: req.user._id }, { tool: 1, note: 1, code: 1 }).lean() : null;
+    if (!link) return res.status(400).json({ status: false, message: "Worksheet link not found" });
+    kind = "tool"; body = `Worksheet: ${WORKSHEETS[link.tool] || "Worksheet"}`; meta = { path: `/worksheet/${link.code}`, name: WORKSHEETS[link.tool] || "Worksheet", note: link.note || "" }; push = "Sent you a worksheet";
+  } else if (type === "assessment") {
+    const test = FREE_TESTS.find((x) => x.key === req.body?.tool);
+    const p = await getPricing();
+    if (!test || p.tests[test.key]?.active === false) return res.status(400).json({ status: false, message: "Assessment not available" });
+    kind = "assessment"; body = `Assessment: ${test.title} (${test.short})`; meta = { tool: test.key, short: test.short, title: test.title, price: p.tests[test.key]?.price ?? null }; push = "Sent you an assessment";
+  } else return res.status(400).json({ status: false, message: "Unknown card" });
+  const { m } = await addMessage(t, "therapist", req.user._id, body, { kind, meta });
+  phonePush(t.client, name, `/client/messages?t=${t._id}`, push);
+  res.json({ status: true, data: { message: msgRow(m) } });
 });
 
 /* ── Phase B (owner, 2026-11-25): who's handling a chat, open / resolved, team notes, saved replies, context, team report ── */
