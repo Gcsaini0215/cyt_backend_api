@@ -2,7 +2,7 @@ import { Router } from "express";
 import { isAuthCommon, hasPermission } from "../middlewares/authMiddleware.js";
 import {
   getConsent, giveConsent, listThreads, unreadCount, startThread, getThread, sendMessage, markRead, deleteMessage,
-  getSettings, saveSettings, therapistChatInfo, pushSubscribe, supportThread, adminReply, adminTherapists, adminAssign, clearChat, adminClear, adminDelete, stream, adminThreads, adminThread, adminStats, adminAccessLog, ADMIN_PERM,
+  getSettings, saveSettings, therapistChatInfo, pushSubscribe, supportThread, adminReply, adminTherapists, adminAssign, clearChat, adminClear, adminDelete, typing, adminTyping, adminPushSubscribe, stream, adminThreads, adminThread, adminStats, adminAccessLog, ADMIN_PERM,
 } from "../controllers/LiveChatController.js";
 
 // Live therapist ↔ client chat (2026-11-23). The older routes/chat.js is separate and untouched.
@@ -19,6 +19,7 @@ router.post("/live-chat/support", isAuthCommon, supportThread);
 router.get("/live-chat/threads/:id", isAuthCommon, getThread);
 router.post("/live-chat/threads/:id/messages", isAuthCommon, sendMessage);
 router.post("/live-chat/threads/:id/read", isAuthCommon, markRead);
+router.post("/live-chat/threads/:id/typing", isAuthCommon, typing);
 router.post("/live-chat/threads/:id/clear", isAuthCommon, clearChat);
 router.delete("/live-chat/messages/:id", isAuthCommon, deleteMessage);
 router.post("/live-chat/push-subscribe", isAuthCommon, pushSubscribe);
@@ -35,5 +36,7 @@ router.post("/admin/live-chat/threads/:id/assign", hasPermission(ADMIN_PERM), ad
 router.get("/admin/live-chat/therapists", hasPermission(ADMIN_PERM), adminTherapists);
 router.post("/admin/live-chat/threads/:id/clear", hasPermission(ADMIN_PERM), adminClear);
 router.post("/admin/live-chat/threads/:id/delete", hasPermission(ADMIN_PERM), adminDelete);
+router.post("/admin/live-chat/threads/:id/typing", hasPermission(ADMIN_PERM), adminTyping);
+router.post("/admin/live-chat/push-subscribe", hasPermission(ADMIN_PERM), adminPushSubscribe);
 
 export default router;

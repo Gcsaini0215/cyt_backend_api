@@ -38,7 +38,8 @@ export const sendNotification = expressAsyncHandler(async (req, res) => {
 
 export const pushToUsers = async (query, title, body, url) => {
     const payload = JSON.stringify({ title, body, url: url || '/' });
-    const subscriptions = await PushSubscription.find(query);
+    // admin phones only get what's meant for them (scope "admin"); everything else skips them
+    const subscriptions = await PushSubscription.find(query.scope ? query : { ...query, scope: { $ne: "admin" } });
     const notifications = subscriptions.map(sub => {
         return webpush.sendNotification(sub.subscription, payload).catch(err => {
             if (err.statusCode === 410) return PushSubscription.deleteOne({ _id: sub._id });

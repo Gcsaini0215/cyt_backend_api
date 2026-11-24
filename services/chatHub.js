@@ -4,6 +4,7 @@
 
 const users = new Map(); // userId -> Set(res)
 const admins = new Set(); // res
+const adminIds = new Map(); // res -> adminId (who has Live Chats open right now)
 
 export function addChatClient(res, userId) {
   const id = String(userId);
@@ -11,7 +12,11 @@ export function addChatClient(res, userId) {
   users.get(id).add(res);
   return () => { const s = users.get(id); if (!s) return; s.delete(res); if (!s.size) users.delete(id); };
 }
-export function addChatAdmin(res) { admins.add(res); return () => admins.delete(res); }
+export function addChatAdmin(res, adminId) {
+  admins.add(res); if (adminId) adminIds.set(res, String(adminId));
+  return () => { admins.delete(res); adminIds.delete(res); };
+}
+export const liveAdminIds = () => new Set(adminIds.values());
 
 const write = (res, event, data) => { try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); return true; } catch { return false; } };
 
@@ -20,7 +25,7 @@ export function toUser(userId, event, data) {
   if (!s) return;
   for (const res of s) if (!write(res, event, data)) s.delete(res);
 }
-export function toAdmins(event, data) { for (const res of admins) if (!write(res, event, data)) admins.delete(res); }
+export function toAdmins(event, data) { for (const res of admins) if (!write(res, event, data)) { admins.delete(res); adminIds.delete(res); } }
 export const isOnline = (userId) => users.has(String(userId));
 
 // keep connections alive through nginx / mobile networks

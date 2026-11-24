@@ -6,6 +6,8 @@ const pushSubscriptionSchema = new mongoose.Schema({
         ref: "Users",
         required: false
     },
+    // "admin" = a CYT admin's phone (Live Chats alerts); empty = a client / therapist (website)
+    scope: { type: String, default: "" },
     subscription: {
         endpoint: { type: String, required: true },
         expirationTime: { type: Number, default: null },

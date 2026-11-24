@@ -8,7 +8,7 @@ import Therapists from "../models/Therapists.js";
 import { ChatThread, ChatMessage, ChatAccessLog, ChatSettings, ChatConsent } from "../models/LiveChat.js";
 import { encrypt, decrypt } from "../helper/googleMeet.js";
 import { CRISIS, maskContacts, chatState, inOfficeHours, hoursText, OPEN_DAYS } from "../helper/chatRules.js";
-import { addChatClient, addChatAdmin, toUser, toAdmins, isOnline } from "../services/chatHub.js";
+import { addChatClient, addChatAdmin, toUser, toAdmins, isOnline, liveAdminIds } from "../services/chatHub.js";
 import { notifyTherapists } from "../services/therapistNotify.js";
 import { notifyClient } from "../services/clientNotify.js";
 import PushSubscription from "../models/PushSubscription.js";
@@ -31,6 +31,25 @@ const hourRef = () => new Date().toISOString().slice(0, 13);
 
 /* phone notification (web push) when the person isn't in the app right now. The message text is never put on
    the lock screen — only who wrote, so a client's words stay private on a shared phone. */
+/* admin phones (owner, 2026-11-25): a new Care Team message / a crisis rings the phones of admins who have Live Chats
+   access and turned alerts on — except those with Live Chats open right now (they hear the chime there). */
+async function adminAllowedId(id) {
+  const admin = await Admin.findById(id, { roleId: 1 }).lean();
+  if (!admin) return false;
+  if (!admin.roleId) return true;
+  const role = await Role.findById(admin.roleId, { permissions: 1 }).lean();
+  return ADMIN_PERM.some((k) => role?.permissions?.includes(k));
+}
+async function pushAdmins(title, url) {
+  try {
+    const live = liveAdminIds();
+    const ids = [...new Set((await PushSubscription.find({ scope: "admin" }, { userId: 1 }).lean()).map((x) => String(x.userId)).filter((x) => x && !live.has(x)))];
+    const ok = [];
+    for (const id of ids) if (await adminAllowedId(id)) ok.push(id);
+    if (ok.length) await pushToUsers({ scope: "admin", userId: { $in: ok } }, title, "Tap to open Live Chats", url);
+  } catch { /* alerts are best-effort */ }
+}
+
 function phonePush(userId, title, url) {
   if (!userId || isOnline(userId)) return;
   pushToUsers({ userId }, title, "Tap to read your message on CYT", url).catch(() => {});
@@ -250,6 +269,7 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
     // a therapist writing about a client's risk isn't in crisis themselves — no crisis banner on their own line to CYT
     const flag = crisis && !th;
     const { m } = await addMessage(t, supFrom(t), req.user._id, raw, { crisis: flag, kind: "text", page });
+    pushAdmins(flag ? `⚠ Urgent: ${req.user.name || "a client"} may be at risk` : `${req.user.name || (th ? "A therapist" : "A client")}${th ? " (therapist)" : ""}: new message`, `/chat-monitor?t=${t._id}`);
     if (flag) await addMessage(t, "system", null, CRISIS_HELP.replace("your therapist has been told", "our team has been alerted"), { kind: "crisis-help" });
     if (!t.autoReplyAt || Date.now() - new Date(t.autoReplyAt).getTime() > 6 * 36e5) {
       await ChatThread.updateOne({ _id: t._id }, { $set: { autoReplyAt: new Date() } });
@@ -271,6 +291,7 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
   if (role === "client") {
     if (crisis) {
       await addMessage(t, "system", null, CRISIS_HELP, { kind: "crisis-help" });
+      pushAdmins(`⚠ Crisis words in a chat — ${req.user.name || "a client"}`, `/chat-monitor?t=${t._id}`);
       notifyTherapists([t.therapistUser], { type: "action", title: `⚠ ${req.user.name || "A client"} may be at risk — please check the chat`, body: "Their message mentions self-harm. They were shown 112 and Tele-MANAS 14416.", link: `/therapists/messages?t=${t._id}`, ref: `chat-crisis:${m._id}` });
     } // ordinary messages: no bell notification — Messages + the chat button + phone push show them (owner, 2026-11-24)
     phonePush(t.therapistUser, crisis ? `⚠ Urgent message from ${req.user.name || "a client"}` : `New message from ${req.user.name || "a client"}`, `/therapists/messages?t=${t._id}`);
@@ -318,6 +339,29 @@ export const pushSubscribe = expressAsyncHandler(async (req, res) => {
   const sub = req.body?.subscription || req.body;
   if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) return res.status(400).json({ status: false, message: "Invalid subscription" });
   await PushSubscription.updateOne({ "subscription.endpoint": String(sub.endpoint) }, { $set: { userId: req.user._id, subscription: { endpoint: String(sub.endpoint), expirationTime: sub.expirationTime || null, keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) } } } }, { upsert: true });
+  res.json({ status: true });
+});
+
+/* ── "typing…" (owner, 2026-11-25): POST /api/live-chat/threads/:id/typing — sent every few seconds while typing ── */
+export const typing = expressAsyncHandler(async (req, res) => {
+  const t = await myThread(req, req.params.id);
+  if (!t) return res.status(404).json({ status: false });
+  if (t.kind === "support") toAdmins("typing", { threadId: String(t._id), by: supFrom(t) });
+  else { const role = myRole(t, req); const o = otherOf(t, role); if (o) toUser(o, "typing", { threadId: String(t._id), by: role }); }
+  res.json({ status: true });
+});
+// POST /api/admin/live-chat/threads/:id/typing — the team is writing a reply (Care Team chats)
+export const adminTyping = expressAsyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ status: false });
+  const t = await ChatThread.findById(req.params.id, { client: 1, kind: 1 }).lean();
+  if (t?.kind === "support") toUser(t.client, "typing", { threadId: String(t._id), by: "admin" });
+  res.json({ status: true });
+});
+// POST /api/admin/live-chat/push-subscribe { subscription } — this admin's phone gets Live Chats alerts
+export const adminPushSubscribe = expressAsyncHandler(async (req, res) => {
+  const sub = req.body?.subscription || req.body;
+  if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) return res.status(400).json({ status: false, message: "Invalid subscription" });
+  await PushSubscription.updateOne({ "subscription.endpoint": String(sub.endpoint) }, { $set: { userId: req.user._id, scope: "admin", subscription: { endpoint: String(sub.endpoint), expirationTime: sub.expirationTime || null, keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) } } } }, { upsert: true });
   res.json({ status: true });
 });
 
@@ -369,7 +413,7 @@ export const stream = async (req, res) => {
   res.flushHeaders?.();
   res.write("retry: 3000\n\n");
   res.write(`event: hello\ndata: ${JSON.stringify({ at: Date.now() })}\n\n`);
-  const remove = asAdmin ? addChatAdmin(res) : addChatClient(res, decoded.userId);
+  const remove = asAdmin ? addChatAdmin(res, decoded.userId) : addChatClient(res, decoded.userId);
   req.on("close", remove);
 };
 
