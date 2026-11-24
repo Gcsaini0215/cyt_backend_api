@@ -41,19 +41,19 @@ async function adminAllowedId(id) {
   const role = await Role.findById(admin.roleId, { permissions: 1 }).lean();
   return ADMIN_PERM.some((k) => role?.permissions?.includes(k));
 }
-async function pushAdmins(title, url) {
+async function pushAdmins(title, url, body = "New message · Tap to open Live Chats") {
   try {
     const live = liveAdminIds();
     const ids = [...new Set((await PushSubscription.find({ scope: "admin" }, { userId: 1 }).lean()).map((x) => String(x.userId)).filter((x) => x && !live.has(x)))];
     const ok = [];
     for (const id of ids) if (await adminAllowedId(id)) ok.push(id);
-    if (ok.length) await pushToUsers({ scope: "admin", userId: { $in: ok } }, title, "Tap to open Live Chats", url);
+    if (ok.length) await pushToUsers({ scope: "admin", userId: { $in: ok } }, title, body, url);
   } catch { /* alerts are best-effort */ }
 }
 
-function phonePush(userId, title, url) {
+function phonePush(userId, title, url, body = "New message") {
   if (!userId || isOnline(userId)) return;
-  pushToUsers({ userId }, title, "Tap to read your message on CYT", url).catch(() => {});
+  pushToUsers({ userId }, title, body, url).catch(() => {});
 }
 
 const SUPPORT_NAME = "CYT Care Team";
@@ -286,7 +286,7 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
     // a therapist writing about a client's risk isn't in crisis themselves — no crisis banner on their own line to CYT
     const flag = crisis && !th;
     const { m } = await addMessage(t, supFrom(t), req.user._id, raw, { crisis: flag, kind: "text", page, replyTo: await quoteOf(t, req.body?.replyTo) });
-    pushAdmins(flag ? `⚠ Urgent: ${req.user.name || "a client"} may be at risk` : `${req.user.name || (th ? "A therapist" : "A client")}${th ? " (therapist)" : ""}: new message`, `/chat-monitor?t=${t._id}`);
+    pushAdmins(`${flag ? "⚠ " : ""}${req.user.name || (th ? "A therapist" : "A client")}${th ? " · Therapist" : ""}`, `/chat-monitor?t=${t._id}`, flag ? "Urgent — may be at risk · Open Live Chats" : "New Care Team message");
     if (flag) await addMessage(t, "system", null, CRISIS_HELP.replace("your therapist has been told", "our team has been alerted"), { kind: "crisis-help" });
     if (!t.autoReplyAt || Date.now() - new Date(t.autoReplyAt).getTime() > 6 * 36e5) {
       await ChatThread.updateOne({ _id: t._id }, { $set: { autoReplyAt: new Date() } });
@@ -308,10 +308,10 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
   if (role === "client") {
     if (crisis) {
       await addMessage(t, "system", null, CRISIS_HELP, { kind: "crisis-help" });
-      pushAdmins(`⚠ Crisis words in a chat — ${req.user.name || "a client"}`, `/chat-monitor?t=${t._id}`);
+      pushAdmins(`⚠ ${req.user.name || "A client"}`, `/chat-monitor?t=${t._id}`, "Crisis words in a chat · Open Live Chats");
       notifyTherapists([t.therapistUser], { type: "action", title: `⚠ ${req.user.name || "A client"} may be at risk — please check the chat`, body: "Their message mentions self-harm. They were shown 112 and Tele-MANAS 14416.", link: `/therapists/messages?t=${t._id}`, ref: `chat-crisis:${m._id}` });
     } // ordinary messages: no bell notification — Messages + the chat button + phone push show them (owner, 2026-11-24)
-    phonePush(t.therapistUser, crisis ? `⚠ Urgent message from ${req.user.name || "a client"}` : `New message from ${req.user.name || "a client"}`, `/therapists/messages?t=${t._id}`);
+    phonePush(t.therapistUser, `${crisis ? "⚠ " : ""}${req.user.name || "Your client"}`, `/therapists/messages?t=${t._id}`, crisis ? "Urgent message — please check the chat" : "New message");
     const set = await settingsFor(t.therapistUser);
     if (!inOfficeHours(set) && (!t.autoReplyAt || Date.now() - new Date(t.autoReplyAt).getTime() > 6 * 36e5)) {
       const msg = (set.autoReply || "").trim() || `Thanks for your message. I reply during my working hours (${hoursText(set)}). For an emergency, please call 112 or Tele-MANAS 14416.`;
@@ -319,7 +319,7 @@ export const sendMessage = expressAsyncHandler(async (req, res) => {
       await addMessage(t, "system", null, msg, { kind: "auto-reply" });
     }
   } else {
-    phonePush(t.client, `New message from ${req.user.name || "your therapist"}`, `/client/messages?t=${t._id}`);
+    phonePush(t.client, req.user.name || "Your therapist", `/client/messages?t=${t._id}`);
   }
   res.json({ status: true, data: { message: msgRow(m), masked, crisis } });
 });
@@ -388,7 +388,7 @@ export const editMessage = expressAsyncHandler(async (req, res) => {
     // edited into words about self-harm: the same help + alerts as a new message
     await ChatThread.updateOne({ _id: t._id }, { $inc: { crisisCount: 1 }, $set: { lastCrisisAt: new Date() } });
     await addMessage(t, "system", null, t.kind === "support" ? CRISIS_HELP.replace("your therapist has been told", "our team has been alerted") : CRISIS_HELP, { kind: "crisis-help" });
-    pushAdmins(`⚠ Crisis words in a chat — ${req.user.name || "a client"}`, `/chat-monitor?t=${t._id}`);
+    pushAdmins(`⚠ ${req.user.name || "A client"}`, `/chat-monitor?t=${t._id}`, "Crisis words in a chat · Open Live Chats");
     if (t.therapistUser) notifyTherapists([t.therapistUser], { type: "action", title: `⚠ ${req.user.name || "A client"} may be at risk — please check the chat`, body: "Their message mentions self-harm. They were shown 112 and Tele-MANAS 14416.", link: `/therapists/messages?t=${t._id}`, ref: `chat-crisis:${m._id}` });
   }
   res.json({ status: true, data: { message: row, masked } });
@@ -419,7 +419,7 @@ export const bookingCard = expressAsyncHandler(async (req, res) => {
   await ChatThread.updateOne({ _id: t._id }, { $set: { bookingCardAt: new Date() } });
   const name = req.user.name || "your therapist";
   const { m } = await addMessage(t, "therapist", req.user._id, `Book a session with ${name}`, { kind: "booking", meta: { therapistId: String(t.therapist), name } });
-  phonePush(t.client, `${name} sent you a booking link`, `/client/messages?t=${t._id}`);
+  phonePush(t.client, name, `/client/messages?t=${t._id}`, "Sent you a booking link");
   res.json({ status: true, data: { message: msgRow(m) } });
 });
 // GET /api/live-chat/threads/:id/search?q= (and the admin version) — messages are encrypted, so they're read and matched here
@@ -758,7 +758,7 @@ export const adminReply = expressAsyncHandler(async (req, res) => {
   const { m } = await addMessage(t, "admin", req.user._id, text, { kind: "text", fromName: req.user.name || req.user.email || "", replyTo: await quoteOf(t, req.body?.replyTo) });
   await ChatThread.updateOne({ _id: t._id }, { $set: { unreadAdmin: 0 } });
   if (!t.claimedBy) await setClaim(t._id, req.user);
-  phonePush(t.client, `New message from ${SUPPORT_NAME}`, `${t.audience === "therapist" ? "/therapists/messages" : "/client/messages"}?t=${t._id}`);
+  phonePush(t.client, SUPPORT_NAME, `${t.audience === "therapist" ? "/therapists/messages" : "/client/messages"}?t=${t._id}`);
   res.json({ status: true, data: { message: msgRow(m, true) } });
 });
 
@@ -796,9 +796,9 @@ export const adminAssign = expressAsyncHandler(async (req, res) => {
   await addMessage(sup, "admin", null, `We've connected you with ${tname}${th.profile_type ? ` (${th.profile_type})` : ""}. You can message them now from your Messages — and book a session when you're ready.`, { kind: "text", fromName: by });
   await addMessage(t, "system", null, `CYT Care Team connected ${client?.name || "this client"} with ${tname}. Messages are open for ${ASSIGN_DAYS} days, and stay open once a session is booked.`, { kind: "assigned" });
   notifyTherapists([th.user._id], { type: "action", title: `CYT connected you with ${client?.name || "a new client"}`, body: "Please say hello in Messages — they're looking for support.", link: `/therapists/messages?t=${t._id}`, ref: `chat-assign:${t._id}:${Date.now()}` });
-  phonePush(th.user._id, `New client from CYT: ${client?.name || "a client"}`, `/therapists/messages?t=${t._id}`);
+  phonePush(th.user._id, client?.name || "New client", `/therapists/messages?t=${t._id}`, "New client from CYT — say hello");
   notifyClient(sup.client, { type: "message", title: `You're connected with ${tname}`, body: "Open Messages to say hello.", link: `/client/messages?t=${t._id}`, ref: `chat-assign:${t._id}:${Date.now()}` });
-  phonePush(sup.client, `You're connected with ${tname}`, `/client/messages?t=${t._id}`);
+  phonePush(sup.client, tname, `/client/messages?t=${t._id}`, "You're connected — say hello");
   toUser(sup.client, "assigned", { supportId: String(sup._id), threadId: String(t._id), name: tname });
   res.json({ status: true, data: { thread: String(t._id), therapist: { id: String(th._id), name: tname, title: th.profile_type || "" } } });
 });
