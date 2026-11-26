@@ -1398,3 +1398,50 @@ export const therapistFollowupMail = ({ clientName, therapistName, bookHref, mes
       button("Book your next session", bookHref),
     foot: `${BRAND.name} LLP &middot; Sent on behalf of ${esc(therapistName || "your therapist")} through Choose Your Therapist.`,
   });
+
+// ============================================================================
+// CAREERS  (/careers job applications)
+// ============================================================================
+
+// to the person who applied
+export const careerApplicationReceivedMail = ({ name, jobTitle }) =>
+  shell({
+    preheader: `We received your application for ${jobTitle}`,
+    withBanner: true,
+    body:
+      eyebrow("Application received", OK) +
+      heading(`Thank you for applying, ${esc(String(name || "").split(" ")[0] || "there")}`) +
+      para(`Your application for <b>${esc(jobTitle)}</b> at ${BRAND.name} has reached our team.`) +
+      kvTable([
+        ["1", "<b>We read it</b> — our team goes through your resume and answers"],
+        ["2", "<b>We get in touch</b> — if your profile fits, we'll call or email you"],
+        ["3", "<b>Next steps</b> — an interview or a small task, depending on the role"],
+      ].map(([k, v]) => [k, `<span style="font-weight:400;">${v}</span>`])) +
+      para("While you wait, get to know us and the work we do.") +
+      button("See CYT", `${BRAND.site}/about-us`) +
+      note(`Questions? Write to <a href="mailto:${BRAND.email}" style="color:${BRAND.green};">${BRAND.email}</a>. Please don't reply with a new resume — apply again on the careers page if something changes.`),
+  });
+
+// to the CYT team inbox (the resume is attached to this email)
+export const careerApplicationAdminMail = ({ app, adminLink }) =>
+  shell({
+    preheader: `${app.name} applied for ${app.jobTitle}`,
+    body:
+      eyebrow("New job application", INFO) +
+      heading(`${esc(app.name)} applied for ${esc(app.jobTitle)}`) +
+      kvTable([
+        ["Email", `<a href="mailto:${esc(app.email)}" style="color:${BRAND.green};">${esc(app.email)}</a>`],
+        ["Phone", `<a href="tel:${esc(app.phone)}" style="color:${BRAND.green};">${esc(app.phone)}</a>`],
+        app.city && ["City", esc(app.city)],
+        app.experience && ["Experience", esc(app.experience)],
+        app.noticePeriod && ["Can join", esc(app.noticePeriod)],
+        app.currentRole && ["Current role / college", esc(app.currentRole)],
+        app.qualification && ["Qualification", esc(app.qualification)],
+        app.rciNumber && ["RCI number", esc(app.rciNumber), true],
+        app.link && ["Link", `<a href="${esc(/^https?:\/\//.test(app.link) ? app.link : `https://${app.link}`)}" style="color:${BRAND.green};word-break:break-all;">${esc(app.link)}</a>`],
+      ]) +
+      (app.message ? `<div style="background:#f6f9f7;border-radius:10px;padding:11px 13px;font-size:12.5px;color:${BRAND.soft};line-height:1.6;margin-bottom:16px;white-space:pre-line;">${esc(app.message)}</div>` : "") +
+      note(app.resumeName ? `📎 Resume attached: <b>${esc(app.resumeName)}</b>` : "No resume attached.") +
+      button("Open in admin", adminLink),
+    foot: `${BRAND.name} &middot; Careers &middot; this reached you because someone applied on chooseyourtherapist.in/careers`,
+  });

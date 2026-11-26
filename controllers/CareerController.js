@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import JobOpening from "../models/JobOpening.js";
 import JobApplication from "../models/JobApplication.js";
 import { sendMail } from "../helper/mailer.js";
+import { careerApplicationReceivedMail, careerApplicationAdminMail } from "../services/mailTemplates.js";
 
 /* Careers: public /careers page (open jobs + apply with a resume) and admin → Settings → Careers
    (set up jobs, see everyone who applied, move them through new → shortlisted → interview → hired / rejected). */
@@ -16,7 +17,6 @@ const STATUSES = ["new", "shortlisted", "interview", "hired", "rejected"];
 const DEPARTMENTS = ["Marketing", "Clinical", "Operations", "Sales", "Technology", "Other"];
 const TYPES = ["Full-time", "Part-time", "Internship", "Freelance", "Contract"];
 
-const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const str = (v, max = 300) => String(v ?? "").trim().slice(0, max);
 const list = (v) => (Array.isArray(v) ? v : String(v || "").split("\n")).map((x) => str(x, 300)).filter(Boolean).slice(0, 20);
 const slugify = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 70) || "job";
@@ -109,23 +109,14 @@ export const applyForJob = expressAsyncHandler(async (req, res, next) => {
     resume: file.filename, resumeName: str(file.originalname, 120),
   });
 
-  // thank-you to the applicant + a heads-up to the team (failures don't stop the application)
+  // thank-you to the applicant + the full application (resume attached) to the team inbox — failures don't stop it
   sendMail(email, `We received your application — ${jobTitle}`,
     `Hi ${name}, thank you for applying for ${jobTitle} at Choose Your Therapist. Our team will review your application and get back to you.`,
-    `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2d26;line-height:1.6;max-width:560px">
-      <p>Hi ${esc(name)},</p>
-      <p>Thank you for applying for <b>${esc(jobTitle)}</b> at Choose Your Therapist.</p>
-      <p>Our team reads every application. If your profile fits, we'll contact you by email or phone for the next step.</p>
-      <p style="margin-top:22px">Warm regards,<br/>Team Choose Your Therapist<br/><a href="https://www.chooseyourtherapist.in/careers">chooseyourtherapist.in/careers</a></p>
-    </div>`, "Choose Your Therapist").catch(() => {});
+    careerApplicationReceivedMail({ name, jobTitle }), "Choose Your Therapist").catch(() => {});
   sendMail(TEAM_INBOX, `New job application: ${jobTitle} — ${name}`,
-    `${name} (${email}, ${phone}) applied for ${jobTitle}.`,
-    `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1f2d26;line-height:1.6">
-      <p><b>${esc(name)}</b> applied for <b>${esc(jobTitle)}</b>.</p>
-      <p>${esc(email)} · ${esc(phone)}${app.city ? ` · ${esc(app.city)}` : ""}${app.experience ? ` · ${esc(app.experience)} experience` : ""}</p>
-      ${app.message ? `<p style="white-space:pre-line">${esc(app.message)}</p>` : ""}
-      <p>Open admin → Settings → Careers to see the resume.</p>
-    </div>`).catch(() => {});
+    `${name} (${email}, ${phone}) applied for ${jobTitle}. Resume attached.`,
+    careerApplicationAdminMail({ app, adminLink: "https://cyt.chooseyourtherapist.in/careers" }), "CYT Careers",
+    [{ filename: app.resumeName || file.filename, path: file.path }]).catch(() => {});
 
   res.json({ status: true, message: "Application sent. Thank you!", data: { id: app._id } });
 });
