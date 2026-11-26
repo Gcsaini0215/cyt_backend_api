@@ -144,3 +144,15 @@ export const funnelRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// /careers job applications (resume upload) — a handful per connection per hour
+export const careerApplyRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 6,
+  message: {
+    status: false,
+    message: "Too many applications from this connection. Please try again in an hour.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
