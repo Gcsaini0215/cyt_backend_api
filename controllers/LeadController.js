@@ -316,7 +316,7 @@ export const addLeadNote = expressAsyncHandler(async (req, res, next) => {
 // Statuses that represent an actual action taken on the lead — these
 // require the team member to leave a remark, so the superadmin activity
 // feed always has context for what happened, not just a bare status flip.
-const STATUSES_REQUIRING_REMARK = ["contacted", "converted", "lost"];
+const STATUSES_REQUIRING_REMARK = ["contacted", "converted", "lost", "completed"];
 
 export const updateLeadStatus = expressAsyncHandler(async (req, res, next) => {
   const { id } = req.params;
