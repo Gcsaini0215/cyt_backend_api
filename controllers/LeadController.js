@@ -107,6 +107,8 @@ export const getLeads = expressAsyncHandler(async (req, res, next) => {
   try {
     const leads = await Lead.find({}).sort({ created_at: -1 }).populate("assignedTo", "name email");
     const me = String(req.user?._id || "");
+    const pickView = req.query?.view === "pick";
+    const superAdmin = isSuper(req);
     const last10 = (p) => String(p || "").replace(/\D/g, "").slice(-10);
 
     // the same phone number filling a form again → "came N times" with the dates
@@ -151,6 +153,12 @@ export const getLeads = expressAsyncHandler(async (req, res, next) => {
         history: histBy[String(leadObj._id)] || [],
       };
       leadObj.mine = !!leadObj.assignedTo && String(leadObj.assignedTo._id) === me;
+      // Leads page (?view=pick): a team member sees the phone and email only after picking the lead
+      if (pickView && !leadObj.mine && !superAdmin) {
+        leadObj.phone = ""; leadObj.email = "";
+        if (leadObj.data) { const { phone, email, ...rest } = leadObj.data; leadObj.data = rest; }
+        leadObj.hidden = true;
+      }
       return leadObj;
     });
 
@@ -381,10 +389,20 @@ export const updateLeadStatus = expressAsyncHandler(async (req, res, next) => {
 export const assignLead = expressAsyncHandler(async (req, res, next) => {
   const { id } = req.params;
   const { adminId } = req.body;
+  const note = String(req.body?.remark || "").trim().slice(0, 500);
 
   if (!mongoose.Types.ObjectId.isValid(id)) {
     res.status(400);
     return next(new Error("Invalid Lead ID format."));
+  }
+  // referring a lead on to a teammate needs a note, so they know what has happened so far
+  if (adminId && !isSuper(req) && !note) {
+    res.status(400);
+    return next(new Error("Write a note for the person you're referring this lead to."));
+  }
+  if (adminId && String(adminId) === String(req.user._id) && !isSuper(req)) {
+    res.status(400);
+    return next(new Error("Pick the lead instead of referring it to yourself."));
   }
 
   let admin = null;
@@ -412,7 +430,7 @@ export const assignLead = expressAsyncHandler(async (req, res, next) => {
       res.status(409);
       return next(new Error(`${exists.assignedTo?.name || "Someone else"} has this lead. Only the super admin can move it.`));
     }
-    await LeadActivity.create({ lead: id, action: adminId ? "assign" : "release", status: lead.status || "new", remark: admin ? `Given to ${admin.name}` : "Back to open leads", admin: req.user._id, adminName: req.user.name }).catch(() => {});
+    await LeadActivity.create({ lead: id, action: adminId ? "assign" : "release", status: lead.status || "new", remark: admin ? `Referred to ${admin.name}${note ? `: ${note}` : ""}` : "Back to open leads", admin: req.user._id, adminName: req.user.name }).catch(() => {});
 
     if (admin?.email) {
       try {
