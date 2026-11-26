@@ -41,7 +41,7 @@ const leadSchema = new Schema({
   },
   status: {
     type: String,
-    enum: ["new", "contacted", "converted", "lost"],
+    enum: ["new", "contacted", "converted", "lost", "completed"],
     default: "new",
   },
   // the team member who picked (or was given) this lead — only they contact it / change its stage

@@ -13,7 +13,7 @@ const leadActivitySchema = new Schema({
   },
   status: {
     type: String,
-    enum: ["new", "contacted", "converted", "lost"],
+    enum: ["new", "contacted", "converted", "lost", "completed"],
     required: true,
   },
   // "status" = a stage change; "pick" / "release" / "assign" = who owns the lead; "note" = a team note

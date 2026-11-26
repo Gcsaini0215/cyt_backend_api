@@ -327,7 +327,7 @@ export const updateLeadStatus = expressAsyncHandler(async (req, res, next) => {
     return next(new Error("Invalid Lead ID format."));
   }
 
-  const validStatuses = ["new", "contacted", "converted", "lost"];
+  const validStatuses = ["new", "contacted", "converted", "lost", "completed"]; // completed = old lead closed from Open
   if (!validStatuses.includes(status)) {
     res.status(400);
     return next(new Error("Invalid status value."));
