@@ -44,9 +44,14 @@ const leadSchema = new Schema({
     enum: ["new", "contacted", "converted", "lost"],
     default: "new",
   },
+  // the team member who picked (or was given) this lead — only they contact it / change its stage
   assignedTo: {
     type: Schema.Types.ObjectId,
     ref: "Admin",
+    default: null,
+  },
+  pickedAt: {
+    type: Date,
     default: null,
   },
   created_at: {

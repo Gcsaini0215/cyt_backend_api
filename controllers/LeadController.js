@@ -5,6 +5,8 @@ import crypto from "crypto";
 import Lead from "../models/Lead.js";
 import LeadActivity from "../models/LeadActivity.js";
 import Admin from "../models/Admin.js";
+import User from "../models/Users.js";
+import Booking from "../models/Booking.js";
 import { leadNotificationEmail, institutionLeadEmail, institutionLeadSubject, isInstitutionLead } from "../services/mailTemplates.js";
 import { sendMail } from "../helper/mailer.js";
 import Razorpay from "razorpay";
@@ -104,8 +106,29 @@ export const saveLead = expressAsyncHandler(async (req, res, next) => {
 export const getLeads = expressAsyncHandler(async (req, res, next) => {
   try {
     const leads = await Lead.find({}).sort({ created_at: -1 }).populate("assignedTo", "name email");
-    
-    // Process leads to ensure location and message are available for older records if they exist in the 'data' field
+    const me = String(req.user?._id || "");
+    const last10 = (p) => String(p || "").replace(/\D/g, "").slice(-10);
+
+    // the same phone number filling a form again → "came N times" with the dates
+    const byPhone = {};
+    leads.forEach((l) => { const k = last10(l.phone); if (k.length === 10) (byPhone[k] = byPhone[k] || []).push(l.created_at); });
+
+    // numbers that already have a CYT client account → their paid sessions
+    const p10 = Object.keys(byPhone);
+    const users = p10.length ? await User.find({ phone: { $in: [...p10, ...p10.map((p) => "91" + p), ...p10.map((p) => "+91" + p)] } }).select("_id phone name").lean() : [];
+    const sess = users.length ? await Booking.aggregate([{ $match: { client: { $in: users.map((u) => u._id) }, payment_status: "Paid" } }, { $group: { _id: "$client", n: { $sum: 1 }, last: { $max: "$booking_date" } } }]) : [];
+    const sessBy = Object.fromEntries(sess.map((s) => [String(s._id), s]));
+    const clientBy = {};
+    users.forEach((u) => { clientBy[last10(u.phone)] = { id: u._id, sessions: sessBy[String(u._id)]?.n || 0, last: sessBy[String(u._id)]?.last || null }; });
+
+    // who picked / contacted / closed it, and when — the steps on each lead card
+    const acts = await LeadActivity.find({ lead: { $in: leads.map((l) => l._id) } }).sort({ createdAt: 1 }).select("lead action status remark adminName createdAt").lean();
+    const histBy = {};
+    acts.forEach((a) => { (histBy[String(a.lead)] = histBy[String(a.lead)] || []).push({ action: a.action || "status", status: a.status, remark: a.remark, by: a.adminName, at: a.createdAt }); });
+
+    // popup leads pack "Age: 26\nLocation: Noida\nConcern: …" into one field — pull the parts out
+    const part = (txt, key) => { const m = String(txt || "").match(new RegExp(`${key}\\s*:\\s*([^\\n]*)`, "i")); return m ? m[1].trim() : ""; };
+
     const processedLeads = leads.map(lead => {
       const leadObj = lead.toObject();
       if (!leadObj.location && leadObj.data) {
@@ -114,6 +137,20 @@ export const getLeads = expressAsyncHandler(async (req, res, next) => {
       if (!leadObj.message && leadObj.data) {
         leadObj.message = leadObj.data.message || leadObj.data.reason || "Not provided";
       }
+      const k = last10(leadObj.phone);
+      const raw = leadObj.data?.concern || leadObj.concern || "";
+      leadObj.extra = {
+        form: leadObj.data?.subject || (leadObj.data?.type === "internship" ? "Internship enquiry" : leadObj.source === "Noida Offer" ? "Noida offer" : /callback/i.test(leadObj.concern || "") ? "Callback" : ""),
+        age: part(raw, "Age"),
+        city: part(raw, "Location") || part(raw, "City"),
+        trainee: (String(raw).match(/preferred trainee:\s*([^,\n]+)/i) || [])[1]?.trim() || "",
+        offerCode: leadObj.data?.code || "",
+        visits: (byPhone[k] || []).length || 1,
+        visitDates: byPhone[k] || [],
+        client: clientBy[k] || null,
+        history: histBy[String(leadObj._id)] || [],
+      };
+      leadObj.mine = !!leadObj.assignedTo && String(leadObj.assignedTo._id) === me;
       return leadObj;
     });
 
@@ -232,6 +269,50 @@ export const verifyConsultPayment = expressAsyncHandler(async (req, res, next) =
   }
 });
 
+const isSuper = (req) => !req.user?.roleId;
+
+/* Pick a lead: the one write below only succeeds while the lead has no owner, so when two team
+   members tap Pick at the same moment exactly one gets it and the other is told who did. */
+export const pickLead = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) { res.status(400); return next(new Error("Invalid Lead ID format.")); }
+  const me = req.user._id;
+  const lead = await Lead.findOneAndUpdate({ _id: id, assignedTo: null }, { assignedTo: me, pickedAt: new Date() }, { new: true })
+    .populate("assignedTo", "name email");
+  if (!lead) {
+    const exists = await Lead.findById(id).populate("assignedTo", "name");
+    if (!exists) { res.status(404); return next(new Error("Lead not found.")); }
+    if (String(exists.assignedTo?._id) === String(me)) return res.status(200).json({ status: true, message: "Already yours.", data: exists });
+    res.status(409);
+    return res.json({ status: false, message: `Already picked by ${exists.assignedTo?.name || "someone else"}.`, data: exists });
+  }
+  await LeadActivity.create({ lead: id, action: "pick", status: lead.status || "new", remark: "", admin: me, adminName: req.user.name }).catch(() => {});
+  return res.status(200).json({ status: true, message: "Picked. It's yours now.", data: lead });
+});
+
+// Give a picked lead back to the open list (its owner, or the super admin).
+export const releaseLead = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(id)) { res.status(400); return next(new Error("Invalid Lead ID format.")); }
+  const filter = isSuper(req) ? { _id: id } : { _id: id, assignedTo: req.user._id };
+  const lead = await Lead.findOneAndUpdate(filter, { assignedTo: null, pickedAt: null }, { new: true });
+  if (!lead) { res.status(409); return next(new Error("Only the person who picked this lead can release it.")); }
+  await LeadActivity.create({ lead: id, action: "release", status: lead.status || "new", remark: String(req.body?.remark || "").trim().slice(0, 300), admin: req.user._id, adminName: req.user.name }).catch(() => {});
+  return res.status(200).json({ status: true, message: "Released. Anyone can pick it now.", data: lead });
+});
+
+// A note on a lead, saved on the server so the whole team sees it (was browser-only before).
+export const addLeadNote = expressAsyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  const text = String(req.body?.note || "").trim().slice(0, 1000);
+  if (!mongoose.Types.ObjectId.isValid(id)) { res.status(400); return next(new Error("Invalid Lead ID format.")); }
+  if (!text) { res.status(400); return next(new Error("Write a note first.")); }
+  const lead = await Lead.findById(id).select("status");
+  if (!lead) { res.status(404); return next(new Error("Lead not found.")); }
+  const a = await LeadActivity.create({ lead: id, action: "note", status: lead.status || "new", remark: text, admin: req.user._id, adminName: req.user.name });
+  return res.status(200).json({ status: true, message: "Note saved", data: { action: "note", status: a.status, remark: a.remark, by: a.adminName, at: a.createdAt } });
+});
+
 // Statuses that represent an actual action taken on the lead — these
 // require the team member to leave a remark, so the superadmin activity
 // feed always has context for what happened, not just a bare status flip.
@@ -258,11 +339,23 @@ export const updateLeadStatus = expressAsyncHandler(async (req, res, next) => {
   }
 
   try {
-    const lead = await Lead.findByIdAndUpdate(id, { status }, { new: true });
+    const me = req.user._id;
+    const superAdmin = isSuper(req);
+    // Only the lead's owner (or the super admin) changes its stage. An unpicked lead is picked by
+    // whoever changes it — in the same single write, so two people can never both get it.
+    let lead = await Lead.findOneAndUpdate({ _id: id, assignedTo: me }, { status }, { new: true });
     if (!lead) {
-      res.status(404);
-      return next(new Error("Lead not found."));
+      lead = await Lead.findOneAndUpdate({ _id: id, assignedTo: null }, { status, assignedTo: me, pickedAt: new Date() }, { new: true });
+      if (lead) await LeadActivity.create({ lead: id, action: "pick", status, remark: "", admin: me, adminName: req.user.name }).catch(() => {});
     }
+    if (!lead && superAdmin) lead = await Lead.findByIdAndUpdate(id, { status }, { new: true });
+    if (!lead) {
+      const exists = await Lead.findById(id).populate("assignedTo", "name");
+      if (!exists) { res.status(404); return next(new Error("Lead not found.")); }
+      res.status(409);
+      return next(new Error(`${exists.assignedTo?.name || "Someone else"} has picked this lead. Only they can change it.`));
+    }
+    lead = await Lead.findById(id).populate("assignedTo", "name email");
 
     const activity = await LeadActivity.create({
       lead: id,
@@ -308,12 +401,18 @@ export const assignLead = expressAsyncHandler(async (req, res, next) => {
   }
 
   try {
-    const lead = await Lead.findByIdAndUpdate(id, { assignedTo: adminId || null }, { new: true })
+    // Team members can only hand on a lead that is free or their own; taking one away from
+    // someone else is for the super admin. The check and the write are one step.
+    const filter = isSuper(req) ? { _id: id } : { _id: id, $or: [{ assignedTo: req.user._id }, { assignedTo: null }] };
+    const lead = await Lead.findOneAndUpdate(filter, { assignedTo: adminId || null, pickedAt: adminId ? new Date() : null }, { new: true })
       .populate("assignedTo", "name email");
     if (!lead) {
-      res.status(404);
-      return next(new Error("Lead not found."));
+      const exists = await Lead.findById(id).populate("assignedTo", "name");
+      if (!exists) { res.status(404); return next(new Error("Lead not found.")); }
+      res.status(409);
+      return next(new Error(`${exists.assignedTo?.name || "Someone else"} has this lead. Only the super admin can move it.`));
     }
+    await LeadActivity.create({ lead: id, action: adminId ? "assign" : "release", status: lead.status || "new", remark: admin ? `Given to ${admin.name}` : "Back to open leads", admin: req.user._id, adminName: req.user.name }).catch(() => {});
 
     if (admin?.email) {
       try {
