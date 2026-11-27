@@ -156,3 +156,17 @@ export const careerApplyRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Public therapist list for other websites (/api/public/*). Counted before the API key check,
+// so it also slows down anyone guessing keys. Partner sites should cache the list (it only
+// changes every few minutes) instead of calling on every page view.
+export const publicApiRateLimit = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: Number(process.env.PUBLIC_API_RATE_PER_MIN) || 60, // per IP per minute
+  message: {
+    status: false,
+    message: "Too many requests. Please wait a minute and try again.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

@@ -32,7 +32,10 @@ import {
   savePracticeLocation,
 } from "../controllers/TherapistController.js";  
 import { upload } from "../services/fileUpload.js";
-import { getTherapistStats } from "../controllers/TherapistStatsController.js";  
+import { getTherapistStats } from "../controllers/TherapistStatsController.js";
+import { publicTherapists, publicTherapistProfile } from "../controllers/PublicTherapistController.js";
+import { requirePublicApiKey } from "../middlewares/publicApiKey.js";
+import { publicApiRateLimit } from "../middlewares/rateLimitMiddleware.js";  
 const router = Router();  
   
 router.post(  
@@ -65,7 +68,9 @@ router.get("/toggle-my-visibility", isTherapist, ShowToPageSelf);
 
 router.post("/set-priority",hasPermission("therapists"), SetPriority);
   
-router.get("/get-therapists-profile", getFilteredTherapists);  
+router.get("/get-therapists-profile", getFilteredTherapists);
+router.get("/public/therapists", publicApiRateLimit, requirePublicApiKey, publicTherapists); // live therapists for other websites (x-api-key from PUBLIC_API_KEYS, open CORS, cards only)  
+router.get("/public/therapists/:idOrSlug", publicApiRateLimit, requirePublicApiKey, publicTherapistProfile); // one live therapist's full profile
   
 router.get("/get-profile/:userId", getProfile);  
   

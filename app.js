@@ -82,6 +82,17 @@ app.use((req, res, next) => {
 app.set('trust proxy', 1);
 app.disable('x-powered-by'); // don't advertise "Express" in every response (audit P2-1)
 
+// /api/public/* is meant for other websites: any origin may call it with its x-api-key header
+// (no cookies). Answer the preflight here, before the site-only cors() below would refuse it.
+app.use("/api/public", (req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "x-api-key, Content-Type, Accept");
+  res.setHeader("Access-Control-Max-Age", "600");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  return next();
+});
+
 app.use(cors({
   origin: [
     "http://localhost:3000",
