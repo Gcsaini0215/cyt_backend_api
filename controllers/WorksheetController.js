@@ -49,7 +49,11 @@ function cleanActivity(d = {}) {
     return out;
   });
   while (days.length < 7) days.push({});
-  return { start: /^\d{4}-\d{2}-\d{2}$/.test(String(d.start || "")) ? d.start : "", days };
+  const isDate = (x) => /^\d{4}-\d{2}-\d{2}$/.test(String(x || ""));
+  const start = isDate(d.start) ? d.start : "";
+  // first = the start of week 1 (the diary rolls on week after week, see rollActivityWeek)
+  const first = isDate(d.first) && (!start || d.first <= start) ? d.first : start;
+  return { start, first, days };
 }
 function cleanWhatIf(d = {}) {
   const pairs = (Array.isArray(d.pairs) ? d.pairs : []).slice(0, 8).map((p) => ({ bad: str(p?.bad, 500), good: str(p?.good, 500), likely: str(p?.likely, 500) }));
@@ -120,6 +124,38 @@ function snapshot(e, sent = false) {
 const historyFor = (e, sentOnly) => (Array.isArray(e.history) ? e.history : [])
   .filter((h) => !sentOnly || h.sent)
   .map((h) => ({ day: h.day, at: h.at, metrics: h.metrics || [], data: h.data || null, sent: !!h.sent }));
+
+// Activity Diary keeps going week after week (owner 2026-11-27): once its 7 days are over, the next time the
+// sheet is opened the finished week is kept in the progress history (closed) and a fresh week starts on the
+// right weekday. Returns the number of the week that ended and was saved (0 = nothing to save / no change).
+const addDaysIso = (iso, n) => { const x = new Date(`${iso}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+const weekNo = (d) => (d?.first && d?.start ? Math.round((Date.parse(`${d.start}T00:00:00Z`) - Date.parse(`${d.first}T00:00:00Z`)) / (7 * 864e5)) + 1 : 1);
+async function rollActivityWeek(lean) {
+  if (lean?.tool !== "activity") return 0;
+  const start = lean.data?.start;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(start || ""))) return 0;
+  const passed = Math.floor((Date.parse(`${istDay()}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 864e5);
+  if (passed < 7) return 0;
+  const doc = await WorksheetEntry.findById(lean._id);
+  if (!doc || doc.data?.start !== start) return 0; // someone else rolled it a moment ago
+  const had = filledCells(doc.data) > 0;
+  const ended = weekNo(cleanActivity(doc.data));
+  if (had) {
+    const h0 = Array.isArray(doc.history) ? doc.history : [];
+    const last = h0[h0.length - 1];
+    if (!last || last.closed || JSON.stringify(last.data || {}) !== JSON.stringify(doc.data || {})) snapshot(doc, false);
+    const h = [...doc.history];
+    h[h.length - 1] = { ...h[h.length - 1], closed: true };
+    doc.history = h;
+  }
+  const first = cleanActivity(doc.data).first || start;
+  const data = cleanActivity({ start: addDaysIso(start, Math.floor(passed / 7) * 7), first, days: [] });
+  // only if it is still the same week (two tabs opening at once must not roll twice)
+  const r = await WorksheetEntry.updateOne({ _id: doc._id, "data.start": start }, { $set: { data, history: doc.history || [], step: 0, flag: false } });
+  if (!r.modifiedCount) return 0;
+  lean.data = data; lean.history = doc.history || []; lean.step = 0; lean.flag = false;
+  return had ? ended : 0; // an empty week just moves on quietly
+}
 
 const cleanFor = (tool, d, max) => (isPack(tool) ? cleanPack(d) : tool === "activity" ? cleanActivity(d) : tool === "whatif" ? cleanWhatIf(d) : cleanData(d, max));
 const filledCells = (d) => (d?.days || []).reduce((n, day) => n + Object.keys(day || {}).length, 0);
@@ -355,9 +391,12 @@ export const myWorksheet = expressAsyncHandler(async (req, res) => {
   if (!e) return res.status(404).json({ status: false, message: "Worksheet not found" });
   // opened for the first time: no longer "not opened" (the My Space reminder stops, the therapist sees it was opened)
   if (e.status === "assigned") { await WorksheetEntry.updateOne({ _id: e._id, status: "assigned" }, { $set: { status: "draft" } }); e.status = "draft"; }
+  const rolled = await rollActivityWeek(e); // Activity Diary: a new week once the last one is over
   const link = e.link ? await WorksheetLink.findById(e.link, { forClient: 1 }).lean() : null;
   const ongoing = await isOngoing(req.user._id, e.therapist?._id, link);
-  res.json({ status: true, data: { ...entryRow(e, true), therapist: publicTherapist(e.therapist), ongoing, maxLogs: ongoing ? MAX_LOGS : 1, history: historyFor(e, false) } });
+  const row = entryRow(e, true);
+  if (rolled && row.data) row.data = { ...row.data, rolled }; // shown once as "Week N saved — Week N+1 started"
+  res.json({ status: true, data: { ...row, therapist: publicTherapist(e.therapist), ongoing, maxLogs: ongoing ? MAX_LOGS : 1, history: historyFor(e, false) } });
 });
 
 // PUT /api/my-worksheets/:id { data, step, submit }
